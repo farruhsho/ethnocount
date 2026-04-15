@@ -1,0 +1,107 @@
+name: ethnocount
+description: "Production-grade family & group financial management platform."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Supabase
+  supabase_flutter: ^2.12.2
+
+  # State Management
+  flutter_bloc: ^9.1.0
+  equatable: ^2.0.7
+
+  # Code Generation
+  freezed_annotation: ^3.0.0
+  json_annotation: ^4.9.0
+
+  # DI
+  get_it: ^8.0.3
+  injectable: ^2.5.0
+
+  # Routing
+  go_router: ^15.1.2
+
+  # Local Storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  flutter_secure_storage: ^9.2.4
+  shared_preferences: ^2.3.3
+  device_info_plus: ^11.2.0
+  package_info_plus: ^8.1.2
+  auto_updater: ^1.0.0
+
+  # UI
+  fl_chart: ^0.70.2
+  shimmer: ^3.0.0
+  cached_network_image: ^3.4.1
+  flutter_svg: ^2.0.17
+  google_fonts: ^6.2.1
+
+  # Utils
+  dartz: ^0.10.1
+  uuid: ^4.5.1
+  intl: ^0.20.2
+  connectivity_plus: ^6.1.4
+  url_launcher: ^6.3.1
+  image_picker: ^1.1.2
+  cupertino_icons: ^1.0.8
+  trina_grid: ^1.0.0
+  excel: ^4.0.6
+  file_saver: ^0.3.1
+  path_provider: ^2.1.5
+  file_selector: ^1.1.0
+  file_picker: ^8.1.6
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+  build_runner: ^2.4.15
+  freezed: ^3.0.0
+  json_serializable: ^6.9.4
+  injectable_generator: ^2.7.0
+  bloc_test: any
+  mocktail: ^1.0.4
+  image: ^4.3.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/animations/
+
+  # Fonts are managed via google_fonts
+
+# Иконки лаунчера (все платформы) из PNG — экспорт 1024×1024 или 512×512 из assets/icons/ethno.svg.
+# Генерация: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: assets/icons/ethno_icon.png
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: assets/icons/ethno_icon.png
+    background_color: "#faf8f6"
+    theme_color: "#0D0808"
+  windows:
+    generate: true
+    image_path: assets/icons/ethno_icon.png
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: assets/icons/ethno_icon.png
+  adaptive_icon_background: "#faf8f6"
+  adaptive_icon_foreground: assets/icons/ethno_icon.png

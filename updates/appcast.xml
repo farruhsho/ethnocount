@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>EthnoCount</title>
+        <description>Обновления EthnoCount — казначейская система Ethno Logistics</description>
+        <language>ru</language>
+        <item>
+            <title>Версия 1.0.0</title>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+            <sparkle:releaseNotesLink>https://your-domain.com/release_notes.html</sparkle:releaseNotesLink>
+            <pubDate>Fri, 07 Mar 2025 12:00:00 +0500</pubDate>
+            <enclosure url="1.0.0+1/ethnocount-1.0.0+1-windows.exe"
+                       sparkle:version="1.0.0+1"
+                       sparkle:os="windows"
+                       length="0"
+                       type="application/octet-stream" />
+        </item>
+    </channel>
+</rss>

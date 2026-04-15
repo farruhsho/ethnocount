@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "672965743001",
+    "project_id": "fmarket-eb88a",
+    "storage_bucket": "fmarket-eb88a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:672965743001:android:6f5fe899b5f2865638c308",
+        "android_client_info": {
+          "package_name": "com.example.ethnocount"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBim2ou74_j4-ywNxE7qKZyyE-XRTAmTTc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:672965743001:android:bccb952f61df794938c308",
+        "android_client_info": {
+          "package_name": "com.example.fmarket"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBim2ou74_j4-ywNxE7qKZyyE-XRTAmTTc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

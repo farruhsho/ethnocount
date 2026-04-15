@@ -1,0 +1,200 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper functions ───
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return exists(userPath) ? get(userPath).data.role : null;
+    }
+
+    function isCreator() {
+      return isAuthenticated() && getUserRole() == 'creator';
+    }
+
+    // Backward compatibility: old Firestore docs may still have 'admin'.
+    function isAdminOrCreator() {
+      return isAuthenticated() &&
+        (getUserRole() == 'creator' || getUserRole() == 'admin');
+    }
+
+    function canCreatePurchase() {
+      return isAuthenticated() &&
+        getUserRole() in ['creator', 'admin', 'accountant'];
+    }
+
+    function canCreateClient() {
+      return isAuthenticated() &&
+        getUserRole() in ['creator', 'accountant'];
+    }
+
+    function canCreateTransfer() {
+      return isAuthenticated() &&
+        getUserRole() in ['creator', 'admin', 'accountant'];
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // ─── Users ───
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      // Self-registration (bootstrap) OR Creator creating new user profiles.
+      allow create: if (isOwner(userId) || isAdminOrCreator()) &&
+        request.resource.data.role in ['accountant', 'creator'] &&
+        request.resource.data.keys().hasAll(['displayName', 'email', 'role', 'isActive', 'createdAt']);
+      allow update: if isAdminOrCreator() ||
+        (isOwner(userId) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'assignedBranchIds', 'isActive']));
+      allow delete: if isAdminOrCreator();
+    }
+
+    // ─── Branches & Accounts ───
+    match /branches/{branchId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrCreator();
+    }
+
+    match /branchAccounts/{accountId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrCreator();
+    }
+
+    // ─── Transfers (Cloud Function primary; client fallback when CF 404) ───
+    match /transfers/{transferId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateTransfer() &&
+        request.resource.data.keys().hasAll(['transactionCode', 'fromBranchId', 'toBranchId', 'fromAccountId', 'toAccountId', 'amount', 'currency', 'exchangeRate', 'commission', 'commissionCurrency', 'commissionType', 'commissionValue', 'status', 'idempotencyKey', 'createdBy', 'createdAt']);
+      allow update: if canCreateTransfer();
+      allow delete: if false;
+    }
+
+    match /ledgerEntries/{entryId} {
+      allow read: if isAuthenticated();
+      // Creator can write adjustment / opening balance entries directly.
+      // Purchase/transfer entries allowed for fallback when Cloud Function returns 404.
+      allow create: if (isAdminOrCreator() &&
+        request.resource.data.referenceType in ['adjustment', 'openingBalance']) ||
+        (canCreatePurchase() &&
+        request.resource.data.referenceType == 'purchase' &&
+        request.resource.data.keys().hasAll(['branchId', 'accountId', 'type', 'amount', 'currency', 'referenceType', 'referenceId', 'createdBy', 'createdAt'])) ||
+        (canCreateTransfer() &&
+        request.resource.data.referenceType == 'transfer' &&
+        request.resource.data.keys().hasAll(['branchId', 'accountId', 'type', 'amount', 'currency', 'referenceType', 'referenceId', 'createdBy', 'createdAt']));
+      allow update: if canCreateTransfer() || canCreatePurchase();
+      allow delete: if false;
+    }
+
+    match /accountBalances/{balanceId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdminOrCreator() || getUserRole() == 'accountant';
+    }
+
+    match /commissions/{commissionId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ─── Purchases (Cloud Function primary; client fallback when CF 404) ───
+    match /purchases/{purchaseId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreatePurchase() &&
+        request.resource.data.keys().hasAll(['transactionCode', 'branchId', 'description', 'totalAmount', 'currency', 'payments', 'createdBy', 'createdAt']);
+      allow update, delete: if false;
+    }
+
+    // Archive when soft-deleting a purchase (see purchase_remote_ds.deletePurchase).
+    match /deleted_purchases/{docId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreatePurchase();
+      allow update, delete: if false;
+    }
+
+    // ─── Transaction code counters (Cloud Function primary; client fallback when CF 404) ───
+    match /counters/{counterId} {
+      allow read: if isAuthenticated();
+      allow create, update: if canCreatePurchase() || canCreateClient() || canCreateTransfer();
+      allow delete: if false;
+    }
+
+    // ─── Client accounts (Cloud Function primary; client fallback when CF 404) ───
+    match /clients/{clientId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateClient() &&
+        request.resource.data.keys().hasAll(['clientCode', 'name', 'phone', 'currency', 'isActive', 'createdBy', 'createdAt']);
+      allow update, delete: if false;
+    }
+
+    match /clientBalances/{clientId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateClient() &&
+        request.resource.data.keys().hasAll(['clientId', 'balance', 'currency', 'updatedAt']);
+      allow update: if canCreateClient();
+      allow delete: if false;
+    }
+
+    match /clientTransactions/{txId} {
+      allow read: if isAuthenticated();
+      allow create: if canCreateClient();
+      allow update, delete: if false;
+    }
+
+    // ─── Notifications ───
+    match /notifications/{notificationId} {
+      allow read: if isAuthenticated();
+      allow update: if isAuthenticated() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isRead']);
+      allow create: if (canCreateTransfer() || canCreatePurchase()) &&
+        request.resource.data.keys().hasAll(['targetBranchId', 'type', 'title', 'body', 'data', 'isRead', 'createdAt']);
+      allow delete: if false;
+    }
+
+    // ─── Audit Logs (Cloud Function primary; client fallback for set_exchange_rate when CF 404) ───
+    match /auditLogs/{logId} {
+      allow read: if isCreator() || (isAuthenticated() && getUserRole() == 'admin');
+      allow create: if isAuthenticated() &&
+        request.resource.data.action == 'set_exchange_rate' &&
+        request.resource.data.keys().hasAll(['action', 'entityType', 'entityId', 'performedBy', 'details', 'createdAt']);
+      allow update, delete: if false;
+    }
+
+    match /systemAuditLogs/{logId} {
+      allow read: if isCreator() || (isAuthenticated() && getUserRole() == 'admin');
+      allow write: if false;
+    }
+
+    // ─── Exchange Rates (Cloud Function primary; client fallback when CF 404) ───
+    match /exchangeRates/{rateId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        request.resource.data.keys().hasAll(['fromCurrency', 'toCurrency', 'rate', 'setBy', 'effectiveAt', 'createdAt']);
+      allow update, delete: if false;
+    }
+
+    // ─── Analytics (pre-aggregated, read-only) ───
+    match /analytics/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ─── System settings (Creator only for write) ───
+    match /system_settings/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if isCreator();
+    }
+
+    // ─── User sessions (devices) ───
+    match /user_sessions/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+    match /user_sessions/{userId}/sessions/{sessionId} {
+      allow read, write: if isOwner(userId);
+    }
+  }
+}

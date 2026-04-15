@@ -1,0 +1,49 @@
+﻿Analyzing ethnocount...                                         
+
+   info - Unnecessary 'this.' qualifier - lib\core\extensions\number_x.dart:20:29 - unnecessary_this
+   info - Use the null-aware marker '?' rather than a null check via an 'if' - lib\data\datasources\remote\transfer_remote_ds.dart:165:9 - use_null_aware_elements
+   info - Use the null-aware marker '?' rather than a null check via an 'if' - lib\data\datasources\remote\user_remote_ds.dart:144:7 - use_null_aware_elements
+   info - Use the null-aware marker '?' rather than a null check via an 'if' - lib\data\datasources\remote\user_remote_ds.dart:145:7 - use_null_aware_elements
+   info - Use the null-aware marker '?' rather than a null check via an 'if' - lib\data\datasources\remote\user_remote_ds.dart:147:7 - use_null_aware_elements
+   info - Use the null-aware marker '?' rather than a null check via an 'if' - lib\data\datasources\remote\user_remote_ds.dart:148:7 - use_null_aware_elements
+   info - Unnecessary escape in string literal - lib\domain\entities\enums.dart:98:49 - unnecessary_string_escapes
+   info - Unnecessary use of multiple underscores - lib\presentation\admin\pages\admin_panel_page.dart:1576:43 - unnecessary_underscores
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\admin\pages\admin_panel_page.dart:2147:17 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\admin\pages\admin_panel_page.dart:2467:15 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\admin\pages\admin_panel_page.dart:2475:15 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\bank_import\pages\bank_import_page.dart:176:29 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\bank_import\pages\bank_import_page.dart:196:29 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\branches\pages\branches_page.dart:815:17 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\branches\pages\branches_page.dart:828:17 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\clients\pages\clients_page.dart:877:17 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\clients\pages\clients_page.dart:1133:21 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\clients\pages\clients_page.dart:1156:19 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\common\widgets\filter_panel.dart:102:9 - deprecated_member_use
+   info - Unnecessary use of string interpolation - lib\presentation\dashboard\widgets\dashboard_currency_chart.dart:189:13 - unnecessary_string_interpolations
+   info - Unnecessary braces in a string interpolation - lib\presentation\transfers\pages\accepted_transfers_page.dart:460:57 - unnecessary_brace_in_string_interps
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\branch_topup_page.dart:212:29 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\branch_topup_page.dart:291:49 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\branch_topup_page.dart:376:43 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\branch_topup_page.dart:516:21 - deprecated_member_use
+   info - Unnecessary braces in a string interpolation - lib\presentation\transfers\pages\branch_topup_page.dart:549:37 - unnecessary_brace_in_string_interps
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\branch_topup_page.dart:766:11 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\branch_topup_page.dart:822:11 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\create_transfer_page.dart:439:13 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\create_transfer_page.dart:466:13 - deprecated_member_use
+   info - 'value' is deprecated and shouldn't be used. Use initialValue instead. This will set the initial value for the form field. This feature was deprecated after v3.33.0-1.0.pre - lib\presentation\transfers\pages\create_transfer_page.dart:586:17 - deprecated_member_use
+   info - Unnecessary use of multiple underscores - lib\presentation\transfers\pages\transfers_page.dart:460:24 - unnecessary_underscores
+
+flutter : 32 issues found. (ran 
+in 10.7s)
+строка:1 знак:1
++ flutter analyze 2>&1 | 
+Out-File -FilePath 
+"c:\project\ethnocount\fres ...
++ ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : No 
+   tSpecified: (32 issues found  
+  . (ran in 10.7s):String) [],   
+  RemoteException
+    + FullyQualifiedErrorId : Na 
+   tiveCommandError
+ 
