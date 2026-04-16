@@ -1,4 +1,0 @@
-﻿Analyzing ethnocount...                                         
-
-  error - The named parameter 'transferRepository' isn't defined - lib\core\di\injection.dart:111:9 - undefined_named_parameter
-

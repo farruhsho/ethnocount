@@ -47,5 +47,12 @@ app.*.map.json
 # Agency: generated integration files (./scripts/convert.sh)
 /integrations/build/
 
+# Temporary analysis/build output
+analyze*.txt
+fresh_analyze.txt
+all_dart_files.txt
+build_web*.txt
+.flutter-plugins
+
 # Node
 node_modules/
