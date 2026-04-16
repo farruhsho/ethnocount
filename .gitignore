@@ -54,5 +54,10 @@ all_dart_files.txt
 build_web*.txt
 .flutter-plugins
 
+# Migration secrets
+migration/serviceAccountKey.json
+migration/.env
+migration/id_mapping.json
+
 # Node
 node_modules/
