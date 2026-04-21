@@ -49,8 +49,10 @@ class UserRemoteDataSource {
     return _mapUser(data);
   }
 
-  /// Create user via Supabase Admin signUp + profile insert.
-  /// Note: For production, consider using Supabase Edge Functions with service_role key.
+  /// Create user via the `admin-create-user` Edge Function (service_role on server).
+  /// This avoids: (a) SMTP rate limit from confirmation emails,
+  /// (b) the creator's client session being swapped to the new user,
+  /// (c) duplicate insert conflicts with the on_auth_user_created trigger.
   Future<Map<String, dynamic>> createUser({
     required String email,
     required String password,
@@ -60,33 +62,30 @@ class UserRemoteDataSource {
     AccountantPermissions permissions = AccountantPermissions.all,
   }) async {
     try {
-      // Use Supabase Auth admin API via service role, or regular signup
-      // For now, use signUp (user needs to confirm email if enabled)
-      final response = await _client.auth.signUp(
-        email: email,
-        password: password,
-        data: {'display_name': displayName},
+      final res = await _client.functions.invoke(
+        'admin-create-user',
+        body: {
+          'email': email.trim().toLowerCase(),
+          'password': password,
+          'displayName': displayName.trim(),
+          'role': role,
+          'assignedBranchIds': assignedBranchIds,
+          'permissions': permissions.toMap(),
+        },
       );
 
-      final newUid = response.user?.id;
-      if (newUid == null) {
-        return {'success': false, 'error': 'Не удалось получить ID нового пользователя'};
+      final data = res.data;
+      if (res.status != 200 || data is! Map) {
+        final msg = (data is Map && data['error'] != null) ? data['error'].toString() : 'Ошибка создания пользователя';
+        return {'success': false, 'error': _friendlyAuthError(msg)};
       }
-
-      // Write user profile
-      await _client.from('users').insert({
-        'id': newUid,
-        'display_name': displayName.trim(),
-        'email': email.trim().toLowerCase(),
-        'role': role,
-        'assigned_branch_ids': assignedBranchIds,
-        'permissions': permissions.toMap(),
-        'is_active': true,
-      });
-
-      return {'success': true, 'userId': newUid};
-    } on AuthException catch (e) {
-      return {'success': false, 'error': _friendlyAuthError(e.message)};
+      if (data['success'] == true) {
+        return {'success': true, 'userId': data['userId']};
+      }
+      return {'success': false, 'error': _friendlyAuthError(data['error']?.toString() ?? 'Ошибка')};
+    } on FunctionException catch (e) {
+      final detail = e.details?.toString() ?? e.reasonPhrase ?? 'Ошибка функции';
+      return {'success': false, 'error': _friendlyAuthError(detail)};
     } catch (e) {
       return {'success': false, 'error': e.toString()};
     }

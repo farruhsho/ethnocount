@@ -89,23 +89,77 @@ async function fetchCollection(name) {
   return snapshot.docs;
 }
 
-async function insertBatch(table, rows) {
+async function insertBatch(table, rows, { upsertOnConflict } = {}) {
   if (rows.length === 0) return;
   const CHUNK = 500;
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
-    const { error } = await supabase.from(table).insert(chunk);
+    const query = upsertOnConflict
+      ? supabase.from(table).upsert(chunk, { onConflict: upsertOnConflict })
+      : supabase.from(table).insert(chunk);
+    const { error } = await query;
     if (error) {
-      console.error(`  ERROR inserting into "${table}" (chunk ${i / CHUNK + 1}):`, error.message);
-      // Try one by one to find the problematic row
+      console.error(`  ERROR writing into "${table}" (chunk ${i / CHUNK + 1}):`, error.message);
       for (const row of chunk) {
-        const { error: rowErr } = await supabase.from(table).insert(row);
+        const rowQuery = upsertOnConflict
+          ? supabase.from(table).upsert(row, { onConflict: upsertOnConflict })
+          : supabase.from(table).insert(row);
+        const { error: rowErr } = await rowQuery;
         if (rowErr) {
           console.error(`    Row failed:`, JSON.stringify(row).slice(0, 200), rowErr.message);
         }
       }
     }
   }
+}
+
+// Direct REST call to /auth/v1/admin/users — bypasses @supabase/auth-js,
+// which sometimes times out on Windows/node24 due to undici IPv6 lookup behavior.
+async function loadAllAuthUsers() {
+  const byEmail = new Map();
+  let page = 1;
+  const perPage = 1000;
+  for (;;) {
+    const url = `${SUPABASE_URL}/auth/v1/admin/users?page=${page}&per_page=${perPage}`;
+    const res = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_SERVICE_KEY,
+        Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      },
+    });
+    if (!res.ok) throw new Error(`listUsers ${res.status}: ${await res.text()}`);
+    const json = await res.json();
+    const users = json.users ?? [];
+    for (const u of users) {
+      if (u.email) byEmail.set(u.email.toLowerCase(), u.id);
+    }
+    if (users.length < perPage) break;
+    page += 1;
+  }
+  return byEmail;
+}
+
+// Direct REST call to create an auth user — same reason as above.
+async function createAuthUser({ email, password, displayName }) {
+  const res = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+    method: 'POST',
+    headers: {
+      apikey: SUPABASE_SERVICE_KEY,
+      Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: { display_name: displayName },
+    }),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return { error: { message: json.msg || json.error_description || `HTTP ${res.status}` } };
+  }
+  return { data: { user: json } };
 }
 
 // ─────────────────────────────────────────────
@@ -132,43 +186,41 @@ async function migrateUsers() {
     profileMap.set(doc.id, doc.data());
   }
 
+  // Pre-load all existing Supabase Auth users once (avoids N x listUsers calls)
+  console.log('  Loading existing Supabase Auth users...');
+  const existingByEmail = await loadAllAuthUsers();
+  console.log(`  Existing Supabase Auth: ${existingByEmail.size} users`);
+
   for (const fbUser of firebaseUsers) {
     const oldUid = fbUser.uid;
-    const email = fbUser.email;
+    const email = (fbUser.email || '').toLowerCase();
     if (!email) {
       console.log(`  Skipping user ${oldUid} — no email`);
       continue;
     }
 
-    // Create user in Supabase Auth
+    const existingId = existingByEmail.get(email);
+    if (existingId) {
+      userIdMap.set(oldUid, existingId);
+      console.log(`  User ${email}: already exists → ${existingId}`);
+      continue;
+    }
+
     const tempPassword = 'Temp_' + randomUUID().slice(0, 12) + '!';
-    const { data, error } = await supabase.auth.admin.createUser({
-      email: email,
+    const { data, error } = await createAuthUser({
+      email,
       password: tempPassword,
-      email_confirm: true,
-      user_metadata: {
-        display_name: fbUser.displayName || profileMap.get(oldUid)?.displayName || '',
-      },
+      displayName: fbUser.displayName || profileMap.get(oldUid)?.displayName || '',
     });
 
     if (error) {
-      // User might already exist
-      if (error.message.includes('already been registered') || error.message.includes('already exists')) {
-        // Fetch existing user by email
-        const { data: existingUsers } = await supabase.auth.admin.listUsers();
-        const existing = existingUsers?.users?.find(u => u.email === email);
-        if (existing) {
-          userIdMap.set(oldUid, existing.id);
-          console.log(`  User ${email}: already exists → ${existing.id}`);
-          continue;
-        }
-      }
       console.error(`  ERROR creating user ${email}:`, error.message);
       continue;
     }
 
     const newUuid = data.user.id;
     userIdMap.set(oldUid, newUuid);
+    existingByEmail.set(email, newUuid);
     console.log(`  User ${email}: ${oldUid} → ${newUuid}`);
   }
 
@@ -212,8 +264,11 @@ async function migrateUsers() {
       created_at: toISO(d.createdAt) || new Date().toISOString(),
     });
   }
-  await insertBatch('users', rows);
-  console.log(`  ✓ ${rows.length} user profiles inserted`);
+  // Upsert: on_auth_user_created trigger (migration 008) has already inserted
+  // a baseline row for each admin.createUser call. We upsert by id to overwrite
+  // the baseline with the authoritative profile (role, branches, permissions).
+  await insertBatch('users', rows, { upsertOnConflict: 'id' });
+  console.log(`  ✓ ${rows.length} user profiles upserted`);
 }
 
 // ─────────────────────────────────────────────
