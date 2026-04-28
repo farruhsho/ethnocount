@@ -1,0 +1,260 @@
+name: Release builds
+
+# Срабатывает при пуше тега вида v1.2.3 (или ручным запуском).
+#   git tag v1.0.0
+#   git push origin v1.0.0
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Версия (например, 1.0.0). Если запуск по тегу — берём из тега.'
+        required: false
+
+permissions:
+  contents: write   # нужен для создания GitHub Release
+
+env:
+  # pubspec.yaml требует Dart SDK ^3.10.7 — это Flutter 3.41+ (stable
+  # на дату создания workflow). Не понижайте без обновления pubspec.yaml.
+  FLUTTER_CHANNEL: 'stable'
+
+jobs:
+  # ─── Android APK ──────────────────────────────────────────────────────
+  build-android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+      - run: flutter pub get
+      - run: flutter build apk --release
+      - name: Rename for release
+        run: |
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-release.apk out/ethnocount.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: out/*
+
+  # ─── Windows portable .zip ────────────────────────────────────────────
+  build-windows:
+    name: Windows portable
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+      - run: flutter config --enable-windows-desktop
+      - run: flutter pub get
+      - run: flutter build windows --release
+      - name: Pack portable zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path out | Out-Null
+          $src = "build/windows/x64/runner/Release"
+          Compress-Archive -Path "$src/*" -DestinationPath "out/EthnoCount-windows-portable.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: out/*
+
+  # ─── macOS .dmg (Apple Silicon + Intel в один универсальный билд) ─────
+  build-macos:
+    name: macOS dmg
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+      - run: flutter config --enable-macos-desktop
+      - run: flutter pub get
+      - run: flutter build macos --release
+      - name: Create .dmg (Apple Silicon)
+        run: |
+          set -e
+          mkdir -p out
+          brew install create-dmg || true
+          APP_PATH=$(find build/macos/Build/Products/Release -maxdepth 1 -name "*.app" | head -n1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Built .app not found"; ls -la build/macos/Build/Products/Release; exit 1
+          fi
+          create-dmg \
+            --volname "EthnoCount" \
+            --window-size 540 360 \
+            --icon-size 96 \
+            --app-drop-link 380 180 \
+            "out/EthnoCount-arm64.dmg" \
+            "$APP_PATH"
+          # Универсальные билды Flutter сейчас arm64; Intel-юзеры запустят
+          # через Rosetta 2. Делаем алиасный файл с тем же содержимым,
+          # чтобы карточка x64 на лендинге тоже работала.
+          cp "out/EthnoCount-arm64.dmg" "out/EthnoCount-x64.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: out/*
+
+  # ─── Linux AppImage + .deb + .tar.gz ──────────────────────────────────
+  build-linux:
+    name: Linux bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev libfuse2 file
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          cache: true
+      - run: flutter config --enable-linux-desktop
+      - run: flutter pub get
+      - run: flutter build linux --release
+      - name: Pack tar.gz
+        run: |
+          mkdir -p out
+          BUNDLE=build/linux/x64/release/bundle
+          tar -czf out/ethnocount.tar.gz -C "$BUNDLE" .
+      - name: Pack .deb
+        run: |
+          BUNDLE=build/linux/x64/release/bundle
+          PKG=ethnocount-deb
+          mkdir -p $PKG/DEBIAN $PKG/usr/lib/ethnocount $PKG/usr/bin $PKG/usr/share/applications
+          cp -r $BUNDLE/* $PKG/usr/lib/ethnocount/
+          cat > $PKG/DEBIAN/control <<EOF
+          Package: ethnocount
+          Version: ${GITHUB_REF_NAME#v}
+          Architecture: amd64
+          Maintainer: EthnoCount <support@ethnocount.app>
+          Description: EthnoCount — multi-branch financial management
+          EOF
+          ln -sf /usr/lib/ethnocount/ethnocount $PKG/usr/bin/ethnocount
+          cat > $PKG/usr/share/applications/ethnocount.desktop <<EOF
+          [Desktop Entry]
+          Name=EthnoCount
+          Exec=/usr/bin/ethnocount
+          Type=Application
+          Categories=Office;Finance;
+          EOF
+          dpkg-deb --build $PKG out/ethnocount.deb
+      - name: Pack AppImage
+        run: |
+          BUNDLE=build/linux/x64/release/bundle
+          APPDIR=EthnoCount.AppDir
+          mkdir -p $APPDIR/usr/bin $APPDIR/usr/lib
+          cp -r $BUNDLE/* $APPDIR/usr/bin/
+          cat > $APPDIR/AppRun <<'EOF'
+          #!/bin/sh
+          HERE="$(dirname "$(readlink -f "$0")")"
+          export LD_LIBRARY_PATH="$HERE/usr/bin/lib:$LD_LIBRARY_PATH"
+          exec "$HERE/usr/bin/ethnocount" "$@"
+          EOF
+          chmod +x $APPDIR/AppRun
+          cat > $APPDIR/ethnocount.desktop <<EOF
+          [Desktop Entry]
+          Name=EthnoCount
+          Exec=ethnocount
+          Type=Application
+          Icon=ethnocount
+          Categories=Office;Finance;
+          EOF
+          # Иконка-заглушка (1×1 PNG), если нет настоящей.
+          touch $APPDIR/ethnocount.png
+          curl -L -o appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 ./appimagetool $APPDIR out/EthnoCount-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/*
+
+  # ─── Собрать всё в один GitHub Release ─────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: [build-android, build-windows, build-macos, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lah dist/
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            V="${GITHUB_REF#refs/tags/v}"
+          else
+            V="${{ inputs.version }}"
+            [[ -z "$V" ]] && V="$(date +%Y.%m.%d)-manual"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Generate version.json
+        run: |
+          set -e
+          DATE=$(date +%Y-%m-%d)
+          declare -A FILES=(
+            [apk]=ethnocount.apk
+            [win-zip]=EthnoCount-windows-portable.zip
+            [mac-arm]=EthnoCount-arm64.dmg
+            [mac-x64]=EthnoCount-x64.dmg
+            [appimage]=EthnoCount-x86_64.AppImage
+            [deb]=ethnocount.deb
+            [targz]=ethnocount.tar.gz
+          )
+          {
+            echo "{"
+            echo "  \"version\": \"${{ steps.ver.outputs.version }}\","
+            echo "  \"date\": \"$DATE\","
+            echo "  \"sizes\": {"
+            FIRST=1
+            for KEY in "${!FILES[@]}"; do
+              F="dist/${FILES[$KEY]}"
+              if [ -f "$F" ]; then
+                SIZE_MB=$(awk "BEGIN { printf \"%.1f\", $(stat -c%s "$F") / 1048576 }")
+                [[ $FIRST -eq 0 ]] && echo ","
+                printf "    \"%s\": \"%s МБ\"" "$KEY" "$SIZE_MB"
+                FIRST=0
+              fi
+            done
+            echo ""
+            echo "  }"
+            echo "}"
+          } > dist/version.json
+          cat dist/version.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: EthnoCount ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/ethnocount.apk
+            dist/EthnoCount-windows-portable.zip
+            dist/EthnoCount-arm64.dmg
+            dist/EthnoCount-x64.dmg
+            dist/EthnoCount-x86_64.AppImage
+            dist/ethnocount.deb
+            dist/ethnocount.tar.gz
+            dist/version.json

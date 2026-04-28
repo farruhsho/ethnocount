@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Network access for Supabase (REST + Realtime), FCM and image_picker network sources.
+         Without this, release builds fail with SocketException / host lookup errors. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Required for Android 13+ to show OS notifications via flutter_local_notifications. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:enableOnBackInvokedCallback="true"
         android:label="ethnocount"
