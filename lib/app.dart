@@ -42,9 +42,15 @@ class EthnoCountApp extends StatelessWidget {
         listener: (context, state) {
           if (state.status == AuthStatus.unauthenticated) {
             unawaited(RoutePersistence.clear());
+            unawaited(sl<FcmService>().dispose());
           } else if (state.user != null) {
             final user = state.user!;
             context.read<DashboardBloc>().add(const DashboardStarted());
+            // Request OS notification permission (Android 13+) and create
+            // the channel before subscribing, so the permission prompt
+            // appears once the user is authenticated rather than on every
+            // notification arrival.
+            unawaited(sl<FcmService>().initialize());
             unawaited(sl<FcmService>().subscribeToUser(user.id));
             if (!user.role.isCreator && user.assignedBranchIds.isNotEmpty) {
               sl<FcmService>().subscribeToBranches(user.assignedBranchIds);
@@ -137,6 +143,12 @@ class _RootMaterialAppState extends State<_RootMaterialApp>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
       setState(() {});
+      // Re-check auth so role/permissions refresh and a server-side
+      // revoke is detected when the user returns from recents. Debounced
+      // inside the bloc so rapid resumes don't spam the network.
+      try {
+        context.read<AuthBloc>().add(const AuthCheckRequested());
+      } catch (_) {/* bloc not available yet */}
     }
   }
 

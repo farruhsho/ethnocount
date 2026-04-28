@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/di/injection.dart';
@@ -142,7 +143,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
               behavior: SnackBarBehavior.floating,
             ),
           );
-          Navigator.of(context).pop();
+          context.go('/transfers');
         }
         if (state.status == TransferBlocStatus.error) {
           final msg = state.errorMessage ?? 'Ошибка';
@@ -167,7 +168,13 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
       },
       builder: (context, state) {
         return Scaffold(
-          appBar: AppBar(title: const Text('Новый перевод')),
+          appBar: AppBar(
+            title: const Text('Новый перевод'),
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => context.go('/transfers'),
+            ),
+          ),
           body: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 900),
@@ -496,7 +503,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           }
           final val = _transferCurrency.isEmpty ? 'USD' : _transferCurrency;
           return DropdownButtonFormField<String>(
-            value: opts.contains(val) ? val : opts.first,
+            initialValue: opts.contains(val) ? val : opts.first,
             decoration: const InputDecoration(
               labelText: 'Валюта перевода',
               border: OutlineInputBorder(),
@@ -523,7 +530,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           }
           final val = _toCurrency.isEmpty ? 'USD' : _toCurrency;
           return DropdownButtonFormField<String>(
-            value: opts.contains(val) ? val : opts.first,
+            initialValue: opts.contains(val) ? val : opts.first,
             decoration: const InputDecoration(
               labelText: 'Валюта получателя',
               border: OutlineInputBorder(),
@@ -589,17 +596,23 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
         const SizedBox(height: AppSpacing.sm),
-        // Commission type toggle
-        Row(
+        // Commission type toggle. Wrap, not Row — на узких экранах телефона
+        // лейбл + "Фиксированная / Процент (%)" не помещались в одну строку
+        // и давали overflow ~84 px. Wrap переносит сегменты на новую строку.
+        Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.xs,
           children: [
-            const Text('Тип комиссии:',
-                style: TextStyle(fontSize: 13)),
-            const SizedBox(width: AppSpacing.sm),
+            const Text('Тип комиссии:', style: TextStyle(fontSize: 13)),
             SegmentedButton<CommissionType>(
               segments: CommissionType.values
                   .map((t) => ButtonSegment<CommissionType>(
                         value: t,
-                        label: Text(t.displayName),
+                        label: Text(
+                          t.displayName,
+                          style: const TextStyle(fontSize: 12),
+                        ),
                       ))
                   .toList(),
               selected: {_commissionType},
@@ -643,7 +656,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               child: DropdownButtonFormField<String>(
-                value: _currencies.contains(_commissionCurrency) ? _commissionCurrency : _transferCurrency,
+                initialValue: _currencies.contains(_commissionCurrency) ? _commissionCurrency : _transferCurrency,
                 decoration: const InputDecoration(
                   labelText: 'Валюта комиссии',
                   border: OutlineInputBorder(),

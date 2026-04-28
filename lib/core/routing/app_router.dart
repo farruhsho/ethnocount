@@ -161,7 +161,6 @@ class AppRouter {
                 GoRoute(
                   path: 'new',
                   name: RouteNames.createTransfer,
-                  parentNavigatorKey: _rootNavigatorKey,
                   builder: (context, state) => const CreateTransferPage(),
                 ),
                 GoRoute(
@@ -177,7 +176,6 @@ class AppRouter {
                 GoRoute(
                   path: 'topup',
                   name: RouteNames.branchTopUp,
-                  parentNavigatorKey: _rootNavigatorKey,
                   builder: (context, state) => const BranchTopUpPage(),
                 ),
               ],

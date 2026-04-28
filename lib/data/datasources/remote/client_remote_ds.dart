@@ -59,15 +59,48 @@ class ClientRemoteDataSource {
     return _mapClient(data);
   }
 
-  /// Get client balance.
-  Future<ClientBalance?> getClientBalance(String clientId) async {
-    final data = await _client
-        .from('client_balances')
-        .select()
-        .eq('client_id', clientId)
-        .maybeSingle();
-    if (data == null) return null;
+  /// Stream of all client balances (one row per client). Used by the
+  /// clients list to show the actual balance per row instead of just the
+  /// configured wallet currencies.
+  Stream<List<ClientBalance>> watchAllClientBalances() {
+    final controller = StreamController<List<ClientBalance>>.broadcast();
 
+    _fetchAllClientBalances().then((list) {
+      if (!controller.isClosed) controller.add(list);
+    }).catchError((e) {
+      if (!controller.isClosed) controller.addError(e);
+    });
+
+    final channel = _client
+        .channel('client_balances_changes')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'client_balances',
+          callback: (payload) {
+            _fetchAllClientBalances().then((list) {
+              if (!controller.isClosed) controller.add(list);
+            });
+          },
+        )
+        .subscribe();
+
+    controller.onCancel = () {
+      _client.removeChannel(channel);
+    };
+
+    return controller.stream;
+  }
+
+  Future<List<ClientBalance>> _fetchAllClientBalances() async {
+    final data = await _client.from('client_balances').select();
+    return (data as List).map((e) {
+      final m = Map<String, dynamic>.from(e as Map);
+      return _mapClientBalance(m['client_id'] as String? ?? '', m);
+    }).toList();
+  }
+
+  ClientBalance _mapClientBalance(String clientId, Map<String, dynamic> data) {
     final primaryCur = data['currency'] as String? ?? 'USD';
     final rawBalances = data['balances'];
     var balances = <String, double>{};
@@ -93,6 +126,17 @@ class ClientRemoteDataSource {
       balancesByCurrency: balances,
       updatedAt: DateTime.tryParse(data['updated_at'] ?? '') ?? DateTime.now(),
     );
+  }
+
+  /// Get client balance.
+  Future<ClientBalance?> getClientBalance(String clientId) async {
+    final data = await _client
+        .from('client_balances')
+        .select()
+        .eq('client_id', clientId)
+        .maybeSingle();
+    if (data == null) return null;
+    return _mapClientBalance(clientId, data);
   }
 
   /// Stream of client transactions.

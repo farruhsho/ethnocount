@@ -290,7 +290,7 @@ class _MobileLayout extends StatelessWidget {
               label: const Text('Покупка'),
             )
           : null,
-      body: isLoading
+      body: isLoading && purchases.isEmpty
           ? const Center(child: CircularProgressIndicator())
           : purchases.isEmpty
               ? _EmptyState(
@@ -308,53 +308,68 @@ class _MobileLayout extends StatelessWidget {
                             ),
                           )
                       : null)
-              : ListView.separated(
-                  itemCount: purchases.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, i) {
-                    final p = purchases[i];
-                    return ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor:
-                            AppColors.primary.withValues(alpha: 0.1),
-                        child: Text(
-                          CurrencyUtils.flag(p.currency),
-                          style: const TextStyle(fontSize: 18),
-                        ),
-                      ),
-                      title: Text(p.description,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
-                      subtitle: Text(p.transactionCode,
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
-                              ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .outline)),
-                      trailing: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            '${CurrencyUtils.symbol(p.currency)} ${p.totalAmount.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold),
-                          ),
-                          Text(
-                            p.createdAt.historyFormatted,
-                            style:
-                                Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                      onTap: () => showModalBottomSheet(
-                        context: context,
-                        builder: (_) => _DetailPanel(purchase: p),
-                      ),
-                    );
+              : RefreshIndicator(
+                  onRefresh: () async {
+                    context
+                        .read<PurchaseBloc>()
+                        .add(const PurchasesLoadRequested());
                   },
+                  child: ListView.separated(
+                    padding: const EdgeInsets.only(bottom: 80),
+                    itemCount: purchases.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final p = purchases[i];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor:
+                              AppColors.primary.withValues(alpha: 0.1),
+                          child: Text(
+                            CurrencyUtils.flag(p.currency),
+                            style: const TextStyle(fontSize: 18),
+                          ),
+                        ),
+                        title: Text(p.description,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 15)),
+                        subtitle: Text(p.transactionCode,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(
+                                    fontSize: 13,
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .outline)),
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '${CurrencyUtils.symbol(p.currency)} ${p.totalAmount.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14),
+                            ),
+                            Text(
+                              p.createdAt.historyFormatted,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(fontSize: 12),
+                            ),
+                          ],
+                        ),
+                        onTap: () => showModalBottomSheet(
+                          context: context,
+                          isScrollControlled: true,
+                          useSafeArea: true,
+                          builder: (_) => _DetailPanel(purchase: p),
+                        ),
+                      );
+                    },
+                  ),
                 ),
     );
   }
@@ -818,7 +833,7 @@ class _EditPurchaseDialogState extends State<_EditPurchaseDialog> {
         ],
       ),
       content: SizedBox(
-        width: 380,
+        width: context.isDesktop ? 380 : double.maxFinite,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -972,7 +987,7 @@ class _DeletePurchaseDialogState extends State<_DeletePurchaseDialog> {
           ],
         ),
         content: SizedBox(
-          width: 380,
+          width: context.isDesktop ? 380 : double.maxFinite,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,

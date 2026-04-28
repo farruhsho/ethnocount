@@ -105,15 +105,17 @@ class Purchase extends Equatable {
     required this.createdAt,
   });
 
-  /// Portion paid from **cash** accounts ([AccountType.cash]).
+  /// Portion paid from **cash** accounts ([AccountType.cash]) that are
+  /// denominated in this purchase's [currency].
   ///
-  /// Legacy purchases without [PurchasePayment.accountType] contribute `0` here.
-  /// For “sum in [currency] regardless of account kind”, use [amountInPurchaseCurrency].
+  /// Currency-aware: lines in a different currency are excluded — summing across
+  /// currencies would produce a numerically nonsensical total.
+  /// Legacy purchases without [PurchasePayment.accountType] contribute `0`.
   double get cashAmount => payments
-      .where((p) => p.accountType == AccountType.cash)
+      .where((p) => p.accountType == AccountType.cash && p.currency == currency)
       .fold<double>(0, (s, p) => s + p.amount);
 
-  /// Sum of payment lines whose line currency matches this purchase’s [currency].
+  /// Sum of payment lines whose line currency matches this purchase's [currency].
   double get amountInPurchaseCurrency => payments
       .where((p) => p.currency == currency)
       .fold<double>(0, (s, p) => s + p.amount);

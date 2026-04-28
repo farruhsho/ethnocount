@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -231,8 +233,6 @@ class _MobileShell extends StatefulWidget {
 }
 
 class _MobileShellState extends State<_MobileShell> {
-  final _scaffoldKey = GlobalKey<ScaffoldState>();
-
   @override
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
@@ -243,8 +243,11 @@ class _MobileShellState extends State<_MobileShell> {
         final isCreator = user?.role.isCreator ?? false;
         final perms = user?.permissions ?? AccountantPermissions.all;
 
+        final userEmail = user?.email ?? '';
+        final userName = user?.displayName ?? '';
+        final roleLabel = isCreator ? 'Создатель' : 'Бухгалтер';
+
         return Scaffold(
-          key: _scaffoldKey,
           body: SafeArea(
             top: true,
             bottom: false,
@@ -252,7 +255,15 @@ class _MobileShellState extends State<_MobileShell> {
           ),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _mobileIndex(context),
-            onDestinationSelected: (index) => _onMobileTap(context, index, _scaffoldKey),
+            onDestinationSelected: (index) => _onMobileTap(
+              context,
+              index,
+              perms,
+              isCreator,
+              userEmail: userEmail,
+              userName: userName,
+              roleLabel: roleLabel,
+            ),
             destinations: const [
               NavigationDestination(
                 icon: Icon(Icons.dashboard_outlined),
@@ -275,104 +286,255 @@ class _MobileShellState extends State<_MobileShell> {
                 label: 'Клиенты',
               ),
               NavigationDestination(
-                icon: Icon(Icons.more_horiz),
-                selectedIcon: Icon(Icons.more_horiz),
+                icon: Icon(Icons.apps_rounded),
+                selectedIcon: Icon(Icons.apps_rounded),
                 label: 'Ещё',
               ),
             ],
           ),
-          endDrawer: Drawer(
-            child: ListView(
-              children: [
-                DrawerHeader(
+        );
+      },
+    );
+  }
+}
+
+/// Destinations shown in the mobile "Ещё" (More) bottom sheet — discovery is
+/// much better than a side drawer.
+class _MoreDestination {
+  const _MoreDestination({
+    required this.icon,
+    required this.label,
+    required this.route,
+  });
+  final IconData icon;
+  final String label;
+  final String route;
+}
+
+Future<void> _showMoreSheet(
+  BuildContext context, {
+  required AccountantPermissions perms,
+  required bool isCreator,
+  String userEmail = '',
+  String userName = '',
+  String roleLabel = '',
+}) async {
+  final items = <_MoreDestination>[
+    if (perms.canPurchases || isCreator)
+      const _MoreDestination(
+        icon: Icons.shopping_cart_outlined,
+        label: 'Покупки',
+        route: '/purchases',
+      ),
+    if (perms.canAnalytics || isCreator)
+      const _MoreDestination(
+        icon: Icons.analytics_outlined,
+        label: 'Аналитика',
+        route: '/analytics',
+      ),
+    if (perms.canExchangeRates || isCreator)
+      const _MoreDestination(
+        icon: Icons.currency_exchange_outlined,
+        label: 'Курсы',
+        route: '/exchange-rates',
+      ),
+    if (perms.canReports || isCreator)
+      const _MoreDestination(
+        icon: Icons.file_download_outlined,
+        label: 'Отчёты',
+        route: '/reports',
+      ),
+    if (perms.canBranchesView || isCreator)
+      const _MoreDestination(
+        icon: Icons.business_outlined,
+        label: 'Филиалы',
+        route: '/branches',
+      ),
+    if (isCreator)
+      const _MoreDestination(
+        icon: Icons.admin_panel_settings_outlined,
+        label: 'Управление',
+        route: '/users',
+      ),
+    const _MoreDestination(
+      icon: Icons.notifications_outlined,
+      label: 'Уведомления',
+      route: '/notifications',
+    ),
+    const _MoreDestination(
+      icon: Icons.settings_outlined,
+      label: 'Настройки',
+      route: '/settings',
+    ),
+  ];
+
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    showDragHandle: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) {
+      final scheme = Theme.of(ctx).colorScheme;
+      final hasAccount = userEmail.isNotEmpty || userName.isNotEmpty;
+      final initial = (userName.isNotEmpty
+              ? userName
+              : (userEmail.isNotEmpty ? userEmail : '?'))
+          .characters
+          .first
+          .toUpperCase();
+
+      return SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.lg,
+            AppSpacing.sm,
+            AppSpacing.lg,
+            AppSpacing.xl,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Account card — so user sees under whom они работают
+              if (hasAccount)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSpacing.md),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
+                    color: scheme.primaryContainer.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      const EthnoLogo(height: 48),
-                      const SizedBox(height: 12),
-                      Text('Ethno Logistics',
-                          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontSize: 20)),
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor: scheme.primary,
+                        child: Text(
+                          initial,
+                          style: TextStyle(
+                            color: scheme.onPrimary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              userName.isNotEmpty ? userName : userEmail,
+                              style: Theme.of(ctx).textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              roleLabel.isEmpty
+                                  ? userEmail
+                                  : (userName.isNotEmpty
+                                      ? '$roleLabel • $userEmail'
+                                      : roleLabel),
+                              style: Theme.of(ctx).textTheme.bodySmall,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                if (perms.canPurchases || isCreator)
-                  ListTile(
-                    leading: const Icon(Icons.shopping_cart_outlined),
-                    title: const Text('Покупки'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.go('/purchases');
-                    },
+              if (hasAccount) const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  const EthnoLogo(height: 24),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text(
+                    'Разделы',
+                    style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
-                if (perms.canAnalytics || isCreator)
-                  ListTile(
-                    leading: const Icon(Icons.analytics_outlined),
-                    title: const Text('Аналитика'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.go('/analytics');
-                    },
-                  ),
-                if (perms.canExchangeRates || isCreator)
-                  ListTile(
-                    leading: const Icon(Icons.currency_exchange_outlined),
-                    title: const Text('Курсы валют'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.go('/exchange-rates');
-                    },
-                  ),
-                if (perms.canReports || isCreator)
-                  ListTile(
-                    leading: const Icon(Icons.file_download_outlined),
-                    title: const Text('Отчёты'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.go('/reports');
-                    },
-                  ),
-                if (perms.canBranchesView || isCreator)
-                  ListTile(
-                    leading: const Icon(Icons.business_outlined),
-                    title: const Text('Филиалы'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.go('/branches');
-                    },
-                  ),
-                if (isCreator)
-                  ListTile(
-                    leading: const Icon(Icons.admin_panel_settings_outlined),
-                    title: const Text('Управление'),
-                    onTap: () {
-                      Navigator.pop(context);
-                      context.go('/users');
-                    },
-                  ),
-                ListTile(
-                  leading: const Icon(Icons.notifications_outlined),
-                  title: const Text('Уведомления'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    context.go('/notifications');
-                  },
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: AppSpacing.sm,
+                  mainAxisSpacing: AppSpacing.sm,
+                  childAspectRatio: 1.0,
                 ),
-                ListTile(
-                  leading: const Icon(Icons.settings_outlined),
-                  title: const Text('Настройки'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    context.go('/settings');
-                  },
-                ),
-              ],
-            ),
+                itemCount: items.length,
+                itemBuilder: (_, i) {
+                  final item = items[i];
+                  return _MoreTile(
+                    icon: item.icon,
+                    label: item.label,
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      context.go(item.route);
+                    },
+                  );
+                },
+              ),
+            ],
           ),
-        );
-      },
+        ),
+      );
+    },
+  );
+}
+
+class _MoreTile extends StatelessWidget {
+  const _MoreTile({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.sm),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 28, color: scheme.primary),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -400,17 +562,34 @@ void _onTap(BuildContext context, int index) {
 
 int _mobileIndex(BuildContext context) {
   final location = GoRouterState.of(context).uri.path;
+  if (location == '/') return 0;
   if (location.startsWith('/transfers')) return 1;
   if (location.startsWith('/ledger')) return 2;
   if (location.startsWith('/clients')) return 3;
-  return 0;
+  // Any non-main route is shown as part of "Ещё".
+  return 4;
 }
 
 const _mobileRoutes = ['/', '/transfers', '/ledger', '/clients'];
 
-void _onMobileTap(BuildContext context, int index, GlobalKey<ScaffoldState> scaffoldKey) {
+void _onMobileTap(
+  BuildContext context,
+  int index,
+  AccountantPermissions perms,
+  bool isCreator, {
+  String userEmail = '',
+  String userName = '',
+  String roleLabel = '',
+}) {
   if (index == 4) {
-    scaffoldKey.currentState?.openEndDrawer();
+    unawaited(_showMoreSheet(
+      context,
+      perms: perms,
+      isCreator: isCreator,
+      userEmail: userEmail,
+      userName: userName,
+      roleLabel: roleLabel,
+    ));
     return;
   }
   if (index >= 0 && index < _mobileRoutes.length) {

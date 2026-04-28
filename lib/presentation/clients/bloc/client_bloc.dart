@@ -76,6 +76,15 @@ class ClientDetailRequested extends ClientEvent {
   List<Object?> get props => [clientId];
 }
 
+/// Internal: pushed by the all-balances watcher each time the
+/// `client_balances` table changes.
+class _ClientBalancesUpdated extends ClientEvent {
+  final List<ClientBalance> balances;
+  const _ClientBalancesUpdated(this.balances);
+  @override
+  List<Object?> get props => [balances];
+}
+
 // ─── State ───
 
 enum ClientBlocStatus { initial, loading, loaded, operating, success, error }
@@ -83,6 +92,9 @@ enum ClientBlocStatus { initial, loading, loaded, operating, success, error }
 class ClientBlocState extends Equatable {
   final ClientBlocStatus status;
   final List<Client> clients;
+
+  /// Map clientId → balance, used by the list to render per-client balances.
+  final Map<String, ClientBalance> balancesByClientId;
   final Client? selectedClient;
   final ClientBalance? selectedBalance;
   final List<ClientTransaction> transactions;
@@ -92,6 +104,7 @@ class ClientBlocState extends Equatable {
   const ClientBlocState({
     this.status = ClientBlocStatus.initial,
     this.clients = const [],
+    this.balancesByClientId = const {},
     this.selectedClient,
     this.selectedBalance,
     this.transactions = const [],
@@ -102,6 +115,7 @@ class ClientBlocState extends Equatable {
   ClientBlocState copyWith({
     ClientBlocStatus? status,
     List<Client>? clients,
+    Map<String, ClientBalance>? balancesByClientId,
     Client? selectedClient,
     ClientBalance? selectedBalance,
     List<ClientTransaction>? transactions,
@@ -111,6 +125,7 @@ class ClientBlocState extends Equatable {
     return ClientBlocState(
       status: status ?? this.status,
       clients: clients ?? this.clients,
+      balancesByClientId: balancesByClientId ?? this.balancesByClientId,
       selectedClient: selectedClient ?? this.selectedClient,
       selectedBalance: selectedBalance ?? this.selectedBalance,
       transactions: transactions ?? this.transactions,
@@ -123,6 +138,7 @@ class ClientBlocState extends Equatable {
   List<Object?> get props => [
         status,
         clients,
+        balancesByClientId,
         selectedClient,
         selectedBalance,
         transactions,
@@ -137,6 +153,7 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
   final ClientRepository _repository;
   StreamSubscription<List<Client>>? _clientsSub;
   StreamSubscription<List<ClientTransaction>>? _txSub;
+  StreamSubscription<List<ClientBalance>>? _balancesSub;
 
   ClientBloc({required ClientRepository repository})
       : _repository = repository,
@@ -146,6 +163,7 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
     on<ClientDepositRequested>(_onDeposit);
     on<ClientDebitRequested>(_onDebit);
     on<ClientDetailRequested>(_onDetail);
+    on<_ClientBalancesUpdated>(_onBalancesUpdated);
   }
 
   Future<void> _onLoad(
@@ -153,6 +171,15 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
     Emitter<ClientBlocState> emit,
   ) async {
     emit(state.copyWith(status: ClientBlocStatus.loading));
+
+    // Side-channel: keep all balances in sync via a private event so the
+    // list rows can show per-client amounts.
+    await _balancesSub?.cancel();
+    _balancesSub = _repository.watchAllClientBalances().listen(
+      (balances) => add(_ClientBalancesUpdated(balances)),
+      onError: (_) {/* keep last known balances on error */},
+    );
+
     await emit.forEach(
       _repository.watchClients(),
       onData: (clients) =>
@@ -162,6 +189,16 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
         errorMessage: error.toString(),
       ),
     );
+  }
+
+  void _onBalancesUpdated(
+    _ClientBalancesUpdated event,
+    Emitter<ClientBlocState> emit,
+  ) {
+    final map = <String, ClientBalance>{
+      for (final b in event.balances) b.clientId: b,
+    };
+    emit(state.copyWith(balancesByClientId: map));
   }
 
   Future<void> _onCreate(
@@ -286,6 +323,7 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
   Future<void> close() {
     _clientsSub?.cancel();
     _txSub?.cancel();
+    _balancesSub?.cancel();
     return super.close();
   }
 }

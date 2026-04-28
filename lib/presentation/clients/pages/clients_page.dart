@@ -10,6 +10,7 @@ import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/client.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/clients/bloc/client_bloc.dart';
+import 'package:ethnocount/presentation/common/widgets/empty_state.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/core/utils/branch_access.dart';
 
@@ -129,6 +130,46 @@ List<Widget> _clientBalanceLines(BuildContext context, ClientBalance balance) {
   }).toList();
 }
 
+/// Compact one- or two-line balance summary for use in list rows.
+/// Hides currencies with zero balance to avoid noise; falls back to the
+/// configured wallet currencies when no balance row exists yet.
+String _shortBalanceSummary(Client client, ClientBalance? balance) {
+  if (balance == null || balance.balancesByCurrency.isEmpty) {
+    return '0.00 ${client.currency}';
+  }
+  final entries = balance.balancesByCurrency.entries
+      .where((e) => e.value.abs() > 0.0049)
+      .toList()
+    ..sort((a, b) => a.key.compareTo(b.key));
+  if (entries.isEmpty) {
+    // All wallet currencies exist but are zero — show primary as 0.
+    return '0.00 ${balance.currency}';
+  }
+  return entries
+      .map((e) => '${e.value.toStringAsFixed(2)} ${e.key}')
+      .join(' · ');
+}
+
+/// Coloured chip-style label that condenses balances to a single line for
+/// data tables. Negative balances are tinted red.
+Widget _balancePill(BuildContext context, Client client, ClientBalance? balance) {
+  final summary = _shortBalanceSummary(client, balance);
+  final isNegative = balance != null &&
+      balance.balancesByCurrency.values.any((v) => v < -0.0049);
+  final color = balance == null
+      ? Theme.of(context).colorScheme.onSurfaceVariant
+      : (isNegative ? Colors.red : AppColors.primary);
+  return Text(
+    summary,
+    style: TextStyle(
+      fontFamily: 'JetBrains Mono',
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      color: color,
+    ),
+  );
+}
+
 class _DesktopLayout extends StatelessWidget {
   const _DesktopLayout({
     required this.state,
@@ -174,6 +215,7 @@ class _DesktopLayout extends StatelessWidget {
                   child: _ClientTable(
                     clients: filtered,
                     branches: branches,
+                    balancesByClientId: state.balancesByClientId,
                     selected: selected,
                     onSelect: onSelect,
                     isLoading: state.status == ClientBlocStatus.loading,
@@ -236,29 +278,66 @@ class _MobileLayout extends StatelessWidget {
             child: _SearchBar(onChanged: onSearchChanged),
           ),
           Expanded(
-            child: ListView.builder(
-              itemCount: filtered.length,
-              itemBuilder: (context, i) {
-                final client = filtered[i];
-                final branchName = _branchLabel(client.branchId, branches);
-                return ListTile(
-                  leading: CircleAvatar(
-                    child: Text(client.name[0].toUpperCase()),
+            child: filtered.isEmpty &&
+                    state.status != ClientBlocStatus.loading
+                ? const EmptyState(
+                    icon: Icons.people_outline_rounded,
+                    title: 'Клиенты не найдены',
+                    subtitle:
+                        'Нет клиентов по текущему поиску. Очистите запрос или добавьте нового клиента.',
+                  )
+                : RefreshIndicator(
+                    onRefresh: () async {
+                      context
+                          .read<ClientBloc>()
+                          .add(const ClientsLoadRequested());
+                    },
+                    child: ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 80),
+                      itemCount: filtered.length,
+                      itemBuilder: (context, i) {
+                        final client = filtered[i];
+                        final branchName =
+                            _branchLabel(client.branchId, branches);
+                        final balance = state.balancesByClientId[client.id];
+                        return ListTile(
+                          leading: CircleAvatar(
+                            child: Text(client.name[0].toUpperCase()),
+                          ),
+                          title: Text(
+                            client.name,
+                            style: const TextStyle(fontSize: 15),
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${client.counterpartyId} • ${client.phone}',
+                                style: const TextStyle(fontSize: 13),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              Text(
+                                branchName,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              const SizedBox(height: 2),
+                              _balancePill(context, client, balance),
+                            ],
+                          ),
+                          isThreeLine: true,
+                          onTap: () => _showDetailSheet(context, client),
+                        );
+                      },
+                    ),
                   ),
-                  title: Text(client.name),
-                  subtitle: Text(
-                    '${client.counterpartyId} • ${client.phone}\n$branchName • ${client.walletCurrenciesDisplay}',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  isThreeLine: true,
-                  trailing: Text(
-                    client.walletCurrenciesDisplay,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  onTap: () => _showDetailSheet(context, client),
-                );
-              },
-            ),
           ),
         ],
       ),
@@ -366,6 +445,7 @@ class _ClientTable extends StatelessWidget {
   const _ClientTable({
     required this.clients,
     required this.branches,
+    required this.balancesByClientId,
     required this.selected,
     required this.onSelect,
     required this.isLoading,
@@ -373,6 +453,7 @@ class _ClientTable extends StatelessWidget {
 
   final List<Client> clients;
   final List<Branch> branches;
+  final Map<String, ClientBalance> balancesByClientId;
   final Client? selected;
   final ValueChanged<Client> onSelect;
   final bool isLoading;
@@ -426,11 +507,12 @@ class _ClientTable extends StatelessWidget {
             DataColumn(label: Text('Телефон')),
             DataColumn(label: Text('Страна')),
             DataColumn(label: Text('Филиал')),
-            DataColumn(label: Text('Валюты')),
+            DataColumn(label: Text('Баланс')),
             DataColumn(label: Text('Статус')),
           ],
           rows: clients.map((client) {
             final isSelected = selected?.id == client.id;
+            final balance = balancesByClientId[client.id];
             return DataRow(
               selected: isSelected,
               onSelectChanged: (_) => onSelect(client),
@@ -467,7 +549,7 @@ class _ClientTable extends StatelessWidget {
                 DataCell(Text(client.phone)),
                 DataCell(Text(client.country.isEmpty ? '—' : client.country)),
                 DataCell(Text(_branchLabel(client.branchId, branches))),
-                DataCell(Text(client.walletCurrenciesDisplay)),
+                DataCell(_balancePill(context, client, balance)),
                 DataCell(
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -1044,7 +1126,7 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
         content: Form(
           key: _formKey,
           child: SizedBox(
-            width: 420,
+            width: context.isDesktop ? 420 : double.maxFinite,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

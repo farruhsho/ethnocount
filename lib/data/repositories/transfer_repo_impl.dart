@@ -3,6 +3,7 @@ import 'package:ethnocount/core/errors/failures.dart';
 import 'package:ethnocount/core/network/connectivity_service.dart';
 import 'package:ethnocount/data/datasources/remote/transfer_remote_ds.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
+import 'package:ethnocount/domain/entities/transfer_issuance.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/repositories/transfer_repository.dart';
 
@@ -159,6 +160,39 @@ class TransferRepoImpl implements TransferRepository {
   }
 
   @override
+  Future<Either<Failure, bool>> issuePartialTransfer({
+    required String transferId,
+    required double amount,
+    String? note,
+  }) async {
+    try {
+      if (!await _connectivity.isConnected) {
+        return const Left(OfflineFailure());
+      }
+      if (amount <= 0) {
+        return const Left(ServerFailure('Сумма выдачи должна быть больше нуля'));
+      }
+      final result = await _remoteDs.issueTransferPartial(
+        transferId,
+        amount,
+        note: note,
+      );
+      if (result['success'] != true) {
+        return Left(ServerFailure(
+            result['error']?.toString() ?? 'Partial issue failed'));
+      }
+      return Right(result['fullyIssued'] == true);
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
+  Stream<List<TransferIssuance>> watchIssuances(String transferId) {
+    return _remoteDs.watchIssuances(transferId);
+  }
+
+  @override
   Future<Either<Failure, void>> rejectTransfer({
     required String transferId,
     required String reason,
@@ -182,20 +216,25 @@ class TransferRepoImpl implements TransferRepository {
   @override
   Future<Either<Failure, void>> cancelTransfer({
     required String transferId,
+    String reason = '',
   }) async {
     try {
       if (!await _connectivity.isConnected) {
         return const Left(OfflineFailure());
       }
 
-      final result = await _remoteDs.cancelTransfer(transferId);
+      final result = await _remoteDs.cancelTransfer(transferId, reason: reason);
       if (result['success'] == true) {
         return const Right(null);
       }
       return Left(ServerFailure(
           result['error']?.toString() ?? 'Cancellation failed'));
     } catch (e) {
-      return Left(UnexpectedFailure(e.toString()));
+      final msg = e.toString();
+      if (msg.contains('Only pending') || msg.contains('not in pending')) {
+        return const Left(TransferAlreadyConfirmedFailure());
+      }
+      return Left(UnexpectedFailure(msg));
     }
   }
 

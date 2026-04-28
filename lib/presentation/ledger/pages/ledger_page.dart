@@ -21,6 +21,7 @@ import 'package:ethnocount/presentation/common/widgets/desktop_data_grid.dart';
 import 'package:ethnocount/presentation/common/widgets/filter_panel.dart';
 import 'package:ethnocount/presentation/common/widgets/animated_counter.dart';
 import 'package:ethnocount/presentation/common/widgets/shimmer_loading.dart';
+import 'package:ethnocount/presentation/common/widgets/empty_state.dart';
 import 'package:ethnocount/presentation/common/widgets/export_dialog.dart';
 import 'package:ethnocount/domain/entities/export_settings.dart';
 import 'package:ethnocount/data/datasources/remote/user_remote_ds.dart';
@@ -425,7 +426,7 @@ class _LedgerPageState extends State<LedgerPage> {
     );
   }
 
-  /// Horizontal-scroll table on phone — avoids ListTile overflow and reads as a table.
+  /// Card list on phone — readable rows, no horizontal scroll needed.
   Widget _buildMobileLedgerTable(
     BuildContext context,
     List<LedgerEntry> entries,
@@ -433,110 +434,20 @@ class _LedgerPageState extends State<LedgerPage> {
     Map<String, BranchAccount> flatAccounts,
     List<Branch> branches,
   ) {
-    final isDark = context.isDark;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Scrollbar(
-          thumbVisibility: true,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minWidth: constraints.maxWidth),
-              child: SingleChildScrollView(
-                child: DataTable(
-                  headingRowHeight: 40,
-                  dataRowMinHeight: 44,
-                  dataRowMaxHeight: 72,
-                  columnSpacing: AppSpacing.md,
-                  horizontalMargin: AppSpacing.sm,
-                  headingTextStyle: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary,
-                  ),
-                  columns: const [
-                    DataColumn(label: Text('Дата')),
-                    DataColumn(label: Text('Тип')),
-                    DataColumn(label: Text('Счёт')),
-                    DataColumn(label: Text('Описание')),
-                    DataColumn(label: Text('Сумма'), numeric: true),
-                  ],
-                  rows: entries.map((entry) {
-                    final isCredit = entry.type == LedgerEntryType.credit;
-                    final accLine =
-                        _ledgerAccountLabel(entry, branchAccounts, flatAccounts);
-                    final branchLine = _ledgerBranchSubtitle(entry, branches);
-                    return DataRow(
-                      cells: [
-                        DataCell(Text(
-                          entry.createdAt.historyFormatted,
-                          style: const TextStyle(fontSize: 12),
-                        )),
-                        DataCell(Text(
-                          entry.referenceType.displayName,
-                          style: const TextStyle(fontSize: 11),
-                        )),
-                        DataCell(
-                          SizedBox(
-                            width: 120,
-                            child: Text(
-                              accLine,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                          ),
-                        ),
-                        DataCell(
-                          SizedBox(
-                            width: 160,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  entry.description,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                if (branchLine != null)
-                                  Text(
-                                    branchLine,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      color: isDark
-                                          ? AppColors.darkTextSecondary
-                                          : AppColors.lightTextSecondary,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        DataCell(
-                          Text(
-                            '${isCredit ? '+' : '−'}${entry.amount.formatCurrency()} ${entry.currency}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              fontFamily: 'JetBrains Mono',
-                              color: isCredit ? AppColors.success : AppColors.error,
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  }).toList(),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
+    return RefreshIndicator(
+      onRefresh: () async => _loadLedger(),
+      child: ListView.builder(
+        padding: const EdgeInsets.all(AppSpacing.sm),
+        itemCount: entries.length,
+        itemBuilder: (context, i) {
+          final entry = entries[i];
+          return _LedgerEntryCard(
+            entry: entry,
+            accountLabel: _ledgerAccountLabel(entry, branchAccounts, flatAccounts),
+            branchLabel: _ledgerBranchSubtitle(entry, branches),
+          );
+        },
+      ),
     );
   }
 
@@ -569,28 +480,10 @@ class _LedgerPageState extends State<LedgerPage> {
   }
 
   Widget _buildEmptyState(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.receipt_long_outlined,
-            size: 64,
-            color: context.isDark
-                ? AppColors.darkTextSecondary
-                : AppColors.lightTextSecondary,
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            'Записи в журнале отсутствуют',
-            style: context.textTheme.titleMedium?.copyWith(
-              color: context.isDark
-                  ? AppColors.darkTextSecondary
-                  : AppColors.lightTextSecondary,
-            ),
-          ),
-        ],
-      ),
+    return const EmptyState(
+      icon: Icons.receipt_long_outlined,
+      title: 'Записи в журнале отсутствуют',
+      subtitle: 'По выбранному филиалу операций пока нет. Измените фильтры или повторите позже.',
     );
   }
 
@@ -652,6 +545,150 @@ class _LedgerPageState extends State<LedgerPage> {
     } finally {
       if (mounted) setState(() => _isExporting = false);
     }
+  }
+}
+
+class _LedgerEntryCard extends StatelessWidget {
+  const _LedgerEntryCard({
+    required this.entry,
+    required this.accountLabel,
+    this.branchLabel,
+  });
+
+  final LedgerEntry entry;
+  final String accountLabel;
+  final String? branchLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final isCredit = entry.type == LedgerEntryType.credit;
+    final amountColor = isCredit ? AppColors.success : AppColors.error;
+    final secondary =
+        isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        side: BorderSide(
+          color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+          width: 0.5,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: amountColor.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+              ),
+              child: Icon(
+                isCredit
+                    ? Icons.arrow_downward_rounded
+                    : Icons.arrow_upward_rounded,
+                size: 18,
+                color: amountColor,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entry.description,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    accountLabel,
+                    style: TextStyle(fontSize: 12, color: secondary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: (isDark ? Colors.white : Colors.black)
+                              .withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          entry.referenceType.displayName,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: secondary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      if (branchLabel != null) ...[
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            branchLabel!,
+                            style: TextStyle(fontSize: 11, color: secondary),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          entry.createdAt.historyFormatted,
+                          style: TextStyle(fontSize: 11, color: secondary),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${isCredit ? '+' : '−'}${entry.amount.formatCurrency()}',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    fontFamily: 'JetBrains Mono',
+                    color: amountColor,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  entry.currency,
+                  style: TextStyle(fontSize: 11, color: secondary),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

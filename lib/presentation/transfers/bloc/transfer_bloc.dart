@@ -5,6 +5,7 @@ import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/usecases/transfer/create_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/confirm_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/issue_transfer.dart';
+import 'package:ethnocount/domain/usecases/transfer/issue_partial_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/reject_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/update_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/watch_transfers.dart';
@@ -101,6 +102,21 @@ class TransferIssueRequested extends TransferEvent {
   const TransferIssueRequested(this.transferId);
   @override
   List<Object?> get props => [transferId];
+}
+
+/// Pay out one tranche of a confirmed transfer.
+/// `amount` is in receiver currency; `note` is optional bookkeeping comment.
+class TransferIssuePartialRequested extends TransferEvent {
+  final String transferId;
+  final double amount;
+  final String? note;
+  const TransferIssuePartialRequested({
+    required this.transferId,
+    required this.amount,
+    this.note,
+  });
+  @override
+  List<Object?> get props => [transferId, amount, note];
 }
 
 class TransferRejectRequested extends TransferEvent {
@@ -202,6 +218,7 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
   final UpdateTransferUseCase _updateTransfer;
   final ConfirmTransferUseCase _confirmTransfer;
   final IssueTransferUseCase _issueTransfer;
+  final IssuePartialTransferUseCase _issuePartialTransfer;
   final RejectTransferUseCase _rejectTransfer;
   final WatchTransfersUseCase _watchTransfers;
 
@@ -210,12 +227,14 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
     required UpdateTransferUseCase updateTransfer,
     required ConfirmTransferUseCase confirmTransfer,
     required IssueTransferUseCase issueTransfer,
+    required IssuePartialTransferUseCase issuePartialTransfer,
     required RejectTransferUseCase rejectTransfer,
     required WatchTransfersUseCase watchTransfers,
   })  : _createTransfer = createTransfer,
         _updateTransfer = updateTransfer,
         _confirmTransfer = confirmTransfer,
         _issueTransfer = issueTransfer,
+        _issuePartialTransfer = issuePartialTransfer,
         _rejectTransfer = rejectTransfer,
         _watchTransfers = watchTransfers,
         super(const TransferBlocState()) {
@@ -224,6 +243,7 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
     on<TransferUpdateRequested>(_onUpdate);
     on<TransferConfirmRequested>(_onConfirm);
     on<TransferIssueRequested>(_onIssue);
+    on<TransferIssuePartialRequested>(_onIssuePartial);
     on<TransferRejectRequested>(_onReject);
   }
 
@@ -372,6 +392,31 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
       (_) => emit(state.copyWith(
         status: TransferBlocStatus.success,
         successMessage: 'Перевод отмечен как выдан',
+      )),
+    );
+  }
+
+  Future<void> _onIssuePartial(
+    TransferIssuePartialRequested event,
+    Emitter<TransferBlocState> emit,
+  ) async {
+    emit(state.copyWith(status: TransferBlocStatus.loading));
+
+    final result = await _issuePartialTransfer(
+      transferId: event.transferId,
+      amount: event.amount,
+      note: event.note,
+    );
+    result.fold(
+      (failure) => emit(state.copyWith(
+        status: TransferBlocStatus.error,
+        errorMessage: failure.message,
+      )),
+      (fullyIssued) => emit(state.copyWith(
+        status: TransferBlocStatus.success,
+        successMessage: fullyIssued
+            ? 'Перевод полностью выдан'
+            : 'Выдано ${event.amount.toStringAsFixed(2)} — перевод остаётся открытым',
       )),
     );
   }

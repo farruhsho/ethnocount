@@ -238,7 +238,8 @@ class LedgerRemoteDataSource {
     return _mapLedgerEntry(data);
   }
 
-  /// Create an adjustment/opening-balance ledger entry and update the balance.
+  /// Atomic single-row balance adjustment via PostgreSQL RPC.
+  /// [createdBy] is ignored (RPC uses auth.uid()); kept for source compat.
   Future<void> adjustAccountBalance({
     required String branchId,
     required String accountId,
@@ -249,34 +250,15 @@ class LedgerRemoteDataSource {
     required String description,
     required String createdBy,
   }) async {
-    // Create ledger entry
-    await _client.from('ledger_entries').insert({
-      'branch_id': branchId,
-      'account_id': accountId,
-      'type': type,
-      'amount': amount,
-      'currency': currency,
-      'reference_type': referenceType,
-      'reference_id': '',
-      'description': description,
-      'created_by': createdBy,
-    });
-
-    // Update balance
-    final delta = type == 'credit' ? amount : -amount;
-    final balData = await _client
-        .from('account_balances')
-        .select('balance')
-        .eq('account_id', accountId)
-        .maybeSingle();
-    final current = balData != null ? (balData['balance'] ?? 0).toDouble() : 0.0;
-
-    await _client.from('account_balances').upsert({
-      'account_id': accountId,
-      'branch_id': branchId,
-      'balance': current + delta,
-      'currency': currency,
-      'updated_at': DateTime.now().toIso8601String(),
+    await _client.rpc('adjust_balance', params: {
+      'p_branch_id': branchId,
+      'p_account_id': accountId,
+      'p_amount': amount,
+      'p_currency': currency,
+      'p_type': type,
+      'p_reference_type': referenceType,
+      'p_reference_id': '',
+      'p_description': description,
     });
   }
 
@@ -328,7 +310,8 @@ class LedgerRemoteDataSource {
     return balances;
   }
 
-  /// Import bank transactions as ledger entries.
+  /// Bulk-atomic bank-transaction import via PostgreSQL RPC.
+  /// All entries land in a single DB transaction — either all-or-nothing.
   Future<int> importBankTransactions({
     required String branchId,
     required String accountId,
@@ -336,9 +319,8 @@ class LedgerRemoteDataSource {
     required String createdBy,
     String? categoryPrefix,
   }) async {
-    var count = 0;
-    for (final tx in transactions) {
-      final type = tx.isCredit ? 'credit' : 'debit';
+    if (transactions.isEmpty) return 0;
+    final entries = transactions.map((tx) {
       var desc = tx.description;
       if (categoryPrefix != null && categoryPrefix.isNotEmpty) {
         desc = '[$categoryPrefix] $desc';
@@ -346,19 +328,21 @@ class LedgerRemoteDataSource {
       if (tx.counterpartyRaw != null && tx.counterpartyRaw!.isNotEmpty) {
         desc = '$desc (${tx.counterpartyRaw})';
       }
-      await adjustAccountBalance(
-        branchId: branchId,
-        accountId: accountId,
-        amount: tx.amount,
-        currency: tx.currency,
-        type: type,
-        referenceType: 'bankImport',
-        description: desc,
-        createdBy: createdBy,
-      );
-      count++;
-    }
-    return count;
+      return {
+        'amount': tx.amount,
+        'currency': tx.currency,
+        'type': tx.isCredit ? 'credit' : 'debit',
+        'description': desc,
+      };
+    }).toList();
+
+    final result = await _client.rpc('import_bank_transactions', params: {
+      'p_branch_id': branchId,
+      'p_account_id': accountId,
+      'p_entries': entries,
+    });
+    final m = Map<String, dynamic>.from(result as Map);
+    return (m['count'] as num?)?.toInt() ?? transactions.length;
   }
 
   LedgerEntry _mapLedgerEntry(Map<String, dynamic> data) {

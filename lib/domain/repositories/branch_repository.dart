@@ -18,34 +18,81 @@ abstract class BranchRepository {
   /// Get a single branch account.
   Future<Either<Failure, BranchAccount>> getBranchAccount(String accountId);
 
-  /// Create a new branch (admin only).
+  /// Create a new branch (creator only — via admin RPC).
   Future<Either<Failure, Branch>> createBranch({
     required String name,
     required String code,
     required String baseCurrency,
+    String? address,
+    String? phone,
+    String? notes,
+    int sortOrder,
   });
 
-  /// Update a branch (name, code, baseCurrency).
+  /// Update a branch. Changes to [code] are additionally recorded in
+  /// `branch_code_history`.
   Future<Either<Failure, void>> updateBranch({
     required String branchId,
     String? name,
     String? code,
     String? baseCurrency,
+    String? address,
+    String? phone,
+    String? notes,
+    int? sortOrder,
+    String? codeChangeReason,
   });
 
-  /// Create a new account within a branch.
+  /// Archive / unarchive a branch (soft delete).
+  Future<Either<Failure, void>> archiveBranch({
+    required String branchId,
+    required bool archive,
+    String? reason,
+  });
+
+  /// Create a new account within a branch. Card fields are optional and
+  /// only meaningful for [AccountType.card].
   Future<Either<Failure, BranchAccount>> createBranchAccount({
     required String branchId,
     required String name,
     required AccountType type,
     required String currency,
+    String? cardNumber,
+    String? cardholderName,
+    String? bankName,
+    int? expiryMonth,
+    int? expiryYear,
+    String? notes,
+    int sortOrder,
   });
 
-  /// Update an existing branch account.
+  /// Update an existing branch account. Pass [clearCardNumber] = true to
+  /// explicitly wipe the stored PAN.
   Future<Either<Failure, void>> updateBranchAccount({
     required String accountId,
     String? name,
     AccountType? type,
     String? currency,
+    String? cardNumber,
+    bool clearCardNumber,
+    String? cardholderName,
+    String? bankName,
+    int? expiryMonth,
+    int? expiryYear,
+    String? notes,
+    int? sortOrder,
+  });
+
+  /// Archive / unarchive a branch account.
+  Future<Either<Failure, void>> archiveBranchAccount({
+    required String accountId,
+    required bool archive,
+  });
+
+  /// Bulk-reorder branch accounts. `order` is a list of
+  /// `{accountId: String, sortOrder: int}` maps.
+  Future<Either<Failure, void>> reorderBranchAccounts({
+    required String branchId,
+    required List<Map<String, dynamic>> order,
   });
 }

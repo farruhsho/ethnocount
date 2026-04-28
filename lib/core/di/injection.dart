@@ -48,6 +48,7 @@ import 'package:ethnocount/data/repositories/purchase_repo_impl.dart';
 // ─── Services ───
 import 'package:ethnocount/domain/services/server_export_service.dart';
 import 'package:ethnocount/domain/services/ledger_export_service.dart';
+import 'package:ethnocount/domain/services/transfer_invoice_service.dart';
 import 'package:ethnocount/domain/services/bank_import_service.dart';
 import 'package:ethnocount/domain/services/bank_api_registry.dart';
 import 'package:ethnocount/data/services/sberbank_api_provider.dart';
@@ -57,6 +58,7 @@ import 'package:ethnocount/domain/usecases/auth/sign_in.dart';
 import 'package:ethnocount/domain/usecases/transfer/create_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/confirm_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/issue_transfer.dart';
+import 'package:ethnocount/domain/usecases/transfer/issue_partial_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/reject_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/update_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/watch_transfers.dart';
@@ -89,7 +91,7 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => CredentialStorageService());
   sl.registerLazySingleton(() => SessionService());
   sl.registerLazySingleton(() => GridColumnPreferencesService());
-  sl.registerLazySingleton(() => FcmService());
+  sl.registerLazySingleton(() => FcmService(sl()));
   sl.registerLazySingleton(() => ConnectivityService());
 
   // ─── Data Sources (all take SupabaseClient) ───
@@ -138,6 +140,7 @@ Future<void> initDependencies() async {
 
   // ─── Services ───
   sl.registerLazySingleton(() => LedgerExportService());
+  sl.registerLazySingleton(() => TransferInvoiceService());
   sl.registerLazySingleton(() => BankImportService());
   BankApiRegistry.instance.register(SberbankApiProvider());
   sl.registerLazySingleton(() => ServerExportService(
@@ -155,6 +158,7 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => CreateTransferUseCase(sl()));
   sl.registerLazySingleton(() => ConfirmTransferUseCase(sl()));
   sl.registerLazySingleton(() => IssueTransferUseCase(sl()));
+  sl.registerLazySingleton(() => IssuePartialTransferUseCase(sl()));
   sl.registerLazySingleton(() => RejectTransferUseCase(sl()));
   sl.registerLazySingleton(() => UpdateTransferUseCase(sl()));
   sl.registerLazySingleton(() => WatchTransfersUseCase(sl()));
@@ -184,6 +188,7 @@ Future<void> initDependencies() async {
         updateTransfer: sl(),
         confirmTransfer: sl(),
         issueTransfer: sl(),
+        issuePartialTransfer: sl(),
         rejectTransfer: sl(),
         watchTransfers: sl(),
       ));

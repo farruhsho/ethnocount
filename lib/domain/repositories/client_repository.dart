@@ -5,6 +5,10 @@ import 'package:ethnocount/domain/entities/client.dart';
 abstract class ClientRepository {
   Stream<List<Client>> watchClients();
 
+  /// Stream of all client balances. The clients list page uses this to
+  /// show the real balance amount on each row.
+  Stream<List<ClientBalance>> watchAllClientBalances();
+
   Future<Either<Failure, Client>> getClient(String clientId);
 
   Future<Either<Failure, ClientBalance?>> getClientBalance(String clientId);

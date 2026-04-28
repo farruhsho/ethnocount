@@ -96,14 +96,22 @@ class Transfer extends Equatable {
   final String? issuedBy;
   final String? rejectedBy;
   final String? rejectionReason;
+  final String? cancelledBy;
+  final String? cancellationReason;
   final String idempotencyKey;
   final DateTime createdAt;
   final DateTime? confirmedAt;
   final DateTime? issuedAt;
   final DateTime? rejectedAt;
+  final DateTime? cancelledAt;
 
   /// Edits while status is pending (account/currency/rate/note corrections).
   final List<TransferAmendmentEntry> amendmentHistory;
+
+  /// Cumulative amount that has already been paid out to the recipient,
+  /// in receiver currency. Equals [convertedAmount] once status becomes
+  /// `issued`; intermediate values mean partial issuance is in progress.
+  final double issuedAmount;
 
   const Transfer({
     required this.id,
@@ -137,13 +145,31 @@ class Transfer extends Equatable {
     this.issuedBy,
     this.rejectedBy,
     this.rejectionReason,
+    this.cancelledBy,
+    this.cancellationReason,
     required this.idempotencyKey,
     required this.createdAt,
     this.confirmedAt,
     this.issuedAt,
     this.rejectedAt,
+    this.cancelledAt,
     this.amendmentHistory = const [],
+    this.issuedAmount = 0,
   });
+
+  /// Outstanding amount still to be paid out (in receiver currency).
+  /// Always non-negative. For non-confirmed transfers returns 0.
+  double get remainingToIssue {
+    if (status != TransferStatus.confirmed) return 0;
+    final r = convertedAmount - issuedAmount;
+    return r < 0 ? 0 : r;
+  }
+
+  /// True if at least one tranche was paid out but not the full amount.
+  bool get isPartiallyIssued =>
+      status == TransferStatus.confirmed &&
+      issuedAmount > 0 &&
+      issuedAmount < convertedAmount;
 
   bool get isPending => status == TransferStatus.pending;
   bool get isConfirmed => status == TransferStatus.confirmed;

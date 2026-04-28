@@ -5,24 +5,26 @@ import 'package:ethnocount/domain/entities/branch_account.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 
 /// Supabase data source for branches and branch accounts.
+///
+/// All mutations go through the `public.admin_*` SECURITY DEFINER RPCs
+/// introduced in migration 011. Direct table writes are blocked by RLS
+/// for non-creator roles.
 class BranchRemoteDataSource {
   final SupabaseClient _client;
 
   BranchRemoteDataSource(this._client);
 
-  /// Stream of all active branches.
+  // ── Read streams ───────────────────────────────────────────────
+
   Stream<List<Branch>> watchBranches() {
-    // Initial fetch + real-time updates via Supabase Realtime
     final controller = StreamController<List<Branch>>.broadcast();
-    
-    // Fetch initial data
+
     _fetchBranches().then((branches) {
       if (!controller.isClosed) controller.add(branches);
     }).catchError((e) {
       if (!controller.isClosed) controller.addError(e);
     });
 
-    // Subscribe to changes
     final channel = _client
         .channel('branches_changes')
         .onPostgresChanges(
@@ -49,11 +51,11 @@ class BranchRemoteDataSource {
         .from('branches')
         .select()
         .eq('is_active', true)
+        .order('sort_order')
         .order('name');
     return (data as List).map((m) => _mapBranch(m)).toList();
   }
 
-  /// Get a single branch.
   Future<Branch> getBranch(String branchId) async {
     final data = await _client
         .from('branches')
@@ -63,7 +65,6 @@ class BranchRemoteDataSource {
     return _mapBranch(data);
   }
 
-  /// Stream of accounts for a branch.
   Stream<List<BranchAccount>> watchBranchAccounts(String branchId) {
     final controller = StreamController<List<BranchAccount>>.broadcast();
 
@@ -105,11 +106,11 @@ class BranchRemoteDataSource {
         .select()
         .eq('branch_id', branchId)
         .eq('is_active', true)
+        .order('sort_order')
         .order('name');
     return (data as List).map((m) => _mapBranchAccount(m)).toList();
   }
 
-  /// Get a single branch account.
   Future<BranchAccount> getBranchAccount(String accountId) async {
     final data = await _client
         .from('branch_accounts')
@@ -119,83 +120,148 @@ class BranchRemoteDataSource {
     return _mapBranchAccount(data);
   }
 
-  /// Update a branch.
+  // ── Branch mutations (via admin_* RPCs) ───────────────────────
+
+  Future<String> createBranch({
+    required String name,
+    required String code,
+    required String baseCurrency,
+    String? address,
+    String? phone,
+    String? notes,
+    int sortOrder = 0,
+  }) async {
+    final result = await _client.rpc('admin_create_branch', params: {
+      'p_name': name,
+      'p_code': code,
+      'p_base_currency': baseCurrency,
+      'p_address': address,
+      'p_phone': phone,
+      'p_notes': notes,
+      'p_sort_order': sortOrder,
+    });
+    return (result as Map)['branchId'] as String;
+  }
+
   Future<void> updateBranch({
     required String branchId,
     String? name,
     String? code,
     String? baseCurrency,
+    String? address,
+    String? phone,
+    String? notes,
+    int? sortOrder,
+    String? codeChangeReason,
   }) async {
-    final data = <String, dynamic>{};
-    if (name != null) data['name'] = name;
-    if (code != null) data['code'] = code;
-    if (baseCurrency != null) data['base_currency'] = baseCurrency;
-    if (data.isEmpty) return;
-    await _client.from('branches').update(data).eq('id', branchId);
+    await _client.rpc('admin_update_branch', params: {
+      'p_branch_id': branchId,
+      'p_name': name,
+      'p_code': code,
+      'p_base_currency': baseCurrency,
+      'p_address': address,
+      'p_phone': phone,
+      'p_notes': notes,
+      'p_sort_order': sortOrder,
+      'p_code_change_reason': codeChangeReason,
+    });
   }
 
-  /// Create a branch document.
-  Future<String> createBranch({
-    required String name,
-    required String code,
-    required String baseCurrency,
+  Future<void> archiveBranch({
+    required String branchId,
+    required bool archive,
+    String? reason,
   }) async {
-    final data = await _client.from('branches').insert({
-      'name': name,
-      'code': code,
-      'base_currency': baseCurrency,
-      'is_active': true,
-    }).select('id').single();
-    return data['id'] as String;
+    await _client.rpc('admin_archive_branch', params: {
+      'p_branch_id': branchId,
+      'p_archive': archive,
+      'p_reason': reason,
+    });
   }
 
-  /// Create a branch account and its initial balance record.
+  // ── Branch-account mutations (via admin_* RPCs) ───────────────
+
   Future<String> createBranchAccount({
     required String branchId,
     required String name,
     required AccountType type,
     required String currency,
+    String? cardNumber,
+    String? cardholderName,
+    String? bankName,
+    int? expiryMonth,
+    int? expiryYear,
+    String? notes,
+    int sortOrder = 0,
   }) async {
-    final data = await _client.from('branch_accounts').insert({
-      'branch_id': branchId,
-      'name': name,
-      'type': type.name,
-      'currency': currency,
-      'is_active': true,
-    }).select('id').single();
-
-    final accountId = data['id'] as String;
-
-    await _client.from('account_balances').insert({
-      'account_id': accountId,
-      'branch_id': branchId,
-      'balance': 0.0,
-      'currency': currency,
+    final result = await _client.rpc('admin_create_branch_account', params: {
+      'p_branch_id': branchId,
+      'p_name': name,
+      'p_type': type.name,
+      'p_currency': currency,
+      'p_card_number': cardNumber,
+      'p_cardholder_name': cardholderName,
+      'p_bank_name': bankName,
+      'p_expiry_month': expiryMonth,
+      'p_expiry_year': expiryYear,
+      'p_notes': notes,
+      'p_sort_order': sortOrder,
     });
-
-    return accountId;
+    return (result as Map)['accountId'] as String;
   }
 
-  /// Update a branch account.
   Future<void> updateBranchAccount({
     required String accountId,
     String? name,
     AccountType? type,
     String? currency,
+    String? cardNumber,
+    bool clearCardNumber = false,
+    String? cardholderName,
+    String? bankName,
+    int? expiryMonth,
+    int? expiryYear,
+    String? notes,
+    int? sortOrder,
   }) async {
-    final data = <String, dynamic>{};
-    if (name != null) data['name'] = name;
-    if (type != null) data['type'] = type.name;
-    if (currency != null) data['currency'] = currency;
-    if (data.isEmpty) return;
-    await _client.from('branch_accounts').update(data).eq('id', accountId);
-    if (currency != null) {
-      await _client.from('account_balances').update({
-        'currency': currency,
-        'updated_at': DateTime.now().toIso8601String(),
-      }).eq('account_id', accountId);
-    }
+    await _client.rpc('admin_update_branch_account', params: {
+      'p_account_id': accountId,
+      'p_name': name,
+      'p_type': type?.name,
+      'p_currency': currency,
+      'p_card_number': cardNumber,
+      'p_clear_card_number': clearCardNumber,
+      'p_cardholder_name': cardholderName,
+      'p_bank_name': bankName,
+      'p_expiry_month': expiryMonth,
+      'p_expiry_year': expiryYear,
+      'p_notes': notes,
+      'p_sort_order': sortOrder,
+    });
   }
+
+  Future<void> archiveBranchAccount({
+    required String accountId,
+    required bool archive,
+  }) async {
+    await _client.rpc('admin_archive_branch_account', params: {
+      'p_account_id': accountId,
+      'p_archive': archive,
+    });
+  }
+
+  Future<void> reorderBranchAccounts({
+    required String branchId,
+    required List<Map<String, dynamic>> order,
+  }) async {
+    // order is a list of {accountId, sortOrder}
+    await _client.rpc('admin_reorder_branch_accounts', params: {
+      'p_branch_id': branchId,
+      'p_order': order,
+    });
+  }
+
+  // ── Mapping helpers ───────────────────────────────────────────
 
   Branch _mapBranch(Map<String, dynamic> data) {
     return Branch(
@@ -204,6 +270,11 @@ class BranchRemoteDataSource {
       code: data['code'] ?? '',
       baseCurrency: data['base_currency'] ?? 'USD',
       isActive: data['is_active'] ?? true,
+      address: data['address'] as String?,
+      phone: data['phone'] as String?,
+      notes: data['notes'] as String?,
+      sortOrder: (data['sort_order'] as int?) ?? 0,
+      archivedAt: DateTime.tryParse(data['archived_at'] as String? ?? ''),
       createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
     );
   }
@@ -219,6 +290,15 @@ class BranchRemoteDataSource {
       ),
       currency: data['currency'] ?? 'USD',
       isActive: data['is_active'] ?? true,
+      cardNumber: data['card_number'] as String?,
+      cardLast4: data['card_last4'] as String?,
+      cardholderName: data['cardholder_name'] as String?,
+      bankName: data['bank_name'] as String?,
+      expiryMonth: (data['expiry_month'] as num?)?.toInt(),
+      expiryYear: (data['expiry_year'] as num?)?.toInt(),
+      notes: data['notes'] as String?,
+      sortOrder: (data['sort_order'] as int?) ?? 0,
+      archivedAt: DateTime.tryParse(data['archived_at'] as String? ?? ''),
       createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
     );
   }

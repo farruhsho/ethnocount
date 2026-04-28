@@ -22,6 +22,16 @@ class AuthRemoteDataSource {
     return user == null ? null : _mapUserFallback(user);
   }
 
+  /// Loads the authoritative profile (including role/permissions/branches)
+  /// for the currently signed-in user from the `users` table. Returns null
+  /// if there is no active session. Falls back to JWT-derived data only if
+  /// the DB read fails.
+  Future<AppUser?> fetchCurrentUserProfile() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+    return _loadUserProfile(user);
+  }
+
   Future<AppUser> _loadUserProfile(User supaUser) async {
     try {
       final data = await _client
@@ -70,28 +80,30 @@ class AuthRemoteDataSource {
     required String displayName,
     bool asCreator = false,
   }) async {
+    // The public.users profile row is created automatically by the
+    // on_auth_user_created trigger (migration 008). We pass display_name
+    // and signup_role through user_metadata so the trigger can read them.
+    // The trigger also enforces that only the first-ever user may become
+    // 'creator'; subsequent signups are clamped to 'accountant'.
     final response = await _auth.signUp(
       email: email,
       password: password,
-      data: {'display_name': displayName},
+      data: {
+        'display_name': displayName,
+        'signup_role': asCreator ? 'creator' : 'accountant',
+      },
     );
 
-    final uid = response.user!.id;
-    final role = asCreator ? 'creator' : 'accountant';
-
-    await _client.from('users').insert({
-      'id': uid,
-      'display_name': displayName,
-      'email': email,
-      'role': role,
-      'assigned_branch_ids': <String>[],
-      'is_active': true,
-    });
+    final supaUser = response.user!;
+    // If a session was returned (confirmation disabled), re-read the trigger-created
+    // profile row for the authoritative role. Otherwise fall back to the intended role.
+    if (response.session != null) {
+      return _loadUserProfile(supaUser);
+    }
 
     final systemRole = asCreator ? SystemRole.creator : SystemRole.accountant;
-
     return AppUser(
-      id: uid,
+      id: supaUser.id,
       displayName: displayName,
       email: email,
       role: systemRole,

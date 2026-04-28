@@ -7,8 +7,14 @@ abstract class AuthRepository {
   /// Current auth state stream.
   Stream<AppUser?> get authStateChanges;
 
-  /// Currently signed-in user.
+  /// Currently signed-in user (synchronous, JWT-only — role/permissions
+  /// fall back to defaults). Use [fetchCurrentUserProfile] when the
+  /// authoritative role from the DB is needed.
   AppUser? get currentUser;
+
+  /// Fetches the current user's full profile from the database (role,
+  /// permissions, assigned branches). Returns null if no active session.
+  Future<AppUser?> fetchCurrentUserProfile();
 
   /// Sign in with email & password.
   Future<Either<Failure, AppUser>> signInWithEmail(String email, String password);

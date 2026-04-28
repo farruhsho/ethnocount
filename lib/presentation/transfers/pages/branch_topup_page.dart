@@ -534,7 +534,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                   ),
                   SizedBox(height: isMobile ? AppSpacing.sm : AppSpacing.md),
                   DropdownButtonFormField<String>(
-                    value: _directToBranchId ?? '',
+                    initialValue: _directToBranchId ?? '',
                     isExpanded: true,
                     decoration: const InputDecoration(
                       labelText: 'Филиал',
@@ -568,7 +568,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                     controller: _directAmountCtrl,
                     decoration: InputDecoration(
                       labelText: _directToAccountCurrency != null
-                          ? 'Сумма (${_directToAccountCurrency})'
+                          ? 'Сумма ($_directToAccountCurrency)'
                           : 'Сумма',
                       border: const OutlineInputBorder(),
                       prefixIcon: const Icon(Icons.add_rounded),
@@ -805,7 +805,7 @@ class _SourceAccountDropdown extends StatelessWidget {
             streamAccts.isNotEmpty ? streamAccts : fallback;
         final hasValue = value != null && accounts.any((a) => a.id == value);
         return DropdownButtonFormField<String>(
-          value: hasValue ? value! : '',
+          initialValue: hasValue ? value! : '',
           isExpanded: true,
           decoration: const InputDecoration(
             labelText: 'Счёт',
@@ -882,7 +882,7 @@ class _TargetAccountDropdown extends StatelessWidget {
             streamAccts.isNotEmpty ? streamAccts : fallback;
         final hasValue = value != null && accounts.any((a) => a.id == value);
         return DropdownButtonFormField<String>(
-          value: hasValue ? value! : '',
+          initialValue: hasValue ? value! : '',
           isExpanded: true,
           decoration: const InputDecoration(
             labelText: 'Счёт пополнения',

@@ -39,6 +39,11 @@ dependencies:
   package_info_plus: ^8.1.2
   auto_updater: ^1.0.0
 
+  # OS Notifications (foreground/background while app is running).
+  # True push (when app is killed) needs Firebase Messaging — to be added
+  # later via Edge Function + FCM HTTP API.
+  flutter_local_notifications: ^17.2.4
+
   # UI
   fl_chart: ^0.70.2
   shimmer: ^3.0.0
@@ -56,6 +61,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   trina_grid: ^1.0.0
   excel: ^4.0.6
+  archive: ^3.6.1
   file_saver: ^0.3.1
   path_provider: ^2.1.5
   file_selector: ^1.1.0

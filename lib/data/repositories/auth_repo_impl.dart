@@ -17,6 +17,10 @@ class AuthRepoImpl implements AuthRepository {
   AppUser? get currentUser => _remoteDs.currentUser;
 
   @override
+  Future<AppUser?> fetchCurrentUserProfile() =>
+      _remoteDs.fetchCurrentUserProfile();
+
+  @override
   Future<Either<Failure, AppUser>> signInWithEmail(
       String email, String password) async {
     try {

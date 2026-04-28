@@ -3,7 +3,57 @@
 -- Run this THIRD (after Part 1 and Part 2)
 -- ============================================================
 
--- ─── Create Transfer (atomic) ───
+-- ─── FX helpers (F3: cross-currency math) ───
+CREATE OR REPLACE FUNCTION private.fx_rate(p_from text, p_to text)
+RETURNS double precision
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_rate double precision;
+  v_inverse double precision;
+BEGIN
+  IF p_from IS NULL OR p_to IS NULL OR p_from = '' OR p_to = '' OR p_from = p_to THEN
+    RETURN 1;
+  END IF;
+
+  SELECT rate INTO v_rate FROM exchange_rates
+  WHERE from_currency = p_from AND to_currency = p_to
+  ORDER BY effective_at DESC LIMIT 1;
+  IF v_rate IS NOT NULL AND v_rate > 0 THEN RETURN v_rate; END IF;
+
+  SELECT rate INTO v_inverse FROM exchange_rates
+  WHERE from_currency = p_to AND to_currency = p_from
+  ORDER BY effective_at DESC LIMIT 1;
+  IF v_inverse IS NOT NULL AND v_inverse > 0 THEN RETURN 1.0 / v_inverse; END IF;
+
+  RAISE EXCEPTION 'No exchange rate available between % and %', p_from, p_to;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION private.normalize_commission(
+  p_commission_type text,
+  p_commission_value double precision,
+  p_commission_currency text,
+  p_amount double precision,
+  p_transfer_currency text
+)
+RETURNS double precision
+LANGUAGE plpgsql STABLE SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_commission_type = 'percentage' THEN
+    RETURN p_amount * p_commission_value / 100;
+  END IF;
+  IF p_commission_currency IS NULL OR p_commission_currency = '' OR p_commission_currency = p_transfer_currency THEN
+    RETURN p_commission_value;
+  END IF;
+  RETURN p_commission_value * private.fx_rate(p_commission_currency, p_transfer_currency);
+END;
+$$;
+
+-- ─── Create Transfer (atomic, FX-normalized commission, ownership-checked) ───
 CREATE OR REPLACE FUNCTION private.create_transfer(
   p_from_branch_id uuid,
   p_to_branch_id uuid,
@@ -36,29 +86,27 @@ DECLARE
   v_commission double precision;
   v_total_debit double precision;
   v_from_balance double precision;
+  v_acc_branch uuid;
   v_code text;
   v_transfer_id uuid;
   v_resolved_to_currency text;
   v_receiver_amount double precision;
   v_converted double precision;
-  v_dup_count int;
 BEGIN
-  IF v_user_id IS NULL THEN
-    RAISE EXCEPTION 'User must be authenticated';
+  IF v_user_id IS NULL THEN RAISE EXCEPTION 'User must be authenticated'; END IF;
+  IF p_amount <= 0 THEN RAISE EXCEPTION 'Amount must be positive'; END IF;
+
+  -- Verify source account ↔ source branch (H12)
+  SELECT branch_id INTO v_acc_branch FROM branch_accounts WHERE id = p_from_account_id;
+  IF v_acc_branch IS NULL THEN RAISE EXCEPTION 'Source account not found'; END IF;
+  IF v_acc_branch != p_from_branch_id THEN
+    RAISE EXCEPTION 'Source account does not belong to source branch';
   END IF;
 
-  -- Check duplicate
-  SELECT count(*) INTO v_dup_count FROM transfers WHERE idempotency_key = p_idempotency_key;
-  IF v_dup_count > 0 THEN
-    RAISE EXCEPTION 'Duplicate transfer — already exists';
-  END IF;
-
-  -- Compute commission
-  IF p_commission_type = 'percentage' THEN
-    v_commission := p_amount * p_commission_value / 100;
-  ELSE
-    v_commission := p_commission_value;
-  END IF;
+  -- Commission in TRANSFER currency (FX-normalized)
+  v_commission := private.normalize_commission(
+    p_commission_type, p_commission_value, p_commission_currency, p_amount, p_currency
+  );
 
   IF p_commission_mode = 'fromSender' THEN
     v_total_debit := p_amount + v_commission;
@@ -66,14 +114,14 @@ BEGIN
     v_total_debit := p_amount;
   END IF;
 
-  -- Check balance
+  -- Lock and check balance
   SELECT balance INTO v_from_balance FROM account_balances WHERE account_id = p_from_account_id FOR UPDATE;
   IF v_from_balance IS NULL THEN v_from_balance := 0; END IF;
   IF v_from_balance < v_total_debit THEN
-    RAISE EXCEPTION 'Insufficient funds. Available: %, required: %', round(v_from_balance::numeric, 0), round(v_total_debit::numeric, 0);
+    RAISE EXCEPTION 'Insufficient funds. Available: %, required: %',
+      round(v_from_balance::numeric, 2), round(v_total_debit::numeric, 2);
   END IF;
 
-  -- Resolve to_currency
   v_resolved_to_currency := p_currency;
   IF p_to_account_id IS NOT NULL AND p_to_account_id != '' THEN
     SELECT currency INTO v_resolved_to_currency FROM branch_accounts WHERE id = p_to_account_id::uuid;
@@ -81,7 +129,6 @@ BEGIN
     v_resolved_to_currency := p_to_currency;
   END IF;
 
-  -- Compute receiver amount
   IF p_commission_mode = 'fromTransfer' THEN
     v_receiver_amount := p_amount - v_commission;
   ELSIF p_commission_mode = 'toReceiver' THEN
@@ -91,43 +138,63 @@ BEGIN
   END IF;
   v_converted := v_receiver_amount * p_exchange_rate;
 
-  -- Generate code
   v_code := private.next_transaction_code('ELX', 'transactionCodes');
-
-  -- Insert transfer
   v_transfer_id := gen_random_uuid();
-  INSERT INTO transfers (
-    id, transaction_code, from_branch_id, to_branch_id, from_account_id, to_account_id,
-    amount, currency, to_currency, exchange_rate, converted_amount,
-    commission, commission_currency, commission_type, commission_value, commission_mode,
-    description, client_id,
-    sender_name, sender_phone, sender_info,
-    receiver_name, receiver_phone, receiver_info,
-    status, created_by, idempotency_key, created_at
-  ) VALUES (
-    v_transfer_id, v_code, p_from_branch_id, p_to_branch_id, p_from_account_id, COALESCE(p_to_account_id, ''),
-    p_amount, p_currency, v_resolved_to_currency, p_exchange_rate, v_converted,
-    v_commission, p_commission_currency, p_commission_type, p_commission_value, p_commission_mode,
-    p_description, p_client_id,
-    p_sender_name, p_sender_phone, p_sender_info,
-    p_receiver_name, p_receiver_phone, p_receiver_info,
-    'pending', v_user_id, p_idempotency_key, now()
-  );
 
-  -- Debit sender
-  UPDATE account_balances SET balance = balance - v_total_debit, updated_at = now()
-  WHERE account_id = p_from_account_id;
+  BEGIN
+    INSERT INTO transfers (
+      id, transaction_code, from_branch_id, to_branch_id, from_account_id, to_account_id,
+      amount, currency, to_currency, exchange_rate, converted_amount,
+      commission, commission_currency, commission_type, commission_value, commission_mode,
+      description, client_id,
+      sender_name, sender_phone, sender_info,
+      receiver_name, receiver_phone, receiver_info,
+      status, created_by, idempotency_key, created_at
+    ) VALUES (
+      v_transfer_id, v_code, p_from_branch_id, p_to_branch_id, p_from_account_id, COALESCE(p_to_account_id, ''),
+      p_amount, p_currency, v_resolved_to_currency, p_exchange_rate, v_converted,
+      v_commission, p_commission_currency, p_commission_type, p_commission_value, p_commission_mode,
+      p_description, p_client_id,
+      p_sender_name, p_sender_phone, p_sender_info,
+      p_receiver_name, p_receiver_phone, p_receiver_info,
+      'pending', v_user_id, p_idempotency_key, now()
+    );
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'Duplicate transfer — already exists';
+  END;
 
-  -- Ledger debit
+  -- Debit sender (UPSERT-safe)
+  INSERT INTO account_balances (account_id, branch_id, balance, currency, updated_at)
+  VALUES (p_from_account_id, p_from_branch_id, -v_total_debit, p_currency, now())
+  ON CONFLICT (account_id) DO UPDATE
+    SET balance = account_balances.balance - v_total_debit, updated_at = now();
+
   INSERT INTO ledger_entries (branch_id, account_id, type, amount, currency, reference_type, reference_id, transaction_code, description, created_by)
   VALUES (p_from_branch_id, p_from_account_id, 'debit', v_total_debit, p_currency, 'transfer', v_transfer_id::text, v_code,
           'Перевод ' || v_code || ' (ожидает подтверждения)', v_user_id);
 
-  -- Notification
+  -- Notify the receiver branch (accountants will see it via their branch subscription).
+  -- Title carries the transaction code for quick identification; body summarises
+  -- direction, amount and sender so the bookkeeper has the key facts before opening.
   INSERT INTO notifications (target_branch_id, type, title, body, data)
-  VALUES (p_to_branch_id::text, 'incoming_transfer', 'Новый входящий перевод',
-          'Перевод ' || v_code || ': ' || p_amount || ' ' || p_currency || ' ожидает подтверждения.',
-          jsonb_build_object('transferId', v_transfer_id::text, 'transactionCode', v_code));
+  VALUES (
+    p_to_branch_id::text,
+    'incoming_transfer',
+    'Новый перевод ' || v_code,
+    'Входящий: ' || to_char(p_amount::numeric, 'FM999G999G990D00') || ' ' || p_currency
+      || ' • ' || COALESCE((SELECT name FROM branches WHERE id = p_from_branch_id), 'филиал-источник')
+      || ' → ' || COALESCE((SELECT name FROM branches WHERE id = p_to_branch_id), 'ваш филиал')
+      || COALESCE(' • от ' || NULLIF(trim(p_sender_name), ''), '')
+      || ' • ожидает подтверждения',
+    jsonb_build_object(
+      'transferId', v_transfer_id::text,
+      'transactionCode', v_code,
+      'amount', p_amount,
+      'currency', p_currency,
+      'fromBranchId', p_from_branch_id::text,
+      'toBranchId', p_to_branch_id::text
+    )
+  );
 
   RETURN jsonb_build_object('success', true, 'transferId', v_transfer_id::text);
 END;
@@ -194,23 +261,55 @@ BEGIN
   VALUES (v_transfer.to_branch_id, v_effective_to::uuid, 'credit', v_transfer.converted_amount, COALESCE(v_acc_currency, v_to_currency),
           'transfer', p_transfer_id::text, v_code, 'Перевод ' || v_code || ' (подтверждён)', v_user_id);
 
-  -- Update sender ledger description
+  -- Update ALL pending sender ledger descriptions for this transfer (safer than ctid+LIMIT 1)
   UPDATE ledger_entries SET description = 'Перевод ' || v_code || ' (подтверждён)'
-  WHERE ctid = (
-    SELECT ctid FROM ledger_entries
-    WHERE reference_type = 'transfer' AND reference_id = p_transfer_id::text
-      AND branch_id = v_transfer.from_branch_id
-    LIMIT 1
-  );
+  WHERE reference_type = 'transfer'
+    AND reference_id = p_transfer_id::text
+    AND branch_id = v_transfer.from_branch_id
+    AND type = 'debit';
 
-  -- Notifications
+  -- Record commission for reporting (M19 + C2)
+  IF v_transfer.commission > 0 THEN
+    INSERT INTO commissions (transfer_id, branch_id, amount, currency, type, created_at)
+    VALUES (p_transfer_id, v_transfer.from_branch_id, v_transfer.commission,
+            COALESCE(NULLIF(v_transfer.commission_currency, ''), v_transfer.currency),
+            COALESCE(v_transfer.commission_type, 'fixed'), now());
+  END IF;
+
+  -- Notifications: both branches get a confirmation entry; carry full
+  -- bookkeeping payload (amount, currency, route) so receiving accountants
+  -- don't have to open the record to act.
   INSERT INTO notifications (target_branch_id, type, title, body, data) VALUES
-    (v_transfer.from_branch_id::text, 'transfer_confirmed', 'Перевод подтверждён',
-     'Ваш перевод ' || v_transfer.amount || ' ' || v_transfer.currency || ' подтверждён.',
-     jsonb_build_object('transferId', p_transfer_id::text)),
-    (v_transfer.to_branch_id::text, 'transfer_confirmed', 'Перевод подтверждён',
-     'Перевод ' || v_transfer.amount || ' ' || v_transfer.currency || ' подтверждён.',
-     jsonb_build_object('transferId', p_transfer_id::text));
+    (
+      v_transfer.from_branch_id::text,
+      'transfer_confirmed',
+      'Перевод ' || v_code || ' принят',
+      'Ваш перевод '
+        || to_char(v_transfer.amount::numeric, 'FM999G999G990D00') || ' ' || v_transfer.currency
+        || ' → ' || COALESCE((SELECT name FROM branches WHERE id = v_transfer.to_branch_id), '—')
+        || ' принят получателем.',
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_code,
+        'amount', v_transfer.amount,
+        'currency', v_transfer.currency
+      )
+    ),
+    (
+      v_transfer.to_branch_id::text,
+      'transfer_confirmed',
+      'Перевод ' || v_code || ' принят',
+      'Зачислено '
+        || to_char(v_transfer.converted_amount::numeric, 'FM999G999G990D00')
+        || ' ' || COALESCE(v_transfer.to_currency, v_transfer.currency)
+        || ' от ' || COALESCE((SELECT name FROM branches WHERE id = v_transfer.from_branch_id), '—'),
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_code,
+        'amount', v_transfer.converted_amount,
+        'currency', COALESCE(v_transfer.to_currency, v_transfer.currency)
+      )
+    );
 
   RETURN jsonb_build_object('success', true);
 END;
@@ -246,18 +345,146 @@ BEGIN
   UPDATE transfers SET status = 'rejected', rejected_by = v_user_id, rejection_reason = p_reason, rejected_at = now()
   WHERE id = p_transfer_id;
 
-  -- Refund
-  UPDATE account_balances SET balance = balance + v_total, updated_at = now()
-  WHERE account_id = v_transfer.from_account_id;
+  -- Refund (UPSERT-safe in case account_balances row missing)
+  INSERT INTO account_balances (account_id, branch_id, balance, currency, updated_at)
+  VALUES (v_transfer.from_account_id, v_transfer.from_branch_id, v_total, v_transfer.currency, now())
+  ON CONFLICT (account_id) DO UPDATE
+    SET balance = account_balances.balance + v_total,
+        updated_at = now();
 
-  -- Notifications
+  -- Compensating ledger credit (was missing — caused ledger/balance divergence)
+  INSERT INTO ledger_entries (
+    branch_id, account_id, type, amount, currency,
+    reference_type, reference_id, transaction_code, description, created_by
+  )
+  VALUES (
+    v_transfer.from_branch_id, v_transfer.from_account_id, 'credit', v_total, v_transfer.currency,
+    'transfer', p_transfer_id::text, COALESCE(v_transfer.transaction_code, p_transfer_id::text),
+    'Сторно (отклонён): ' || COALESCE(v_transfer.transaction_code, p_transfer_id::text) ||
+      CASE WHEN NULLIF(trim(p_reason), '') IS NOT NULL THEN ' — ' || p_reason ELSE '' END,
+    v_user_id
+  );
+
+  -- Notifications: explain to both branches that funds were returned (storno).
   INSERT INTO notifications (target_branch_id, type, title, body, data) VALUES
-    (v_transfer.from_branch_id::text, 'transfer_rejected', 'Перевод отклонён',
-     'Ваш перевод ' || v_transfer.amount || ' ' || v_transfer.currency || ' отклонён. Причина: ' || p_reason,
-     jsonb_build_object('transferId', p_transfer_id::text, 'reason', p_reason)),
-    (v_transfer.to_branch_id::text, 'transfer_rejected', 'Перевод отклонён',
-     'Перевод ' || v_transfer.amount || ' ' || v_transfer.currency || ' отклонён.',
-     jsonb_build_object('transferId', p_transfer_id::text, 'reason', p_reason));
+    (
+      v_transfer.from_branch_id::text,
+      'transfer_rejected',
+      'Перевод ' || COALESCE(v_transfer.transaction_code, 'ELX') || ' отклонён',
+      'Ваш перевод '
+        || to_char(v_transfer.amount::numeric, 'FM999G999G990D00') || ' ' || v_transfer.currency
+        || ' отклонён. Сторно зачислено на счёт.'
+        || COALESCE(' Причина: ' || NULLIF(trim(p_reason), ''), ''),
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_transfer.transaction_code,
+        'reason', p_reason
+      )
+    ),
+    (
+      v_transfer.to_branch_id::text,
+      'transfer_rejected',
+      'Перевод ' || COALESCE(v_transfer.transaction_code, 'ELX') || ' отклонён',
+      'Входящий перевод '
+        || to_char(v_transfer.amount::numeric, 'FM999G999G990D00') || ' ' || v_transfer.currency
+        || ' отклонён.'
+        || COALESCE(' Причина: ' || NULLIF(trim(p_reason), ''), ''),
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_transfer.transaction_code,
+        'reason', p_reason
+      )
+    );
+
+  RETURN jsonb_build_object('success', true);
+END;
+$$;
+
+-- ─── Cancel Transfer (atomic, refunds + writes ledger credit) ───
+CREATE OR REPLACE FUNCTION private.cancel_transfer(
+  p_transfer_id uuid,
+  p_reason text DEFAULT ''
+)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_transfer transfers%ROWTYPE;
+  v_total double precision;
+  v_code text;
+BEGIN
+  IF v_user_id IS NULL THEN RAISE EXCEPTION 'User must be authenticated'; END IF;
+
+  SELECT * INTO v_transfer FROM transfers WHERE id = p_transfer_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Transfer not found'; END IF;
+  IF v_transfer.status != 'pending' THEN
+    RAISE EXCEPTION 'Only pending transfers can be cancelled (current: %)', v_transfer.status;
+  END IF;
+
+  IF v_transfer.commission_mode = 'fromSender' THEN
+    v_total := v_transfer.amount + v_transfer.commission;
+  ELSE
+    v_total := v_transfer.amount;
+  END IF;
+
+  v_code := COALESCE(v_transfer.transaction_code, p_transfer_id::text);
+
+  UPDATE transfers SET
+    status = 'cancelled',
+    cancelled_by = v_user_id,
+    cancelled_at = now(),
+    cancellation_reason = NULLIF(trim(p_reason), '')
+  WHERE id = p_transfer_id;
+
+  INSERT INTO account_balances (account_id, branch_id, balance, currency, updated_at)
+  VALUES (v_transfer.from_account_id, v_transfer.from_branch_id, v_total, v_transfer.currency, now())
+  ON CONFLICT (account_id) DO UPDATE
+    SET balance = account_balances.balance + v_total,
+        updated_at = now();
+
+  INSERT INTO ledger_entries (
+    branch_id, account_id, type, amount, currency,
+    reference_type, reference_id, transaction_code, description, created_by
+  )
+  VALUES (
+    v_transfer.from_branch_id, v_transfer.from_account_id, 'credit', v_total, v_transfer.currency,
+    'transfer', p_transfer_id::text, v_code,
+    'Сторно (отменён): ' || v_code ||
+      CASE WHEN NULLIF(trim(p_reason), '') IS NOT NULL THEN ' — ' || p_reason ELSE '' END,
+    v_user_id
+  );
+
+  INSERT INTO notifications (target_branch_id, type, title, body, data) VALUES
+    (
+      v_transfer.from_branch_id::text,
+      'transfer_cancelled',
+      'Перевод ' || v_code || ' отменён',
+      'Перевод '
+        || to_char(v_transfer.amount::numeric, 'FM999G999G990D00') || ' ' || v_transfer.currency
+        || ' отменён, сторно зачислено на счёт.'
+        || COALESCE(' Причина: ' || NULLIF(trim(p_reason), ''), ''),
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_code,
+        'reason', p_reason
+      )
+    ),
+    (
+      v_transfer.to_branch_id::text,
+      'transfer_cancelled',
+      'Перевод ' || v_code || ' отменён',
+      'Входящий перевод '
+        || to_char(v_transfer.amount::numeric, 'FM999G999G990D00') || ' ' || v_transfer.currency
+        || ' отменён отправителем.'
+        || COALESCE(' Причина: ' || NULLIF(trim(p_reason), ''), ''),
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_code,
+        'reason', p_reason
+      )
+    );
 
   RETURN jsonb_build_object('success', true);
 END;
@@ -286,18 +513,40 @@ BEGIN
   WHERE id = p_transfer_id;
 
   INSERT INTO notifications (target_branch_id, type, title, body, data) VALUES
-    (v_transfer.from_branch_id::text, 'transfer_issued', 'Перевод выдан',
-     'Перевод ' || v_code || ' (' || v_transfer.amount || ' ' || v_transfer.currency || ') выдан получателю.',
-     jsonb_build_object('transferId', p_transfer_id::text)),
-    (v_transfer.to_branch_id::text, 'transfer_issued', 'Перевод выдан',
-     'Перевод ' || v_code || ' (' || v_transfer.amount || ' ' || v_transfer.currency || ') выдан получателю.',
-     jsonb_build_object('transferId', p_transfer_id::text));
+    (
+      v_transfer.from_branch_id::text,
+      'transfer_issued',
+      'Перевод ' || v_code || ' выдан',
+      'Перевод '
+        || to_char(v_transfer.amount::numeric, 'FM999G999G990D00') || ' ' || v_transfer.currency
+        || ' выдан получателю в ' || COALESCE((SELECT name FROM branches WHERE id = v_transfer.to_branch_id), '—'),
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_code,
+        'amount', v_transfer.amount,
+        'currency', v_transfer.currency
+      )
+    ),
+    (
+      v_transfer.to_branch_id::text,
+      'transfer_issued',
+      'Перевод ' || v_code || ' выдан',
+      'Деньги по переводу '
+        || to_char(v_transfer.amount::numeric, 'FM999G999G990D00') || ' ' || v_transfer.currency
+        || ' переданы получателю.',
+      jsonb_build_object(
+        'transferId', p_transfer_id::text,
+        'transactionCode', v_code,
+        'amount', v_transfer.amount,
+        'currency', v_transfer.currency
+      )
+    );
 
   RETURN jsonb_build_object('success', true);
 END;
 $$;
 
--- ─── Create Purchase (atomic) ───
+-- ─── Create Purchase (atomic, sum-reconciled, ownership-checked) ───
 CREATE OR REPLACE FUNCTION private.create_purchase(
   p_branch_id uuid,
   p_description text,
@@ -319,11 +568,37 @@ DECLARE
   v_payment jsonb;
   v_account_id uuid;
   v_amount double precision;
+  v_pay_currency text;
   v_cur_balance double precision;
   v_acc_currency text;
   v_acc_branch uuid;
+  v_sum_in_currency double precision := 0;
+  v_normalized double precision;
 BEGIN
   IF v_user_id IS NULL THEN RAISE EXCEPTION 'User must be authenticated'; END IF;
+  IF p_total_amount <= 0 THEN RAISE EXCEPTION 'total_amount must be positive'; END IF;
+  IF jsonb_array_length(COALESCE(p_payments, '[]'::jsonb)) = 0 THEN
+    RAISE EXCEPTION 'At least one payment line required';
+  END IF;
+
+  -- H13: reconcile sum(payments FX-converted to p_currency) ≈ p_total_amount
+  FOR v_payment IN SELECT * FROM jsonb_array_elements(p_payments)
+  LOOP
+    v_amount := (v_payment->>'amount')::double precision;
+    v_pay_currency := COALESCE(v_payment->>'currency', p_currency);
+    IF v_pay_currency = p_currency THEN
+      v_normalized := v_amount;
+    ELSE
+      v_normalized := v_amount * private.fx_rate(v_pay_currency, p_currency);
+    END IF;
+    v_sum_in_currency := v_sum_in_currency + v_normalized;
+  END LOOP;
+
+  IF abs(v_sum_in_currency - p_total_amount) > 0.01 THEN
+    RAISE EXCEPTION 'Payment sum (% %) does not match total_amount (% %)',
+      round(v_sum_in_currency::numeric, 2), p_currency,
+      round(p_total_amount::numeric, 2), p_currency;
+  END IF;
 
   v_code := private.next_transaction_code('ETH-TX', 'transactionCodes');
   v_purchase_id := gen_random_uuid();
@@ -336,15 +611,24 @@ BEGIN
     v_account_id := (v_payment->>'accountId')::uuid;
     v_amount := (v_payment->>'amount')::double precision;
 
+    SELECT branch_id, currency INTO v_acc_branch, v_acc_currency FROM branch_accounts WHERE id = v_account_id;
+    IF v_acc_branch IS NULL THEN
+      RAISE EXCEPTION 'Account % not found', v_account_id;
+    END IF;
+    IF v_acc_branch != p_branch_id THEN
+      RAISE EXCEPTION 'Account % does not belong to branch %', v_account_id, p_branch_id;
+    END IF;
+
     SELECT balance INTO v_cur_balance FROM account_balances WHERE account_id = v_account_id FOR UPDATE;
     IF v_cur_balance IS NULL THEN v_cur_balance := 0; END IF;
     IF v_cur_balance < v_amount THEN
       RAISE EXCEPTION 'Insufficient balance in account %', v_payment->>'accountName';
     END IF;
 
-    SELECT currency, branch_id INTO v_acc_currency, v_acc_branch FROM branch_accounts WHERE id = v_account_id;
-
-    UPDATE account_balances SET balance = balance - v_amount, updated_at = now() WHERE account_id = v_account_id;
+    INSERT INTO account_balances (account_id, branch_id, balance, currency, updated_at)
+    VALUES (v_account_id, COALESCE(v_acc_branch, p_branch_id), -v_amount, COALESCE(v_acc_currency, p_currency), now())
+    ON CONFLICT (account_id) DO UPDATE
+      SET balance = account_balances.balance - v_amount, updated_at = now();
 
     INSERT INTO ledger_entries (branch_id, account_id, type, amount, currency, reference_type, reference_id, transaction_code, description, created_by)
     VALUES (COALESCE(v_acc_branch, p_branch_id), v_account_id, 'debit', v_amount, COALESCE(v_acc_currency, p_currency),

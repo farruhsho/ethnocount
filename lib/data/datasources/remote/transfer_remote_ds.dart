@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
+import 'package:ethnocount/domain/entities/transfer_issuance.dart';
 import 'package:ethnocount/domain/entities/transfer_part.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 
@@ -203,7 +204,7 @@ class TransferRemoteDataSource {
     return Map<String, dynamic>.from(result as Map);
   }
 
-  /// Issue transfer via PostgreSQL RPC.
+  /// Issue transfer via PostgreSQL RPC (full remaining amount).
   Future<Map<String, dynamic>> issueTransfer(String transferId) async {
     final result = await _client.rpc('issue_transfer', params: {
       'p_transfer_id': transferId,
@@ -211,15 +212,85 @@ class TransferRemoteDataSource {
     return Map<String, dynamic>.from(result as Map);
   }
 
-  /// Cancel transfer.
-  Future<Map<String, dynamic>> cancelTransfer(String transferId) async {
-    await _client.from('transfers').update({
-      'status': 'cancelled',
-    }).eq('id', transferId);
-    return {'success': true};
+  /// Issue a single tranche of a confirmed transfer. Pass `amount` in
+  /// receiver currency. The transfer flips to `issued` only when cumulative
+  /// tranches reach the credited amount.
+  Future<Map<String, dynamic>> issueTransferPartial(
+    String transferId,
+    double amount, {
+    String? note,
+  }) async {
+    final result = await _client.rpc('issue_transfer_partial', params: {
+      'p_transfer_id': transferId,
+      'p_amount': amount,
+      'p_note': note,
+    });
+    return Map<String, dynamic>.from(result as Map);
+  }
+
+  /// Fetch all payout tranches for a transfer, oldest → newest.
+  Future<List<TransferIssuance>> fetchIssuances(String transferId) async {
+    final data = await _client
+        .from('transfer_issuances')
+        .select()
+        .eq('transfer_id', transferId)
+        .order('issued_at', ascending: true);
+    return (data as List)
+        .map((m) => TransferIssuance.fromMap(Map<String, dynamic>.from(m as Map)))
+        .toList();
+  }
+
+  /// Realtime stream of payout tranches for a single transfer.
+  Stream<List<TransferIssuance>> watchIssuances(String transferId) {
+    final controller = StreamController<List<TransferIssuance>>.broadcast();
+
+    fetchIssuances(transferId).then((list) {
+      if (!controller.isClosed) controller.add(list);
+    }).catchError((e) {
+      if (!controller.isClosed) controller.addError(e);
+    });
+
+    final channel = _client
+        .channel('transfer_issuances_$transferId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'transfer_issuances',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'transfer_id',
+            value: transferId,
+          ),
+          callback: (_) {
+            fetchIssuances(transferId).then((list) {
+              if (!controller.isClosed) controller.add(list);
+            });
+          },
+        )
+        .subscribe();
+
+    controller.onCancel = () {
+      _client.removeChannel(channel);
+    };
+
+    return controller.stream;
+  }
+
+  /// Cancel transfer via PostgreSQL RPC (atomic refund + ledger credit).
+  Future<Map<String, dynamic>> cancelTransfer(
+    String transferId, {
+    String reason = '',
+  }) async {
+    final result = await _client.rpc('cancel_transfer', params: {
+      'p_transfer_id': transferId,
+      'p_reason': reason,
+    });
+    return Map<String, dynamic>.from(result as Map);
   }
 
   /// Update transfer metadata and/or amount (pending only).
+  /// Amount changes are routed through `update_transfer_amount` RPC for atomicity.
+  /// Other metadata updates use plain REST (no balance impact).
   Future<void> updateTransfer({
     required String transferId,
     double? amount,
@@ -236,100 +307,21 @@ class TransferRemoteDataSource {
     double? exchangeRate,
     String? amendmentNote,
   }) async {
-    final data = await _client
-        .from('transfers')
-        .select()
-        .eq('id', transferId)
-        .single();
-
-    final status = data['status'] as String? ?? 'pending';
-    final isConfirmedOrIssued = status == 'confirmed' || status == 'issued';
-    if (isConfirmedOrIssued && amount != null) {
-      throw Exception('Сумму принятого/выданного перевода изменить нельзя');
+    if (amount != null) {
+      await _client.rpc('update_transfer_amount', params: {
+        'p_transfer_id': transferId,
+        'p_new_amount': amount,
+        'p_new_exchange_rate': exchangeRate,
+        'p_amendment_note': amendmentNote,
+      });
     }
 
     final updateData = <String, dynamic>{};
-    final userId = _client.auth.currentUser?.id;
-
-    if (!isConfirmedOrIssued) {
-      if (amount != null) {
-        final commissionType = data['commission_type'] as String? ?? 'fixed';
-        final commissionValue = (data['commission_value'] ?? 0).toDouble();
-        final commissionMode = data['commission_mode'] as String? ?? 'fromSender';
-        final oldAmount = (data['amount'] ?? 0).toDouble();
-        final oldCommission = (data['commission'] ?? 0).toDouble();
-        final oldTotal = commissionMode == 'fromSender' ? oldAmount + oldCommission : oldAmount;
-
-        final newCommission = commissionType == 'percentage'
-            ? (amount * commissionValue / 100)
-            : commissionValue;
-        final newTotal = commissionMode == 'fromSender' ? amount + newCommission : amount;
-
-        if ((amount - oldAmount).abs() > 0.01) {
-          // Adjust balance
-          final fromAccountId = data['from_account_id'] as String;
-          final balData = await _client
-              .from('account_balances')
-              .select('balance')
-              .eq('account_id', fromAccountId)
-              .single();
-          final current = (balData['balance'] ?? 0).toDouble();
-          final adjusted = current + oldTotal - newTotal;
-          if (adjusted < 0) throw Exception('Недостаточно средств на счёте отправителя');
-
-          await _client.from('account_balances').update({
-            'balance': adjusted,
-            'updated_at': DateTime.now().toIso8601String(),
-          }).eq('account_id', fromAccountId);
-
-          // Reversal + new ledger entries
-          final branchId = data['from_branch_id'] as String;
-          final currency = data['currency'] as String;
-          final code = data['transaction_code'] as String? ?? '';
-
-          await _client.from('ledger_entries').insert({
-            'branch_id': branchId,
-            'account_id': fromAccountId,
-            'type': 'credit',
-            'amount': oldTotal,
-            'currency': currency,
-            'reference_type': 'transfer',
-            'reference_id': transferId,
-            'transaction_code': code,
-            'description': 'Сторно: $code',
-            'created_by': userId,
-          });
-          await _client.from('ledger_entries').insert({
-            'branch_id': branchId,
-            'account_id': fromAccountId,
-            'type': 'debit',
-            'amount': newTotal,
-            'currency': currency,
-            'reference_type': 'transfer',
-            'reference_id': transferId,
-            'transaction_code': code,
-            'description': 'Перевод $code (ожидает подтверждения)',
-            'created_by': userId,
-          });
-        }
-        updateData['amount'] = amount;
-        updateData['commission'] = newCommission;
-
-        // Recalculate converted_amount
-        final effRate = exchangeRate ?? (data['exchange_rate'] ?? 1).toDouble();
-        final effComm = newCommission;
-        final receiverAmt = commissionMode == 'fromTransfer'
-            ? amount - effComm
-            : commissionMode == 'toReceiver'
-                ? amount + effComm
-                : amount;
-        updateData['converted_amount'] = receiverAmt * effRate;
-      }
-      if (toAccountId != null) updateData['to_account_id'] = toAccountId;
-      if (toCurrency != null) updateData['to_currency'] = toCurrency;
-      if (exchangeRate != null) updateData['exchange_rate'] = exchangeRate;
+    if (amount == null && exchangeRate != null) {
+      updateData['exchange_rate'] = exchangeRate;
     }
-
+    if (toAccountId != null) updateData['to_account_id'] = toAccountId;
+    if (toCurrency != null) updateData['to_currency'] = toCurrency;
     if (description != null) updateData['description'] = description;
     if (clientId != null) updateData['client_id'] = clientId;
     if (senderName != null) updateData['sender_name'] = senderName;
@@ -386,12 +378,16 @@ class TransferRemoteDataSource {
       issuedBy: data['issued_by'],
       rejectedBy: data['rejected_by'],
       rejectionReason: data['rejection_reason'],
+      cancelledBy: data['cancelled_by'],
+      cancellationReason: data['cancellation_reason'],
       idempotencyKey: data['idempotency_key'] ?? '',
       createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
       confirmedAt: data['confirmed_at'] != null ? DateTime.tryParse(data['confirmed_at']) : null,
       issuedAt: data['issued_at'] != null ? DateTime.tryParse(data['issued_at']) : null,
       rejectedAt: data['rejected_at'] != null ? DateTime.tryParse(data['rejected_at']) : null,
+      cancelledAt: data['cancelled_at'] != null ? DateTime.tryParse(data['cancelled_at']) : null,
       amendmentHistory: TransferAmendmentEntry.listFromJson(data['amendment_history']),
+      issuedAmount: (data['issued_amount'] ?? 0).toDouble(),
     );
   }
 

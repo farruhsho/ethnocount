@@ -13,7 +13,11 @@ import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/user.dart';
 import 'package:ethnocount/domain/repositories/branch_repository.dart';
 import 'package:ethnocount/data/datasources/remote/user_remote_ds.dart';
+import 'package:ethnocount/data/datasources/remote/branch_remote_ds.dart';
+import 'package:ethnocount/data/datasources/remote/audit_remote_ds.dart';
 import 'package:ethnocount/data/datasources/remote/ledger_remote_ds.dart';
+import 'package:ethnocount/domain/entities/audit_log.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 
 class AdminPanelPage extends StatefulWidget {
@@ -42,7 +46,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 4, vsync: this);
+    _tabCtrl = TabController(length: 5, vsync: this);
 
     _userSub = _userDs.watchUsers().listen((users) {
       if (mounted) setState(() { _users = users; _loadingUsers = false; });
@@ -68,14 +72,25 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final cs = context.colorScheme;
+    final isMobile = !context.isDesktop;
 
     return Scaffold(
+      floatingActionButton: isMobile
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddEntitySheet(context),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Добавить'),
+            )
+          : null,
       body: Column(
         children: [
           // ─── Header ───
           Container(
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.xxl, AppSpacing.lg, AppSpacing.xxl, 0,
+            padding: EdgeInsets.fromLTRB(
+              isMobile ? AppSpacing.md : AppSpacing.xxl,
+              isMobile ? AppSpacing.sm : AppSpacing.lg,
+              isMobile ? AppSpacing.md : AppSpacing.xxl,
+              0,
             ),
             decoration: BoxDecoration(
               color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
@@ -91,51 +106,62 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 Row(
                   children: [
                     Container(
-                      width: 44, height: 44,
+                      width: isMobile ? 36 : 44,
+                      height: isMobile ? 36 : 44,
                       decoration: BoxDecoration(
                         gradient: AppColors.primaryGradient,
                         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                       ),
-                      child: const Icon(Icons.admin_panel_settings,
-                          color: Colors.white, size: 24),
+                      child: Icon(Icons.admin_panel_settings,
+                          color: Colors.white, size: isMobile ? 20 : 24),
                     ),
                     const SizedBox(width: AppSpacing.md),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Панель управления',
-                            style: context.textTheme.headlineSmall?.copyWith(
+                          Text(
+                            isMobile ? 'Управление' : 'Панель управления',
+                            style: (isMobile
+                                    ? context.textTheme.titleLarge
+                                    : context.textTheme.headlineSmall)
+                                ?.copyWith(
                               fontWeight: FontWeight.w800,
                               letterSpacing: -0.5,
                             ),
                           ),
                           Text(
-                            'Creator: ${_currentUser?.displayName ?? "—"} • '
-                            '${_users.length} сотрудников • ${_branches.length} филиалов',
+                            isMobile
+                                ? '${_users.length} сотрудн. • ${_branches.length} фил.'
+                                : 'Creator: ${_currentUser?.displayName ?? "—"} • '
+                                    '${_users.length} сотрудников • ${_branches.length} филиалов',
                             style: context.textTheme.bodySmall?.copyWith(
                               color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
                             ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
                     ),
-                    _QuickActionButton(
-                      icon: Icons.person_add_rounded,
-                      label: 'Сотрудник',
-                      color: AppColors.secondary,
-                      onTap: () => _showCreateUserDialog(context),
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    _QuickActionButton(
-                      icon: Icons.add_business_rounded,
-                      label: 'Филиал',
-                      color: AppColors.primary,
-                      onTap: () => _showCreateBranchDialog(context),
-                    ),
+                    if (!isMobile) ...[
+                      _QuickActionButton(
+                        icon: Icons.person_add_rounded,
+                        label: 'Сотрудник',
+                        color: AppColors.secondary,
+                        onTap: () => _showCreateUserDialog(context),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      _QuickActionButton(
+                        icon: Icons.add_business_rounded,
+                        label: 'Филиал',
+                        color: AppColors.primary,
+                        onTap: () => _showCreateBranchDialog(context),
+                      ),
+                    ],
                   ],
                 ),
-                const SizedBox(height: AppSpacing.lg),
+                SizedBox(height: isMobile ? AppSpacing.sm : AppSpacing.lg),
                 TabBar(
                   controller: _tabCtrl,
                   isScrollable: true,
@@ -183,6 +209,16 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                         ],
                       ),
                     ),
+                    Tab(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.history_rounded, size: 18),
+                          const SizedBox(width: 6),
+                          const Text('Аудит'),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ],
@@ -216,10 +252,64 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                   onEditBranch: (branch) => _showEditBranchDialog(context, branch),
                 ),
                 _AccessMatrixTab(users: _users, branches: _branches, loading: _loadingUsers || _loadingBranches),
+                _AuditTab(users: _users, branches: _branches),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ─── Mobile "+" sheet: pick what to create ───
+
+  void _showAddEntitySheet(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.sm,
+            0,
+            AppSpacing.sm,
+            AppSpacing.md,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.secondary,
+                  child: Icon(Icons.person_add_rounded, color: Colors.white),
+                ),
+                title: const Text('Новый сотрудник'),
+                subtitle: const Text('Бухгалтер с доступом к филиалам'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showCreateUserDialog(context);
+                },
+              ),
+              ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: AppColors.primary,
+                  child:
+                      Icon(Icons.add_business_rounded, color: Colors.white),
+                ),
+                title: const Text('Новый филиал'),
+                subtitle: const Text('Офис/точка со своими счетами'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showCreateBranchDialog(context);
+                },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -459,6 +549,7 @@ class _UsersTab extends StatelessWidget {
     if (loading) return const Center(child: CircularProgressIndicator());
 
     final isDark = context.isDark;
+    final isMobile = !context.isDesktop;
     final filtered = search.isEmpty
         ? users
         : users.where((u) {
@@ -467,6 +558,63 @@ class _UsersTab extends StatelessWidget {
                 u.email.toLowerCase().contains(q);
           }).toList();
 
+    final searchField = TextField(
+      onChanged: onSearchChanged,
+      decoration: InputDecoration(
+        hintText: 'Поиск по имени или email...',
+        prefixIcon: const Icon(Icons.search_rounded, size: 20),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        isDense: true,
+      ),
+    );
+
+    if (isMobile) {
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.md,
+              AppSpacing.md,
+              AppSpacing.sm,
+            ),
+            child: searchField,
+          ),
+          Expanded(
+            child: filtered.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(AppSpacing.xl),
+                      child: Text('Сотрудники не найдены'),
+                    ),
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.md,
+                      0,
+                      AppSpacing.md,
+                      80,
+                    ),
+                    separatorBuilder: (_, _) =>
+                        const SizedBox(height: AppSpacing.sm),
+                    itemCount: filtered.length,
+                    itemBuilder: (context, i) {
+                      final user = filtered[i];
+                      return _UserCard(
+                        user: user,
+                        branches: branches,
+                        onEdit: () => onEdit(user),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.xxl),
       child: Column(
@@ -474,20 +622,7 @@ class _UsersTab extends StatelessWidget {
           // Toolbar
           Row(
             children: [
-              Expanded(
-                child: TextField(
-                  onChanged: onSearchChanged,
-                  decoration: InputDecoration(
-                    hintText: 'Поиск по имени или email...',
-                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    isDense: true,
-                  ),
-                ),
-              ),
+              Expanded(child: searchField),
               const SizedBox(width: AppSpacing.md),
               FilledButton.icon(
                 onPressed: onCreate,
@@ -546,6 +681,134 @@ class _UsersTab extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Mobile-friendly employee card with avatar, role badge, branch names, status
+/// and an edit affordance — replaces the desktop table row on small screens.
+class _UserCard extends StatelessWidget {
+  const _UserCard({
+    required this.user,
+    required this.branches,
+    required this.onEdit,
+  });
+
+  final AppUser user;
+  final List<Branch> branches;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final roleColor =
+        user.role == SystemRole.creator ? Colors.purple : AppColors.primary;
+    final secondary =
+        isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
+
+    final branchNames = user.role.isAdminOrCreator
+        ? 'Все филиалы'
+        : user.assignedBranchIds
+            .map((id) => branches
+                .firstWhere(
+                  (b) => b.id == id,
+                  orElse: () => Branch(
+                    id: id,
+                    name: id,
+                    code: '?',
+                    baseCurrency: '',
+                    createdAt: DateTime.now(),
+                  ),
+                )
+                .name)
+            .join(', ');
+
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        side: BorderSide(
+          color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onEdit,
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: roleColor.withValues(alpha: 0.12),
+                child: Text(
+                  user.displayName.isNotEmpty
+                      ? user.displayName[0].toUpperCase()
+                      : '?',
+                  style: TextStyle(
+                    color: roleColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            user.displayName,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        _StatusDot(isActive: user.isActive),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      user.email,
+                      style: TextStyle(fontSize: 13, color: secondary),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Row(
+                      children: [
+                        _RoleBadge(role: user.role),
+                        const SizedBox(width: AppSpacing.sm),
+                        Flexible(
+                          child: Text(
+                            branchNames.isEmpty ? '—' : branchNames,
+                            style: TextStyle(fontSize: 12, color: secondary),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.edit_outlined, size: 20),
+                onPressed: onEdit,
+                tooltip: 'Редактировать',
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1065,6 +1328,29 @@ class _AccountTile extends StatelessWidget {
                   Text(account.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                   Text('${account.type.displayName} • ${account.currency}',
                     style: TextStyle(fontSize: 11, color: context.isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary)),
+                  if (account.type == AccountType.card && (account.cardLast4 != null || (account.bankName ?? '').isNotEmpty))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if ((account.bankName ?? '').isNotEmpty) ...[
+                            Icon(Icons.account_balance_outlined, size: 11,
+                                color: context.isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
+                            const SizedBox(width: 3),
+                            Text(account.bankName!,
+                                style: TextStyle(fontSize: 10, color: context.isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary)),
+                            const SizedBox(width: 6),
+                          ],
+                          if (account.cardLast4 != null) ...[
+                            Icon(Icons.credit_card, size: 11, color: color),
+                            const SizedBox(width: 3),
+                            Text('•••• ${account.cardLast4}',
+                                style: TextStyle(fontSize: 10, color: color, fontFeatures: const [FontFeature.tabularFigures()])),
+                          ],
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -1821,6 +2107,12 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
 
   List<Widget> _permissionCheckboxes(BuildContext context) {
     return [
+      _PermissionPresetPicker(
+        current: _permissions,
+        onApply: (preset) => setState(() => _permissions = preset),
+      ),
+      const SizedBox(height: 6),
+      const Divider(height: 1),
       CheckboxListTile(dense: true, controlAffinity: ListTileControlAffinity.leading, title: const Text('Переводы', style: TextStyle(fontSize: 14)), value: _permissions.canTransfers, onChanged: (v) => setState(() => _permissions = _permissions.copyWith(canTransfers: v ?? true))),
       CheckboxListTile(dense: true, controlAffinity: ListTileControlAffinity.leading, title: const Text('Управление переводами', style: TextStyle(fontSize: 14)), value: _permissions.canManageTransfers, onChanged: (v) => setState(() => _permissions = _permissions.copyWith(canManageTransfers: v ?? false))),
       CheckboxListTile(dense: true, controlAffinity: ListTileControlAffinity.leading, title: const Text('Пополнение филиала', style: TextStyle(fontSize: 14)), value: _permissions.canBranchTopUp, onChanged: (v) => setState(() => _permissions = _permissions.copyWith(canBranchTopUp: v ?? false))),
@@ -2059,7 +2351,12 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
   late final TextEditingController _codeCtrl;
+  late final TextEditingController _addressCtrl;
+  late final TextEditingController _phoneCtrl;
+  late final TextEditingController _notesCtrl;
+  late final TextEditingController _codeReasonCtrl;
   late String _currency;
+  late String _originalCode;
   bool _loading = false;
 
   static const _currencies = ['USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'TJS', 'TRY', 'KGS'];
@@ -2069,6 +2366,11 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.branch.name);
     _codeCtrl = TextEditingController(text: widget.branch.code);
+    _addressCtrl = TextEditingController(text: widget.branch.address ?? '');
+    _phoneCtrl = TextEditingController(text: widget.branch.phone ?? '');
+    _notesCtrl = TextEditingController(text: widget.branch.notes ?? '');
+    _codeReasonCtrl = TextEditingController();
+    _originalCode = widget.branch.code;
     _currency = widget.branch.baseCurrency;
   }
 
@@ -2076,18 +2378,66 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
   void dispose() {
     _nameCtrl.dispose();
     _codeCtrl.dispose();
+    _addressCtrl.dispose();
+    _phoneCtrl.dispose();
+    _notesCtrl.dispose();
+    _codeReasonCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+    final newCode = _codeCtrl.text.trim().toUpperCase();
+    final codeChanged = newCode != _originalCode;
+
+    if (codeChanged) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Подтвердите смену кода'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Код филиала будет изменён:\n  «$_originalCode»  →  «$newCode»',
+                  style: const TextStyle(fontWeight: FontWeight.w500)),
+              const SizedBox(height: AppSpacing.md),
+              const Text(
+                'Старый код останется в ссылках прежних переводов/леджера. '
+                'Изменение будет записано в branch_code_history.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextField(
+                controller: _codeReasonCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Причина (опционально)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Изменить')),
+          ],
+        ),
+      );
+      if (confirm != true) return;
+    }
+
     setState(() => _loading = true);
     final repo = sl<BranchRepository>();
     final result = await repo.updateBranch(
       branchId: widget.branch.id,
       name: _nameCtrl.text.trim(),
-      code: _codeCtrl.text.trim().toUpperCase(),
+      code: newCode,
       baseCurrency: _currency,
+      address: _addressCtrl.text.trim(),
+      phone: _phoneCtrl.text.trim(),
+      notes: _notesCtrl.text.trim(),
+      codeChangeReason: codeChanged ? _codeReasonCtrl.text.trim() : null,
     );
     if (!mounted) return;
     setState(() => _loading = false);
@@ -2102,58 +2452,154 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
     );
   }
 
+  Future<void> _toggleArchive() async {
+    final isArchived = !widget.branch.isActive;
+    final action = isArchived ? 'Восстановить' : 'Архивировать';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('$action филиал?'),
+        content: Text(isArchived
+            ? 'Филиал «${widget.branch.name}» вернётся в список активных.'
+            : 'Филиал «${widget.branch.name}» станет неактивным. '
+                'Все данные (счета, переводы, покупки) сохраняются. '
+                'Бухгалтеры филиала потеряют доступ к данным.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(action)),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _loading = true);
+    final ds = sl<BranchRemoteDataSource>();
+    try {
+      await ds.archiveBranch(branchId: widget.branch.id, archive: !isArchived);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      widget.onUpdated();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: $e'), backgroundColor: Theme.of(context).colorScheme.error, behavior: SnackBarBehavior.floating),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isArchived = !widget.branch.isActive;
     return AlertDialog(
-      title: const Row(
+      title: Row(
         children: [
-          Icon(Icons.edit_outlined, color: AppColors.primary),
-          SizedBox(width: 10),
-          Text('Изменить филиал'),
+          const Icon(Icons.edit_outlined, color: AppColors.primary),
+          const SizedBox(width: 10),
+          const Expanded(child: Text('Изменить филиал')),
+          if (isArchived)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text('В архиве', style: TextStyle(fontSize: 11)),
+            ),
         ],
       ),
       content: Form(
         key: _formKey,
         child: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _nameCtrl,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Название филиала *',
-                  border: OutlineInputBorder(),
-                  hintText: 'Ташкент',
-                  prefixIcon: Icon(Icons.business_outlined),
+          width: 460,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: _nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Название филиала *',
+                    border: OutlineInputBorder(),
+                    hintText: 'Ташкент',
+                    prefixIcon: Icon(Icons.business_outlined),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
                 ),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              TextFormField(
-                controller: _codeCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Код филиала (номер карты) *',
-                  border: OutlineInputBorder(),
-                  hintText: '111111',
-                  prefixIcon: Icon(Icons.code_rounded),
+                const SizedBox(height: AppSpacing.md),
+                TextFormField(
+                  controller: _codeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Код филиала *',
+                    helperText: 'Смена кода требует подтверждения и пишется в аудит',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.code_rounded),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите код' : null,
                 ),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите код' : null,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              DropdownButtonFormField<String>(
-                key: ValueKey('edit-branch-curr-$_currency'),
-                value: _currency,
-                decoration: const InputDecoration(
-                  labelText: 'Базовая валюта *',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.currency_exchange_rounded),
+                const SizedBox(height: AppSpacing.md),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('edit-branch-curr-$_currency'),
+                  value: _currency,
+                  decoration: const InputDecoration(
+                    labelText: 'Базовая валюта *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.currency_exchange_rounded),
+                  ),
+                  items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (v) => setState(() => _currency = v ?? 'USD'),
                 ),
-                items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                onChanged: (v) => setState(() => _currency = v ?? 'USD'),
-              ),
-            ],
+                const SizedBox(height: AppSpacing.lg),
+                const Divider(),
+                const SizedBox(height: AppSpacing.sm),
+                Row(children: const [
+                  Icon(Icons.contacts_outlined, size: 18),
+                  SizedBox(width: 6),
+                  Text('Контакты', style: TextStyle(fontWeight: FontWeight.w600)),
+                ]),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _addressCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Адрес',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.place_outlined),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: 'Телефон',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.phone_outlined),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _notesCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Заметки',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.note_outlined),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : _toggleArchive,
+                  icon: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                      color: isArchived ? AppColors.success : AppColors.warning),
+                  label: Text(isArchived ? 'Восстановить филиал' : 'Архивировать филиал',
+                      style: TextStyle(color: isArchived ? AppColors.success : AppColors.warning)),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: isArchived ? AppColors.success : AppColors.warning),
+                    minimumSize: const Size.fromHeight(42),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -2185,6 +2631,9 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _codeCtrl = TextEditingController();
+  final _addressCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
   String _currency = 'USD';
   bool _loading = false;
 
@@ -2194,6 +2643,9 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
   void dispose() {
     _nameCtrl.dispose();
     _codeCtrl.dispose();
+    _addressCtrl.dispose();
+    _phoneCtrl.dispose();
+    _notesCtrl.dispose();
     super.dispose();
   }
 
@@ -2210,46 +2662,85 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
       content: Form(
         key: _formKey,
         child: SizedBox(
-          width: 420,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _nameCtrl,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Название филиала *',
-                  border: OutlineInputBorder(),
-                  hintText: 'Москва',
-                  prefixIcon: Icon(Icons.business_outlined),
+          width: 460,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: _nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Название филиала *',
+                    border: OutlineInputBorder(),
+                    hintText: 'Москва',
+                    prefixIcon: Icon(Icons.business_outlined),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
                 ),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              TextFormField(
-                controller: _codeCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Код филиала *',
-                  border: OutlineInputBorder(),
-                  hintText: 'MSK',
-                  prefixIcon: Icon(Icons.code_rounded),
+                const SizedBox(height: AppSpacing.md),
+                TextFormField(
+                  controller: _codeCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Код филиала *',
+                    border: OutlineInputBorder(),
+                    hintText: 'MSK',
+                    prefixIcon: Icon(Icons.code_rounded),
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите код' : null,
                 ),
-                textCapitalization: TextCapitalization.characters,
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите код' : null,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              DropdownButtonFormField<String>(
-                key: ValueKey('new-branch-curr-$_currency'),
-                initialValue: _currency,
-                decoration: const InputDecoration(
-                  labelText: 'Базовая валюта *',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.currency_exchange_rounded),
+                const SizedBox(height: AppSpacing.md),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('new-branch-curr-$_currency'),
+                  initialValue: _currency,
+                  decoration: const InputDecoration(
+                    labelText: 'Базовая валюта *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.currency_exchange_rounded),
+                  ),
+                  items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (v) => setState(() => _currency = v ?? 'USD'),
                 ),
-                items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                onChanged: (v) => setState(() => _currency = v ?? 'USD'),
-              ),
-            ],
+                const SizedBox(height: AppSpacing.lg),
+                const Divider(),
+                const SizedBox(height: AppSpacing.sm),
+                Row(children: const [
+                  Icon(Icons.contacts_outlined, size: 18),
+                  SizedBox(width: 6),
+                  Text('Контакты (опционально)', style: TextStyle(fontWeight: FontWeight.w600)),
+                ]),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _addressCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Адрес',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.place_outlined),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _phoneCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(
+                    labelText: 'Телефон',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.phone_outlined),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _notesCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Заметки',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.note_outlined),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -2274,6 +2765,9 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
       name: _nameCtrl.text.trim(),
       code: _codeCtrl.text.trim().toUpperCase(),
       baseCurrency: _currency,
+      address: _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim(),
+      phone: _phoneCtrl.text.trim().isEmpty ? null : _phoneCtrl.text.trim(),
+      notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
     );
     if (!mounted) return;
     setState(() => _loading = false);
@@ -2303,6 +2797,11 @@ class _AddAccountDialog extends StatefulWidget {
 class _AddAccountDialogState extends State<_AddAccountDialog> {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
+  final _cardNumberCtrl = TextEditingController();
+  final _cardholderCtrl = TextEditingController();
+  final _bankCtrl = TextEditingController();
+  final _expiryCtrl = TextEditingController(); // MM/YY
+  final _notesCtrl = TextEditingController();
   AccountType _type = AccountType.cash;
   late String _currency;
   bool _loading = false;
@@ -2318,47 +2817,115 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _cardNumberCtrl.dispose();
+    _cardholderCtrl.dispose();
+    _bankCtrl.dispose();
+    _expiryCtrl.dispose();
+    _notesCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isCard = _type == AccountType.card;
     return AlertDialog(
       title: Text('Новый счёт — ${widget.branch.name}'),
       content: Form(
         key: _formKey,
         child: SizedBox(
-          width: 380,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: _nameCtrl,
-                autofocus: true,
-                decoration: const InputDecoration(
-                  labelText: 'Название счёта *',
-                  border: OutlineInputBorder(),
-                  hintText: 'Касса USD',
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: _nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Название счёта *',
+                    border: OutlineInputBorder(),
+                    hintText: 'Касса USD',
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
                 ),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              DropdownButtonFormField<AccountType>(
-                key: ValueKey('acc-type-$_type'),
-                initialValue: _type,
-                decoration: const InputDecoration(labelText: 'Тип счёта', border: OutlineInputBorder()),
-                items: AccountType.values.map((t) => DropdownMenuItem(value: t, child: Text(t.displayName))).toList(),
-                onChanged: (v) => setState(() => _type = v ?? AccountType.cash),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              DropdownButtonFormField<String>(
-                key: ValueKey('acc-curr-$_currency'),
-                initialValue: _currency,
-                decoration: const InputDecoration(labelText: 'Валюта', border: OutlineInputBorder()),
-                items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                onChanged: (v) => setState(() => _currency = v ?? 'USD'),
-              ),
-            ],
+                const SizedBox(height: AppSpacing.md),
+                DropdownButtonFormField<AccountType>(
+                  key: ValueKey('acc-type-$_type'),
+                  initialValue: _type,
+                  decoration: const InputDecoration(labelText: 'Тип счёта', border: OutlineInputBorder()),
+                  items: AccountType.values.map((t) => DropdownMenuItem(value: t, child: Text(t.displayName))).toList(),
+                  onChanged: (v) => setState(() => _type = v ?? AccountType.cash),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('acc-curr-$_currency'),
+                  initialValue: _currency,
+                  decoration: const InputDecoration(labelText: 'Валюта', border: OutlineInputBorder()),
+                  items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (v) => setState(() => _currency = v ?? 'USD'),
+                ),
+                if (isCard) ...[
+                  const SizedBox(height: AppSpacing.lg),
+                  const Divider(),
+                  const SizedBox(height: AppSpacing.sm),
+                  Row(children: const [
+                    Icon(Icons.credit_card_outlined, size: 18),
+                    SizedBox(width: 6),
+                    Text('Данные карты', style: TextStyle(fontWeight: FontWeight.w600)),
+                  ]),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _cardNumberCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Номер карты',
+                      hintText: '1234 5678 9012 3456',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _cardholderCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Держатель (как на карте)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Row(children: [
+                    Expanded(
+                      flex: 2,
+                      child: TextFormField(
+                        controller: _bankCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Банк',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _expiryCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'MM/YY',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _notesCtrl,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      labelText: 'Заметки',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
         ),
       ),
@@ -2378,11 +2945,19 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
     final repo = sl<BranchRepository>();
+    final isCard = _type == AccountType.card;
+    final (mm, yy) = _parseExpiry(_expiryCtrl.text);
     final result = await repo.createBranchAccount(
       branchId: widget.branch.id,
       name: _nameCtrl.text.trim(),
       type: _type,
       currency: _currency,
+      cardNumber: isCard ? _cardNumberCtrl.text.trim() : null,
+      cardholderName: isCard ? _cardholderCtrl.text.trim() : null,
+      bankName: isCard ? _bankCtrl.text.trim() : null,
+      expiryMonth: isCard ? mm : null,
+      expiryYear: isCard ? yy : null,
+      notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
     );
     if (!mounted) return;
     setState(() => _loading = false);
@@ -2396,6 +2971,29 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
       },
     );
   }
+}
+
+/// Parse 'MM/YY' or 'MM/YYYY' → (month, fullYear). Returns (null, null) on
+/// empty or invalid input.
+(int?, int?) _parseExpiry(String raw) {
+  final s = raw.trim();
+  if (s.isEmpty) return (null, null);
+  final parts = s.split(RegExp(r'[/\-\s]+'));
+  if (parts.length != 2) return (null, null);
+  final mm = int.tryParse(parts[0]);
+  var yy = int.tryParse(parts[1]);
+  if (mm == null || yy == null) return (null, null);
+  if (mm < 1 || mm > 12) return (null, null);
+  if (yy < 100) yy = 2000 + yy;
+  if (yy < 2000 || yy > 2100) return (null, null);
+  return (mm, yy);
+}
+
+String _formatExpiry(int? mm, int? yy) {
+  if (mm == null || yy == null) return '';
+  final m = mm.toString().padLeft(2, '0');
+  final y = (yy % 100).toString().padLeft(2, '0');
+  return '$m/$y';
 }
 
 // ─── Edit Account Dialog (Creator only) ───
@@ -2416,68 +3014,188 @@ class _EditAccountDialog extends StatefulWidget {
 
 class _EditAccountDialogState extends State<_EditAccountDialog> {
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _cardNumberCtrl;
+  late final TextEditingController _cardholderCtrl;
+  late final TextEditingController _bankCtrl;
+  late final TextEditingController _expiryCtrl;
+  late final TextEditingController _notesCtrl;
   late AccountType _type;
   late String _currency;
   bool _loading = false;
+  bool _revealCard = false;
+  bool _clearCard = false;
 
   static const _currencies = ['USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'TJS', 'TRY', 'KGS'];
 
   @override
   void initState() {
     super.initState();
-    _nameCtrl = TextEditingController(text: widget.account.name);
-    _type = widget.account.type;
-    _currency = widget.account.currency;
+    final a = widget.account;
+    _nameCtrl = TextEditingController(text: a.name);
+    _cardNumberCtrl = TextEditingController(text: a.cardNumber ?? '');
+    _cardholderCtrl = TextEditingController(text: a.cardholderName ?? '');
+    _bankCtrl = TextEditingController(text: a.bankName ?? '');
+    _expiryCtrl = TextEditingController(text: _formatExpiry(a.expiryMonth, a.expiryYear));
+    _notesCtrl = TextEditingController(text: a.notes ?? '');
+    _type = a.type;
+    _currency = a.currency;
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _cardNumberCtrl.dispose();
+    _cardholderCtrl.dispose();
+    _bankCtrl.dispose();
+    _expiryCtrl.dispose();
+    _notesCtrl.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isCard = _type == AccountType.card;
+    final a = widget.account;
+    final isArchived = !a.isActive;
     return AlertDialog(
-      title: const Row(
+      title: Row(
         children: [
-          Icon(Icons.edit_rounded, color: AppColors.secondary),
-          SizedBox(width: 10),
-          Text('Изменить счёт'),
+          const Icon(Icons.edit_rounded, color: AppColors.secondary),
+          const SizedBox(width: 10),
+          const Expanded(child: Text('Изменить счёт')),
+          if (isArchived)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Text('В архиве', style: TextStyle(fontSize: 11)),
+            ),
         ],
       ),
       content: SizedBox(
-        width: 380,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _nameCtrl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Название счёта *',
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Название счёта *',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
               ),
-              validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
-            ),
-            const SizedBox(height: AppSpacing.md),
-            DropdownButtonFormField<AccountType>(
-              key: ValueKey('edit-acc-type-$_type'),
-              value: _type,
-              decoration: const InputDecoration(labelText: 'Тип счёта', border: OutlineInputBorder()),
-              items: AccountType.values.map((t) => DropdownMenuItem(value: t, child: Text(t.displayName))).toList(),
-              onChanged: (v) => setState(() => _type = v ?? _type),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            DropdownButtonFormField<String>(
-              key: ValueKey('edit-acc-curr-$_currency'),
-              value: _currency,
-              decoration: const InputDecoration(labelText: 'Валюта', border: OutlineInputBorder()),
-              items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-              onChanged: (v) => setState(() => _currency = v ?? _currency),
-            ),
-          ],
+              const SizedBox(height: AppSpacing.md),
+              DropdownButtonFormField<AccountType>(
+                key: ValueKey('edit-acc-type-$_type'),
+                value: _type,
+                decoration: const InputDecoration(labelText: 'Тип счёта', border: OutlineInputBorder()),
+                items: AccountType.values.map((t) => DropdownMenuItem(value: t, child: Text(t.displayName))).toList(),
+                onChanged: (v) => setState(() => _type = v ?? _type),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              DropdownButtonFormField<String>(
+                key: ValueKey('edit-acc-curr-$_currency'),
+                value: _currency,
+                decoration: const InputDecoration(labelText: 'Валюта', border: OutlineInputBorder()),
+                items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                onChanged: (v) => setState(() => _currency = v ?? _currency),
+              ),
+              if (isCard) ...[
+                const SizedBox(height: AppSpacing.lg),
+                const Divider(),
+                const SizedBox(height: AppSpacing.sm),
+                Row(children: const [
+                  Icon(Icons.credit_card_outlined, size: 18),
+                  SizedBox(width: 6),
+                  Text('Данные карты', style: TextStyle(fontWeight: FontWeight.w600)),
+                ]),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _cardNumberCtrl,
+                  keyboardType: TextInputType.number,
+                  obscureText: !_revealCard,
+                  enabled: !_clearCard,
+                  decoration: InputDecoration(
+                    labelText: 'Номер карты',
+                    helperText: a.cardLast4 != null ? 'Текущая: •••• ${a.cardLast4}' : null,
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      icon: Icon(_revealCard ? Icons.visibility_off : Icons.visibility, size: 20),
+                      onPressed: _clearCard ? null : () => setState(() => _revealCard = !_revealCard),
+                      tooltip: _revealCard ? 'Скрыть' : 'Показать',
+                    ),
+                  ),
+                ),
+                CheckboxListTile(
+                  value: _clearCard,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('Удалить номер карты', style: TextStyle(fontSize: 13)),
+                  onChanged: (v) => setState(() => _clearCard = v ?? false),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _cardholderCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Держатель (как на карте)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Row(children: [
+                  Expanded(
+                    flex: 2,
+                    child: TextFormField(
+                      controller: _bankCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Банк',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _expiryCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'MM/YY',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ]),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _notesCtrl,
+                  maxLines: 2,
+                  decoration: const InputDecoration(
+                    labelText: 'Заметки',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              const SizedBox(height: AppSpacing.md),
+              // Archive toggle
+              OutlinedButton.icon(
+                onPressed: _loading ? null : _toggleArchive,
+                icon: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                    color: isArchived ? AppColors.success : AppColors.warning),
+                label: Text(isArchived ? 'Восстановить из архива' : 'Архивировать счёт',
+                    style: TextStyle(color: isArchived ? AppColors.success : AppColors.warning)),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: isArchived ? AppColors.success : AppColors.warning),
+                  minimumSize: const Size.fromHeight(42),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
       actions: [
@@ -2502,11 +3220,20 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
     }
     setState(() => _loading = true);
     final repo = sl<BranchRepository>();
+    final isCard = _type == AccountType.card;
+    final (mm, yy) = _parseExpiry(_expiryCtrl.text);
     final result = await repo.updateBranchAccount(
       accountId: widget.account.id,
       name: _nameCtrl.text.trim(),
       type: _type,
       currency: _currency,
+      cardNumber: isCard && !_clearCard ? _cardNumberCtrl.text.trim() : null,
+      clearCardNumber: _clearCard,
+      cardholderName: isCard ? _cardholderCtrl.text.trim() : null,
+      bankName: isCard ? _bankCtrl.text.trim() : null,
+      expiryMonth: isCard ? mm : null,
+      expiryYear: isCard ? yy : null,
+      notes: _notesCtrl.text.trim(),
     );
     if (!mounted) return;
     setState(() => _loading = false);
@@ -2519,6 +3246,39 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
         widget.onUpdated();
       },
     );
+  }
+
+  Future<void> _toggleArchive() async {
+    final isArchived = !widget.account.isActive;
+    final action = isArchived ? 'Восстановить' : 'Архивировать';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('$action счёт?'),
+        content: Text(isArchived
+            ? 'Счёт «${widget.account.name}» вернётся в список активных.'
+            : 'Счёт «${widget.account.name}» будет скрыт из активных. Баланс и история не пропадут.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Отмена')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(action)),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _loading = true);
+    final ds = sl<BranchRemoteDataSource>();
+    try {
+      await ds.archiveBranchAccount(accountId: widget.account.id, archive: !isArchived);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      widget.onUpdated();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка: $e'), backgroundColor: Theme.of(context).colorScheme.error, behavior: SnackBarBehavior.floating),
+      );
+    }
   }
 }
 
@@ -2772,6 +3532,575 @@ class _OperationCard extends StatelessWidget {
               fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               color: selected ? color : Colors.grey,
             )),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TAB 5: Audit log (creator-only by RLS)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class _AuditTab extends StatefulWidget {
+  const _AuditTab({required this.users, required this.branches});
+  final List<AppUser> users;
+  final List<Branch> branches;
+
+  @override
+  State<_AuditTab> createState() => _AuditTabState();
+}
+
+class _AuditTabState extends State<_AuditTab> {
+  final _auditDs = sl<AuditRemoteDataSource>();
+  String? _entityTypeFilter;
+  String? _performerFilter;
+  bool _loading = true;
+  List<AuditLog> _logs = [];
+  List<Map<String, dynamic>> _codeHistory = [];
+
+  static const _entityTypes = <String, String>{
+    '': 'Все типы',
+    'branch': 'Филиал',
+    'branch_account': 'Счёт',
+    'user': 'Пользователь',
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  Future<void> _reload() async {
+    setState(() => _loading = true);
+    try {
+      final logs = await _auditDs.watchAuditLogs(
+        entityType: (_entityTypeFilter?.isEmpty ?? true) ? null : _entityTypeFilter,
+        performedBy: _performerFilter,
+        limit: 200,
+      ).first;
+      // branch_code_history — fetch via raw supabase call
+      final client = Supabase.instance.client;
+      final codeRows = await client
+          .from('branch_code_history')
+          .select()
+          .order('changed_at', ascending: false)
+          .limit(50);
+      if (!mounted) return;
+      setState(() {
+        _logs = logs;
+        _codeHistory = List<Map<String, dynamic>>.from(codeRows as List);
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Не удалось загрузить аудит: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  String _userName(String userId) {
+    if (userId.isEmpty) return 'system';
+    final u = widget.users.cast<AppUser?>().firstWhere(
+          (u) => u?.id == userId,
+          orElse: () => null,
+        );
+    return u?.displayName ?? userId.substring(0, 8);
+  }
+
+  String _branchName(String branchId) {
+    if (branchId.isEmpty) return '—';
+    final b = widget.branches.cast<Branch?>().firstWhere(
+          (b) => b?.id == branchId,
+          orElse: () => null,
+        );
+    return b?.name ?? branchId.substring(0, 8);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final isMobile = !context.isDesktop;
+
+    return Column(
+      children: [
+        // ─── Toolbar ───
+        Padding(
+          padding: EdgeInsets.all(isMobile ? AppSpacing.md : AppSpacing.xl),
+          child: Wrap(
+            spacing: AppSpacing.md,
+            runSpacing: AppSpacing.sm,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              SizedBox(
+                width: 220,
+                child: DropdownButtonFormField<String>(
+                  initialValue: _entityTypeFilter ?? '',
+                  decoration: const InputDecoration(
+                    labelText: 'Тип сущности',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: _entityTypes.entries
+                      .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+                      .toList(),
+                  onChanged: (v) {
+                    setState(() => _entityTypeFilter = v);
+                    _reload();
+                  },
+                ),
+              ),
+              SizedBox(
+                width: 240,
+                child: DropdownButtonFormField<String>(
+                  initialValue: _performerFilter ?? '',
+                  decoration: const InputDecoration(
+                    labelText: 'Пользователь',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: [
+                    const DropdownMenuItem(value: '', child: Text('Все')),
+                    ...widget.users.map((u) => DropdownMenuItem(
+                          value: u.id,
+                          child: Text(u.displayName, overflow: TextOverflow.ellipsis),
+                        )),
+                  ],
+                  onChanged: (v) {
+                    setState(() => _performerFilter = (v?.isEmpty ?? true) ? null : v);
+                    _reload();
+                  },
+                ),
+              ),
+              FilledButton.tonalIcon(
+                onPressed: _loading ? null : _reload,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Обновить'),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text('${_logs.length} записей',
+                    style: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600, fontSize: 12)),
+              ),
+            ],
+          ),
+        ),
+        // ─── Body ───
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView(
+                    padding: EdgeInsets.symmetric(horizontal: isMobile ? AppSpacing.md : AppSpacing.xl),
+                    children: [
+                      // ─── Branch-code history card ───
+                      if (_codeHistory.isNotEmpty) ...[
+                        _sectionHeader(context, Icons.qr_code_rounded, 'История смен кода филиалов', _codeHistory.length),
+                        const SizedBox(height: AppSpacing.sm),
+                        Card(
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                            side: BorderSide(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+                          ),
+                          child: Column(
+                            children: _codeHistory.map((e) {
+                              final at = DateTime.tryParse(e['changed_at'] ?? '') ?? DateTime.now();
+                              return ListTile(
+                                dense: true,
+                                leading: const Icon(Icons.swap_horiz_rounded, color: AppColors.warning),
+                                title: Row(
+                                  children: [
+                                    Text(e['old_code'] ?? '—',
+                                        style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, decoration: TextDecoration.lineThrough)),
+                                    const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: Icon(Icons.arrow_forward, size: 14)),
+                                    Text(e['new_code'] ?? '—',
+                                        style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, color: AppColors.primary)),
+                                    const SizedBox(width: 10),
+                                    Flexible(
+                                      child: Text(_branchName(e['branch_id'] ?? ''),
+                                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                                          overflow: TextOverflow.ellipsis),
+                                    ),
+                                  ],
+                                ),
+                                subtitle: Text('${_userName(e['changed_by'] ?? '')} • ${_formatAt(at)}'
+                                    '${(e['reason'] ?? '').toString().isNotEmpty ? ' • ${e['reason']}' : ''}',
+                                    style: const TextStyle(fontSize: 11)),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.xl),
+                      ],
+                      // ─── Audit log feed ───
+                      _sectionHeader(context, Icons.history_rounded, 'Журнал аудита', _logs.length),
+                      const SizedBox(height: AppSpacing.sm),
+                      if (_logs.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(AppSpacing.xxl),
+                          child: Center(
+                            child: Column(
+                              children: [
+                                Icon(Icons.history_toggle_off_rounded,
+                                    size: 48, color: Colors.grey.shade400),
+                                const SizedBox(height: AppSpacing.sm),
+                                const Text('Записей нет', style: TextStyle(color: Colors.grey)),
+                              ],
+                            ),
+                          ),
+                        )
+                      else
+                        ..._logs.map((log) => _AuditLogTile(
+                              log: log,
+                              userName: _userName(log.performedBy),
+                              branchName: _branchName(log.entityId),
+                            )),
+                      const SizedBox(height: AppSpacing.xxl),
+                    ],
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionHeader(BuildContext ctx, IconData icon, String title, int count) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: AppColors.primary),
+        const SizedBox(width: 8),
+        Text(title, style: ctx.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(width: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.grey.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text('$count', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
+
+  String _formatAt(DateTime dt) {
+    final y = dt.year.toString().padLeft(4, '0');
+    final mo = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$d.$mo.$y $h:$m';
+  }
+}
+
+class _AuditLogTile extends StatelessWidget {
+  const _AuditLogTile({
+    required this.log,
+    required this.userName,
+    required this.branchName,
+  });
+
+  final AuditLog log;
+  final String userName;
+  final String branchName;
+
+  static const _actionIcons = {
+    'branch.created': (Icons.add_business_rounded, AppColors.success),
+    'branch.updated': (Icons.edit_outlined, AppColors.primary),
+    'branch.archived': (Icons.archive_outlined, AppColors.warning),
+    'branch.unarchived': (Icons.unarchive_outlined, AppColors.success),
+    'account.created': (Icons.account_balance_wallet_outlined, AppColors.success),
+    'account.updated': (Icons.edit_outlined, AppColors.primary),
+    'account.archived': (Icons.archive_outlined, AppColors.warning),
+    'account.unarchived': (Icons.unarchive_outlined, AppColors.success),
+    'accounts.reordered': (Icons.swap_vert_rounded, AppColors.primary),
+    'user.branches_set': (Icons.alt_route_rounded, AppColors.primary),
+    'user.permissions_updated': (Icons.admin_panel_settings_outlined, AppColors.primary),
+    'user.role_changed': (Icons.swap_horiz_rounded, AppColors.warning),
+    'user.activated': (Icons.verified_user_outlined, AppColors.success),
+    'user.deactivated': (Icons.block_rounded, AppColors.error),
+    'user.profile_updated': (Icons.person_outline, AppColors.primary),
+    'user.created': (Icons.person_add_rounded, AppColors.success),
+  };
+
+  String _formatAt(DateTime dt) {
+    final mo = dt.month.toString().padLeft(2, '0');
+    final d = dt.day.toString().padLeft(2, '0');
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '$d.$mo ${dt.year} • $h:$m';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final style = _actionIcons[log.action] ?? (Icons.fiber_manual_record, Colors.grey);
+    final icon = style.$1;
+    final color = style.$2;
+    final entityLabel = switch (log.entityType) {
+      'branch' => 'Филиал: $branchName',
+      'branch_account' => 'Счёт ${log.entityId.substring(0, 6.clamp(0, log.entityId.length))}…',
+      'user' => 'Пользователь ${log.entityId.substring(0, 6.clamp(0, log.entityId.length))}…',
+      _ => log.entityType,
+    };
+
+    return Card(
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: AppSpacing.xs),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+        side: BorderSide(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+        leading: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, color: color, size: 20),
+        ),
+        title: Text(log.action, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        subtitle: Text(
+          '$entityLabel  •  ${_formatAt(log.createdAt)}  •  $userName',
+          style: TextStyle(fontSize: 11,
+              color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
+        ),
+        children: [
+          if (log.details.isEmpty)
+            const Text('— без деталей —', style: TextStyle(color: Colors.grey, fontSize: 12))
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: (isDark ? Colors.white10 : Colors.black.withValues(alpha: 0.03)),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: SelectableText(
+                _prettyJson(log.details),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  String _prettyJson(Map<String, dynamic> data) {
+    final buf = StringBuffer();
+    data.forEach((k, v) {
+      buf.writeln('$k: $v');
+    });
+    return buf.toString().trim();
+  }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Permission presets (Кассир / Старший бухгалтер / Аналитик)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class _PermissionPreset {
+  const _PermissionPreset(this.name, this.description, this.icon, this.color, this.perms);
+  final String name;
+  final String description;
+  final IconData icon;
+  final Color color;
+  final AccountantPermissions perms;
+}
+
+const _kPermissionPresets = <_PermissionPreset>[
+  _PermissionPreset(
+    'Кассир',
+    'Переводы, покупки, клиенты, просмотр леджера',
+    Icons.point_of_sale_outlined,
+    AppColors.secondary,
+    AccountantPermissions(
+      canTransfers: true,
+      canPurchases: true,
+      canManageTransfers: false,
+      canManagePurchases: false,
+      canBranchTopUp: false,
+      canClients: true,
+      canLedger: true,
+      canAnalytics: false,
+      canReports: false,
+      canExchangeRates: false,
+      canBranchesView: true,
+    ),
+  ),
+  _PermissionPreset(
+    'Старший бухгалтер',
+    'Полное управление + аналитика + отчёты',
+    Icons.calculate_outlined,
+    AppColors.primary,
+    AccountantPermissions(
+      canTransfers: true,
+      canPurchases: true,
+      canManageTransfers: true,
+      canManagePurchases: true,
+      canBranchTopUp: true,
+      canClients: true,
+      canLedger: true,
+      canAnalytics: true,
+      canReports: true,
+      canExchangeRates: true,
+      canBranchesView: true,
+    ),
+  ),
+  _PermissionPreset(
+    'Аналитик',
+    'Только просмотр: леджер, аналитика, отчёты',
+    Icons.query_stats_outlined,
+    AppColors.warning,
+    AccountantPermissions(
+      canTransfers: false,
+      canPurchases: false,
+      canManageTransfers: false,
+      canManagePurchases: false,
+      canBranchTopUp: false,
+      canClients: false,
+      canLedger: true,
+      canAnalytics: true,
+      canReports: true,
+      canExchangeRates: false,
+      canBranchesView: true,
+    ),
+  ),
+  _PermissionPreset(
+    'Только просмотр',
+    'Минимум — только филиалы и курсы',
+    Icons.visibility_outlined,
+    Colors.grey,
+    AccountantPermissions(
+      canTransfers: false,
+      canPurchases: false,
+      canManageTransfers: false,
+      canManagePurchases: false,
+      canBranchTopUp: false,
+      canClients: false,
+      canLedger: false,
+      canAnalytics: false,
+      canReports: false,
+      canExchangeRates: true,
+      canBranchesView: true,
+    ),
+  ),
+];
+
+class _PermissionPresetPicker extends StatelessWidget {
+  const _PermissionPresetPicker({required this.current, required this.onApply});
+  final AccountantPermissions current;
+  final ValueChanged<AccountantPermissions> onApply;
+
+  int _activeIndex() {
+    for (var i = 0; i < _kPermissionPresets.length; i++) {
+      if (_kPermissionPresets[i].perms == current) return i;
+    }
+    return -1; // custom
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final active = _activeIndex();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.tune_rounded, size: 16, color: AppColors.primary),
+              const SizedBox(width: 6),
+              const Text('Пресеты прав',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+              const SizedBox(width: 8),
+              Text(
+                active == -1 ? 'Custom' : _kPermissionPresets[active].name,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: active == -1 ? Colors.grey : _kPermissionPresets[active].color,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (var i = 0; i < _kPermissionPresets.length; i++)
+                _PresetChip(
+                  preset: _kPermissionPresets[i],
+                  selected: i == active,
+                  onTap: () => onApply(_kPermissionPresets[i].perms),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            active == -1
+                ? '✎ Кастом — права настраиваются вручную ниже'
+                : _kPermissionPresets[active].description,
+            style: const TextStyle(fontSize: 11, color: Colors.grey, fontStyle: FontStyle.italic),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PresetChip extends StatelessWidget {
+  const _PresetChip({required this.preset, required this.selected, required this.onTap});
+  final _PermissionPreset preset;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? preset.color.withValues(alpha: 0.12) : Colors.transparent,
+          border: Border.all(
+            color: selected ? preset.color : Colors.grey.withValues(alpha: 0.35),
+            width: selected ? 1.5 : 1,
+          ),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(preset.icon, size: 14, color: selected ? preset.color : Colors.grey),
+            const SizedBox(width: 5),
+            Text(preset.name,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  color: selected ? preset.color : null,
+                )),
           ],
         ),
       ),

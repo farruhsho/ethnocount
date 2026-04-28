@@ -264,6 +264,12 @@ class _LoginPageState extends State<LoginPage> {
                                         .onSurfaceVariant,
                                   ),
                             ),
+                            const SizedBox(height: AppSpacing.md),
+                            TextButton.icon(
+                              onPressed: () => context.go('/register'),
+                              icon: const Icon(Icons.admin_panel_settings_outlined),
+                              label: const Text('Временная кнопка регистрации (Creator)'),
+                            ),
                           ],
                         ),
                       ),

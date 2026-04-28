@@ -41,27 +41,40 @@ class BranchRepoImpl implements BranchRepository {
     }
   }
 
+  Future<Either<Failure, T>> _guarded<T>(Future<T> Function() op) async {
+    try {
+      if (!await _connectivity.isConnected) {
+        return const Left(OfflineFailure());
+      }
+      final result = await op();
+      return Right(result);
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
   @override
   Future<Either<Failure, Branch>> createBranch({
     required String name,
     required String code,
     required String baseCurrency,
-  }) async {
-    try {
-      if (!await _connectivity.isConnected) {
-        return const Left(OfflineFailure());
-      }
-      final id = await _remoteDs.createBranch(
-        name: name,
-        code: code,
-        baseCurrency: baseCurrency,
-      );
-      final branch = await _remoteDs.getBranch(id);
-      return Right(branch);
-    } catch (e) {
-      return Left(ServerFailure(e.toString()));
-    }
-  }
+    String? address,
+    String? phone,
+    String? notes,
+    int sortOrder = 0,
+  }) =>
+      _guarded(() async {
+        final id = await _remoteDs.createBranch(
+          name: name,
+          code: code,
+          baseCurrency: baseCurrency,
+          address: address,
+          phone: phone,
+          notes: notes,
+          sortOrder: sortOrder,
+        );
+        return await _remoteDs.getBranch(id);
+      });
 
   @override
   Future<Either<Failure, void>> updateBranch({
@@ -69,22 +82,35 @@ class BranchRepoImpl implements BranchRepository {
     String? name,
     String? code,
     String? baseCurrency,
-  }) async {
-    try {
-      if (!await _connectivity.isConnected) {
-        return const Left(OfflineFailure());
-      }
-      await _remoteDs.updateBranch(
-        branchId: branchId,
-        name: name,
-        code: code,
-        baseCurrency: baseCurrency,
-      );
-      return const Right(null);
-    } catch (e) {
-      return Left(ServerFailure(e.toString()));
-    }
-  }
+    String? address,
+    String? phone,
+    String? notes,
+    int? sortOrder,
+    String? codeChangeReason,
+  }) =>
+      _guarded(() => _remoteDs.updateBranch(
+            branchId: branchId,
+            name: name,
+            code: code,
+            baseCurrency: baseCurrency,
+            address: address,
+            phone: phone,
+            notes: notes,
+            sortOrder: sortOrder,
+            codeChangeReason: codeChangeReason,
+          ));
+
+  @override
+  Future<Either<Failure, void>> archiveBranch({
+    required String branchId,
+    required bool archive,
+    String? reason,
+  }) =>
+      _guarded(() => _remoteDs.archiveBranch(
+            branchId: branchId,
+            archive: archive,
+            reason: reason,
+          ));
 
   @override
   Future<Either<Failure, BranchAccount>> createBranchAccount({
@@ -92,23 +118,30 @@ class BranchRepoImpl implements BranchRepository {
     required String name,
     required AccountType type,
     required String currency,
-  }) async {
-    try {
-      if (!await _connectivity.isConnected) {
-        return const Left(OfflineFailure());
-      }
-      final id = await _remoteDs.createBranchAccount(
-        branchId: branchId,
-        name: name,
-        type: type,
-        currency: currency,
-      );
-      final account = await _remoteDs.getBranchAccount(id);
-      return Right(account);
-    } catch (e) {
-      return Left(ServerFailure(e.toString()));
-    }
-  }
+    String? cardNumber,
+    String? cardholderName,
+    String? bankName,
+    int? expiryMonth,
+    int? expiryYear,
+    String? notes,
+    int sortOrder = 0,
+  }) =>
+      _guarded(() async {
+        final id = await _remoteDs.createBranchAccount(
+          branchId: branchId,
+          name: name,
+          type: type,
+          currency: currency,
+          cardNumber: cardNumber,
+          cardholderName: cardholderName,
+          bankName: bankName,
+          expiryMonth: expiryMonth,
+          expiryYear: expiryYear,
+          notes: notes,
+          sortOrder: sortOrder,
+        );
+        return await _remoteDs.getBranchAccount(id);
+      });
 
   @override
   Future<Either<Failure, void>> updateBranchAccount({
@@ -116,20 +149,47 @@ class BranchRepoImpl implements BranchRepository {
     String? name,
     AccountType? type,
     String? currency,
-  }) async {
-    try {
-      if (!await _connectivity.isConnected) {
-        return const Left(OfflineFailure());
-      }
-      await _remoteDs.updateBranchAccount(
-        accountId: accountId,
-        name: name,
-        type: type,
-        currency: currency,
-      );
-      return const Right(null);
-    } catch (e) {
-      return Left(ServerFailure(e.toString()));
-    }
-  }
+    String? cardNumber,
+    bool clearCardNumber = false,
+    String? cardholderName,
+    String? bankName,
+    int? expiryMonth,
+    int? expiryYear,
+    String? notes,
+    int? sortOrder,
+  }) =>
+      _guarded(() => _remoteDs.updateBranchAccount(
+            accountId: accountId,
+            name: name,
+            type: type,
+            currency: currency,
+            cardNumber: cardNumber,
+            clearCardNumber: clearCardNumber,
+            cardholderName: cardholderName,
+            bankName: bankName,
+            expiryMonth: expiryMonth,
+            expiryYear: expiryYear,
+            notes: notes,
+            sortOrder: sortOrder,
+          ));
+
+  @override
+  Future<Either<Failure, void>> archiveBranchAccount({
+    required String accountId,
+    required bool archive,
+  }) =>
+      _guarded(() => _remoteDs.archiveBranchAccount(
+            accountId: accountId,
+            archive: archive,
+          ));
+
+  @override
+  Future<Either<Failure, void>> reorderBranchAccounts({
+    required String branchId,
+    required List<Map<String, dynamic>> order,
+  }) =>
+      _guarded(() => _remoteDs.reorderBranchAccounts(
+            branchId: branchId,
+            order: order,
+          ));
 }

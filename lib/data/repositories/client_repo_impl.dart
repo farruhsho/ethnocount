@@ -14,6 +14,10 @@ class ClientRepoImpl implements ClientRepository {
   Stream<List<Client>> watchClients() => _remoteDs.watchClients();
 
   @override
+  Stream<List<ClientBalance>> watchAllClientBalances() =>
+      _remoteDs.watchAllClientBalances();
+
+  @override
   Future<Either<Failure, Client>> getClient(String clientId) async {
     try {
       return Right(await _remoteDs.getClient(clientId));

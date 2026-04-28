@@ -4,6 +4,11 @@ import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/user.dart';
 
 /// Supabase data source for user management (Creator only).
+///
+/// Write operations are routed through the `public.admin_*` SECURITY DEFINER
+/// RPCs introduced in migration 011. Direct `users` table updates are
+/// blocked by the `trg_users_guard_self_edit` trigger for any column other
+/// than `display_name / phone / photo_url` on own row.
 class UserRemoteDataSource {
   final SupabaseClient _client;
 
@@ -41,18 +46,18 @@ class UserRemoteDataSource {
 
   Future<List<AppUser>> _fetchUsers() async {
     final data = await _client.from('users').select().order('display_name');
-    return (data as List).map((e) => _mapUser(Map<String, dynamic>.from(e as Map))).toList();
+    return (data as List)
+        .map((e) => _mapUser(Map<String, dynamic>.from(e as Map)))
+        .toList();
   }
 
   Future<AppUser> getUser(String userId) async {
-    final data = await _client.from('users').select().eq('id', userId).single();
+    final data =
+        await _client.from('users').select().eq('id', userId).single();
     return _mapUser(data);
   }
 
-  /// Create user via the `admin-create-user` Edge Function (service_role on server).
-  /// This avoids: (a) SMTP rate limit from confirmation emails,
-  /// (b) the creator's client session being swapped to the new user,
-  /// (c) duplicate insert conflicts with the on_auth_user_created trigger.
+  /// Create user via the `admin-create-user` Edge Function.
   Future<Map<String, dynamic>> createUser({
     required String email,
     required String password,
@@ -76,13 +81,18 @@ class UserRemoteDataSource {
 
       final data = res.data;
       if (res.status != 200 || data is! Map) {
-        final msg = (data is Map && data['error'] != null) ? data['error'].toString() : 'Ошибка создания пользователя';
+        final msg = (data is Map && data['error'] != null)
+            ? data['error'].toString()
+            : 'Ошибка создания пользователя';
         return {'success': false, 'error': _friendlyAuthError(msg)};
       }
       if (data['success'] == true) {
         return {'success': true, 'userId': data['userId']};
       }
-      return {'success': false, 'error': _friendlyAuthError(data['error']?.toString() ?? 'Ошибка')};
+      return {
+        'success': false,
+        'error': _friendlyAuthError(data['error']?.toString() ?? 'Ошибка')
+      };
     } on FunctionException catch (e) {
       final detail = e.details?.toString() ?? e.reasonPhrase ?? 'Ошибка функции';
       return {'success': false, 'error': _friendlyAuthError(detail)};
@@ -91,7 +101,52 @@ class UserRemoteDataSource {
     }
   }
 
-  /// Update user profile.
+  // ── Admin RPC wrappers (creator-only, audited) ─────────────────
+
+  Future<void> setUserBranches(String userId, List<String> branchIds) async {
+    await _client.rpc('admin_set_user_branches', params: {
+      'p_user_id': userId,
+      'p_branch_ids': branchIds,
+    });
+  }
+
+  Future<void> updateUserPermissions(
+      String userId, AccountantPermissions permissions) async {
+    await _client.rpc('admin_update_user_permissions', params: {
+      'p_user_id': userId,
+      'p_permissions': permissions.toMap(),
+    });
+  }
+
+  Future<void> setUserRole(String userId, String role) async {
+    await _client.rpc('admin_set_user_role', params: {
+      'p_user_id': userId,
+      'p_role': role,
+    });
+  }
+
+  Future<void> setUserActive(String userId, bool active,
+      {String? reason}) async {
+    await _client.rpc('admin_set_user_active', params: {
+      'p_user_id': userId,
+      'p_active': active,
+      'p_reason': reason,
+    });
+  }
+
+  Future<void> updateUserProfile(String userId,
+      {String? displayName, String? phone, String? photoUrl}) async {
+    await _client.rpc('admin_update_user_profile', params: {
+      'p_user_id': userId,
+      'p_display_name': displayName,
+      'p_phone': phone,
+      'p_photo_url': photoUrl,
+    });
+  }
+
+  /// Legacy dispatcher — keeps the old call-sites in `admin_panel_page.dart`
+  /// working. Internally splits the update into dedicated admin_* RPC calls
+  /// (each one writes an audit log row).
   Future<Map<String, dynamic>> updateUser({
     required String userId,
     String? role,
@@ -100,17 +155,26 @@ class UserRemoteDataSource {
     bool? isActive,
     String? displayName,
   }) async {
-    final updates = <String, dynamic>{};
-    if (role != null) updates['role'] = role;
-    if (assignedBranchIds != null) updates['assigned_branch_ids'] = assignedBranchIds;
-    if (permissions != null) updates['permissions'] = permissions.toMap();
-    if (isActive != null) updates['is_active'] = isActive;
-    if (displayName != null) updates['display_name'] = displayName.trim();
-
-    if (updates.isEmpty) return {'success': true};
-
-    await _client.from('users').update(updates).eq('id', userId);
-    return {'success': true};
+    try {
+      if (role != null) {
+        await setUserRole(userId, role);
+      }
+      if (assignedBranchIds != null) {
+        await setUserBranches(userId, assignedBranchIds);
+      }
+      if (permissions != null) {
+        await updateUserPermissions(userId, permissions);
+      }
+      if (isActive != null) {
+        await setUserActive(userId, isActive);
+      }
+      if (displayName != null) {
+        await updateUserProfile(userId, displayName: displayName);
+      }
+      return {'success': true};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
   }
 
   /// Delete user profile (auth account would need admin API).

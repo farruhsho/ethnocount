@@ -401,6 +401,14 @@ class _BranchDetail extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
+                if (canManage)
+                  OutlinedButton.icon(
+                    onPressed: () =>
+                        _showEditBranchDialog(context, branch),
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Изменить филиал'),
+                  ),
+                const SizedBox(width: AppSpacing.sm),
                 OutlinedButton.icon(
                   onPressed: () =>
                       _showAddAccountDialog(context, branch),
@@ -703,6 +711,197 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Филиал создан'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      },
+    );
+  }
+}
+
+void _showEditBranchDialog(BuildContext context, Branch branch) {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _EditBranchDialog(branch: branch),
+  );
+}
+
+class _EditBranchDialog extends StatefulWidget {
+  const _EditBranchDialog({required this.branch});
+  final Branch branch;
+
+  @override
+  State<_EditBranchDialog> createState() => _EditBranchDialogState();
+}
+
+class _EditBranchDialogState extends State<_EditBranchDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _codeCtrl;
+  late final TextEditingController _reasonCtrl;
+  late String _currency;
+  late final String _originalCode;
+  bool _loading = false;
+
+  static const _currencies = [
+    'USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'TJS',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.branch.name);
+    _codeCtrl = TextEditingController(text: widget.branch.code);
+    _reasonCtrl = TextEditingController();
+    _currency = widget.branch.baseCurrency;
+    _originalCode = widget.branch.code;
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _codeCtrl.dispose();
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  bool get _codeChanged =>
+      _codeCtrl.text.trim().toUpperCase() != _originalCode.trim().toUpperCase();
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.edit_outlined),
+          SizedBox(width: 8),
+          Text('Изменить филиал'),
+        ],
+      ),
+      content: Form(
+        key: _formKey,
+        child: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: _nameCtrl,
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Название филиала *',
+                    border: OutlineInputBorder(),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Введите название'
+                      : null,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _codeCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Код филиала *',
+                    border: const OutlineInputBorder(),
+                    helperText: _codeChanged
+                        ? 'Изменение кода будет записано в историю'
+                        : 'Используется в номерах транзакций (ELX-...)',
+                    helperMaxLines: 2,
+                  ),
+                  textCapitalization: TextCapitalization.characters,
+                  onChanged: (_) => setState(() {}),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Введите код'
+                      : null,
+                ),
+                if (_codeChanged) ...[
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _reasonCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Причина изменения кода *',
+                      border: OutlineInputBorder(),
+                      hintText: 'Например: переименование региона',
+                      helperText: 'Запишется в журнал branch_code_history',
+                    ),
+                    maxLines: 2,
+                    validator: (v) => _codeChanged && (v == null || v.trim().isEmpty)
+                        ? 'Укажите причину изменения кода'
+                        : null,
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.sm),
+                DropdownButtonFormField<String>(
+                  key: ValueKey('edit-branch-curr-$_currency'),
+                  initialValue: _currency,
+                  decoration: const InputDecoration(
+                    labelText: 'Базовая валюта *',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: _currencies
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                      .toList(),
+                  onChanged: (v) => setState(() => _currency = v ?? _currency),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _loading ? null : () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton.icon(
+          onPressed: _loading ? null : _submit,
+          icon: _loading
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                )
+              : const Icon(Icons.check_rounded),
+          label: const Text('Сохранить'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _submit() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _loading = true);
+
+    final repo = sl<BranchRepository>();
+    final newCode = _codeCtrl.text.trim().toUpperCase();
+    final newName = _nameCtrl.text.trim();
+
+    final result = await repo.updateBranch(
+      branchId: widget.branch.id,
+      name: newName != widget.branch.name ? newName : null,
+      code: newCode != widget.branch.code ? newCode : null,
+      baseCurrency:
+          _currency != widget.branch.baseCurrency ? _currency : null,
+      codeChangeReason: _codeChanged ? _reasonCtrl.text.trim() : null,
+    );
+
+    if (!mounted) return;
+    setState(() => _loading = false);
+    result.fold(
+      (failure) => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Ошибка: ${failure.message}'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+          behavior: SnackBarBehavior.floating,
+        ),
+      ),
+      (_) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Филиал обновлён'),
             behavior: SnackBarBehavior.floating,
           ),
         );

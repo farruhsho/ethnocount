@@ -1,6 +1,7 @@
 import 'package:dartz/dartz.dart';
 import 'package:ethnocount/core/errors/failures.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
+import 'package:ethnocount/domain/entities/transfer_issuance.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 
 /// Repository for inter-branch transfer operations.
@@ -61,14 +62,30 @@ abstract class TransferRepository {
     required String reason,
   });
 
-  /// Mark transfer as issued (vidan) — деньги выданы получателю.
+  /// Mark transfer as fully issued — pays out the entire remaining balance
+  /// in a single tranche. Equivalent to [issuePartialTransfer] with the
+  /// outstanding amount.
   Future<Either<Failure, void>> issueTransfer({
     required String transferId,
   });
 
+  /// Pay out one tranche of a confirmed transfer. The transfer flips to
+  /// `issued` only when cumulative tranches reach the credited amount.
+  /// Returns `true` if this tranche fully closed the transfer.
+  Future<Either<Failure, bool>> issuePartialTransfer({
+    required String transferId,
+    required double amount,
+    String? note,
+  });
+
+  /// Realtime stream of payout tranches for a single transfer.
+  Stream<List<TransferIssuance>> watchIssuances(String transferId);
+
   /// Cancel a pending transfer (sender branch action).
+  /// Atomic: refunds sender + writes compensating ledger credit.
   Future<Either<Failure, void>> cancelTransfer({
     required String transferId,
+    String reason = '',
   });
 
   /// Update pending transfer: amount, sender/receiver info (Creator or canManageTransfers).

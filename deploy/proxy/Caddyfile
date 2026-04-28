@@ -1,0 +1,50 @@
+{
+	# Укажите свой email для уведомлений Let's Encrypt
+	email you@example.com
+}
+
+# Замените api.example.com на свой домен (A-запись → IP этого VPS)
+api.example.com {
+	encode gzip
+
+	reverse_proxy https://cunnaewtyosokfkwyujt.supabase.co {
+		header_up Host cunnaewtyosokfkwyujt.supabase.co
+		header_up X-Forwarded-Host {host}
+
+		transport http {
+			tls
+			tls_server_name cunnaewtyosokfkwyujt.supabase.co
+			keepalive 30s
+			keepalive_idle_conns 10
+		}
+	}
+}
+
+# Лендинг для скачивания приложения (репозиторий C:\project\ethnoweb).
+# Замените download.example.com на свой домен (A-запись → IP этого VPS).
+# При деплое скопируйте содержимое C:\project\ethnoweb\ в /srv/ethnoweb/
+# на сервере (или примонтируйте том в docker-compose).
+download.example.com {
+	encode gzip zstd
+	root * /srv/ethnoweb
+	file_server
+
+	# Бинарники: длинный кэш + force download.
+	@binaries path *.apk *.ipa *.dmg *.exe *.zip *.tar.gz *.AppImage *.deb
+	header @binaries {
+		Content-Disposition "attachment"
+		Cache-Control "public, max-age=86400, immutable"
+	}
+
+	# HTML и version.json — всегда свежие, иначе старая версия залипнет.
+	@noCache path /builds/version.json /index.html /
+	header @noCache Cache-Control "no-cache, must-revalidate"
+
+	# (Опционально) Веб-версия приложения по /app/* — кладите сюда вывод
+	# `flutter build web --release` (папка build/web/).
+	handle_path /app/* {
+		root * /srv/ethnoweb/app
+		try_files {path} /index.html
+		file_server
+	}
+}

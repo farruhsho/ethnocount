@@ -27,8 +27,8 @@ class OfflineBanner extends StatelessWidget {
               : Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.lg,
-                    vertical: AppSpacing.sm,
+                    horizontal: AppSpacing.md,
+                    vertical: AppSpacing.xs,
                   ),
                   decoration: const BoxDecoration(
                     color: AppColors.warning,
@@ -38,13 +38,14 @@ class OfflineBanner extends StatelessWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.cloud_off_rounded, size: 16, color: Colors.black87),
-                        SizedBox(width: AppSpacing.sm),
+                        Icon(Icons.cloud_off_rounded,
+                            size: 14, color: Colors.black87),
+                        SizedBox(width: AppSpacing.xs),
                         Text(
-                          'Нет подключения к интернету',
+                          'Нет подключения',
                           style: TextStyle(
                             color: Colors.black87,
-                            fontSize: 13,
+                            fontSize: 12,
                             fontWeight: FontWeight.w500,
                           ),
                         ),

@@ -110,7 +110,7 @@ class PurchaseRemoteDataSource {
     return Map<String, dynamic>.from(result as Map);
   }
 
-  /// Update purchase description, category, amount, payments.
+  /// Update purchase via PostgreSQL RPC (atomic reverse + reapply).
   Future<void> updatePurchase({
     required String purchaseId,
     String? description,
@@ -118,195 +118,24 @@ class PurchaseRemoteDataSource {
     double? totalAmount,
     List<Map<String, dynamic>>? payments,
   }) async {
-    final doc = await _client
-        .from('purchases')
-        .select()
-        .eq('id', purchaseId)
-        .single();
-
-    final oldAmount = (doc['total_amount'] ?? 0).toDouble();
-    final amountChanged = totalAmount != null && (totalAmount - oldAmount).abs() > 0.01;
-
-    if (amountChanged || payments != null) {
-      // Reverse old payments and apply new ones
-      final oldPayments = (doc['payments'] as List?) ?? [];
-      final newPayments = payments ?? oldPayments.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-      final branchId = doc['branch_id'] as String;
-      final code = doc['transaction_code'] as String;
-      final currency = doc['currency'] as String;
-      final userId = _client.auth.currentUser!.id;
-
-      await _reverseAndReapply(
-        purchaseId: purchaseId,
-        branchId: branchId,
-        transactionCode: code,
-        oldPayments: oldPayments,
-        newPayments: newPayments,
-        currency: currency,
-        description: description ?? doc['description'] as String,
-        userId: userId,
-      );
-    }
-
-    final updateData = <String, dynamic>{};
-    if (description != null) updateData['description'] = description;
-    if (category != null) updateData['category'] = category.trim().isEmpty ? null : category.trim();
-    if (totalAmount != null) updateData['total_amount'] = totalAmount;
-    if (payments != null) updateData['payments'] = payments;
-    if (updateData.isNotEmpty) {
-      await _client.from('purchases').update(updateData).eq('id', purchaseId);
-    }
+    await _client.rpc('update_purchase', params: {
+      'p_purchase_id': purchaseId,
+      'p_total_amount': totalAmount,
+      'p_payments': payments,
+      'p_description': description,
+      'p_category': category,
+    });
   }
 
-  Future<void> _reverseAndReapply({
-    required String purchaseId,
-    required String branchId,
-    required String transactionCode,
-    required List oldPayments,
-    required List<Map<String, dynamic>> newPayments,
-    required String currency,
-    required String description,
-    required String userId,
-  }) async {
-    // Reverse old
-    for (final p in oldPayments) {
-      final m = Map<String, dynamic>.from(p as Map);
-      final accountId = m['accountId'] as String?;
-      if (accountId == null) continue;
-      final amount = (m['amount'] as num?)?.toDouble() ?? 0;
-
-      final balData = await _client
-          .from('account_balances')
-          .select('balance, branch_id')
-          .eq('account_id', accountId)
-          .single();
-      final current = (balData['balance'] ?? 0).toDouble();
-
-      await _client.from('account_balances').update({
-        'balance': current + amount,
-        'updated_at': DateTime.now().toIso8601String(),
-      }).eq('account_id', accountId);
-
-      await _client.from('ledger_entries').insert({
-        'branch_id': branchId,
-        'account_id': accountId,
-        'type': 'credit',
-        'amount': amount,
-        'currency': m['currency'] ?? currency,
-        'reference_type': 'purchase',
-        'reference_id': purchaseId,
-        'transaction_code': transactionCode,
-        'description': 'Сторно: $transactionCode',
-        'created_by': userId,
-      });
-    }
-
-    // Apply new
-    for (final p in newPayments) {
-      final accountId = p['accountId'] as String?;
-      if (accountId == null) continue;
-      final amount = (p['amount'] as num?)?.toDouble() ?? 0;
-
-      final balData = await _client
-          .from('account_balances')
-          .select('balance, branch_id, currency')
-          .eq('account_id', accountId)
-          .single();
-      final current = (balData['balance'] ?? 0).toDouble();
-      if (current < amount) throw Exception('Недостаточно средств на счёте');
-
-      await _client.from('account_balances').update({
-        'balance': current - amount,
-        'updated_at': DateTime.now().toIso8601String(),
-      }).eq('account_id', accountId);
-
-      await _client.from('ledger_entries').insert({
-        'branch_id': balData['branch_id'] ?? branchId,
-        'account_id': accountId,
-        'type': 'debit',
-        'amount': amount,
-        'currency': balData['currency'] ?? currency,
-        'reference_type': 'purchase',
-        'reference_id': purchaseId,
-        'transaction_code': transactionCode,
-        'description': 'Покупка $transactionCode: $description',
-        'created_by': userId,
-      });
-    }
-  }
-
-  /// Soft-delete: save to deleted_purchases, reverse ledger, remove from purchases.
+  /// Soft-delete via PostgreSQL RPC (atomic refund + snapshot + delete).
   Future<void> deletePurchase({
     required String purchaseId,
     String? reason,
   }) async {
-    final userId = _client.auth.currentUser?.id;
-    if (userId == null) throw Exception('Not authenticated');
-
-    final doc = await _client.from('purchases').select().eq('id', purchaseId).single();
-    final payments = (doc['payments'] as List?) ?? [];
-    final branchId = doc['branch_id'] as String;
-    final code = doc['transaction_code'] as String;
-    final currency = doc['currency'] as String;
-
-    final userDoc = await _client.from('users').select('display_name').eq('id', userId).maybeSingle();
-    final deletedByName = userDoc?['display_name'] as String?;
-
-    // Save to deleted_purchases
-    await _client.from('deleted_purchases').insert({
-      'original_purchase_id': purchaseId,
-      'transaction_code': code,
-      'branch_id': branchId,
-      'client_id': doc['client_id'],
-      'client_name': doc['client_name'],
-      'description': doc['description'],
-      'category': doc['category'],
-      'total_amount': doc['total_amount'],
-      'currency': currency,
-      'payments': doc['payments'],
-      'created_by_user_id': doc['created_by'],
-      'original_created_at': doc['created_at'],
-      'deleted_by_user_id': userId,
-      'deleted_by_user_name': deletedByName,
-      'reason': reason,
-      'original_data': doc,
+    await _client.rpc('delete_purchase', params: {
+      'p_purchase_id': purchaseId,
+      'p_reason': reason,
     });
-
-    // Reverse ledger
-    for (final p in payments) {
-      final m = Map<String, dynamic>.from(p as Map);
-      final accountId = m['accountId'] as String?;
-      if (accountId == null) continue;
-      final amount = (m['amount'] as num?)?.toDouble() ?? 0;
-
-      final balData = await _client
-          .from('account_balances')
-          .select('balance, branch_id')
-          .eq('account_id', accountId)
-          .single();
-      final current = (balData['balance'] ?? 0).toDouble();
-
-      await _client.from('account_balances').update({
-        'balance': current + amount,
-        'updated_at': DateTime.now().toIso8601String(),
-      }).eq('account_id', accountId);
-
-      await _client.from('ledger_entries').insert({
-        'branch_id': branchId,
-        'account_id': accountId,
-        'type': 'credit',
-        'amount': amount,
-        'currency': m['currency'] ?? currency,
-        'reference_type': 'purchase',
-        'reference_id': purchaseId,
-        'transaction_code': code,
-        'description': 'Сторно (удаление): $code',
-        'created_by': userId,
-      });
-    }
-
-    // Delete original
-    await _client.from('purchases').delete().eq('id', purchaseId);
   }
 
   Purchase _mapPurchase(Map<String, dynamic> data) {

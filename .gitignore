@@ -61,3 +61,12 @@ migration/id_mapping.json
 
 # Node
 node_modules/
+
+# AI/dev tooling
+.claude/
+.mcp.json
+scratch/
+read_pptx.py
+
+# Supabase temp
+supabase/.temp/
