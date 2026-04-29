@@ -121,14 +121,15 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
           ),
           const SizedBox(height: AppSpacing.lg),
 
-          // KPI row — 4 карточки.
+          // KPI row — 4 карточки. Aspect 1.4 даёт ~170px высоты при ~240px
+          // ширине: места достаточно даже для hero-варианта.
           GridView.count(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             crossAxisCount: 4,
             crossAxisSpacing: AppSpacing.md,
             mainAxisSpacing: AppSpacing.md,
-            childAspectRatio: 1.7,
+            childAspectRatio: 1.4,
             children: [
               KpiCard(
                 hero: true,
