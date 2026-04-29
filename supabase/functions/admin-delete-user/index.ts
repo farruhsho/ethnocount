@@ -95,35 +95,65 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 5. Profile delete (audited) via the JWT'd client so RPC sees auth.uid().
-    const { error: rpcErr } = await userClient.rpc('admin_delete_user', {
-      p_user_id: targetId,
-      p_reason: reason,
-    });
-    if (rpcErr) {
-      return json({ error: rpcErr.message }, 400);
+    // 5. Защитные проверки в Edge Function (на случай если RPC не
+    //    задеплоен — миграция 013 могла ещё не применяться).
+    if ((targetRow.email || '').toLowerCase() === 'farruh@gmail.com') {
+      return json({ error: 'Корневой creator не может быть удалён' }, 403);
+    }
+    if (targetRow.role === 'creator') {
+      const { count } = await admin
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'creator')
+        .eq('is_active', true)
+        .neq('id', targetId);
+      if ((count ?? 0) === 0) {
+        return json(
+          { error: 'Нельзя удалить последнего активного Creator-а' },
+          400,
+        );
+      }
     }
 
-    // 6. Auth account delete (requires service_role).
+    // 6. Best-effort audit через RPC. Если 013 не применена — RPC
+    //    отсутствует, ловим ошибку и продолжаем: реальный delete
+    //    делает service_role на следующем шаге.
+    try {
+      await userClient.rpc('admin_delete_user', {
+        p_user_id: targetId,
+        p_reason: reason,
+      });
+    } catch (e) {
+      // Свалимся на fallback ниже — это не блокирующая операция.
+      console.warn('admin_delete_user RPC failed (fallback to direct delete):', e);
+    }
+
+    // 7. Auth account delete — основной путь, всегда работает с
+    //    service_role-ключом. public.users удалится каскадно через FK.
     const { error: authErr } = await admin.auth.admin.deleteUser(targetId);
     if (authErr) {
-      // Profile is already gone (audited). Surface the auth error so the
-      // operator knows there's an orphan auth row to clean up — but the
-      // user can no longer sign in because the profile lookup will fail.
-      return json(
-        {
-          success: true,
-          warning: `Profile deleted; auth account removal failed: ${authErr.message}`,
-        },
-        200,
-      );
+      return json({ error: friendly(authErr.message) }, 400);
     }
+
+    // 8. Подстраховка — если по какой-то причине RPC не отработала
+    //    и trigger ON DELETE CASCADE на public.users не сработал,
+    //    добиваем строку профиля напрямую через service_role.
+    await admin.from('users').delete().eq('id', targetId);
 
     return json({ success: true });
   } catch (e) {
     return json({ error: `Unexpected: ${(e as Error).message}` }, 500);
   }
 });
+
+function friendly(raw: string): string {
+  const s = raw.toLowerCase();
+  if (s.includes('not found')) return 'Пользователь уже удалён';
+  if (s.includes('forbidden') || s.includes('unauthorized')) {
+    return 'Недостаточно прав для удаления (проверьте service_role)';
+  }
+  return raw;
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

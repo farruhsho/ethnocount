@@ -52,6 +52,61 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
   void _restoreDefault(TextEditingController ctrl, String def) {
     if (ctrl.text.trim().isEmpty) ctrl.text = def;
   }
+
+  /// «Сильные» валюты — те, у которых обычно мало единиц на 1 USD.
+  /// Курс между «сильной» и «слабой» котируется как «1 [сильная] = X [слабая]».
+  static const _strongCurrencies = {'USD', 'USDT', 'EUR', 'GBP'};
+
+  /// Возвращает (strong, weak) если в паре есть «сильная»; иначе null.
+  (String, String)? _quotePair(String from, String to) {
+    final fromStrong = _strongCurrencies.contains(from);
+    final toStrong = _strongCurrencies.contains(to);
+    if (fromStrong && !toStrong) return (from, to);
+    if (!fromStrong && toStrong) return (to, from);
+    return null; // обе сильные или обе слабые — котируем напрямую multiplier'ом
+  }
+
+  /// Конвертирует значение из поля курса в multiplier from→to.
+  /// Если пара котируется как «1 strong = X weak», то:
+  ///   - strong → weak: multiplier = X
+  ///   - weak → strong: multiplier = 1 / X
+  /// Иначе значение в поле — это уже multiplier from→to.
+  double _multiplierFromInput(double input, String from, String to) {
+    final pair = _quotePair(from, to);
+    if (pair == null) return input;
+    final (strong, _) = pair;
+    return from == strong ? input : (input == 0 ? 0 : 1 / input);
+  }
+
+  String _rateLabel(String from, String to) {
+    final pair = _quotePair(from, to);
+    if (pair == null) return 'Курс $from → $to';
+    final (strong, weak) = pair;
+    return '1 $strong = ? $weak';
+  }
+
+  String _rateHint(String from, String to) {
+    final pair = _quotePair(from, to);
+    if (pair == null) return '1.0';
+    final (strong, weak) = pair;
+    // Пара-подсказка по типичной валюте.
+    if (strong == 'USD' && weak == 'UZS') return '12780';
+    if (strong == 'USD' && weak == 'RUB') return '92';
+    if (strong == 'USD' && weak == 'KZT') return '522';
+    if (strong == 'EUR' && weak == 'USD') return '1.085';
+    return '1.0';
+  }
+
+  /// Сбрасывает поле курса при смене валюты, чтобы пользователь не оставил
+  /// устаревшее число от предыдущей пары.
+  void _resetRateInput() {
+    if (_toCurrency == _transferCurrency) {
+      _exchangeRateController.text = '1.0';
+    } else {
+      _exchangeRateController.text = '';
+    }
+    _exchangeRateError = null;
+  }
   CommissionType _commissionType = CommissionType.fixed;
   String _transferCurrency = 'USD';
   String _toCurrency = 'USD';
@@ -518,6 +573,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                   if (_commissionCurrency == _transferCurrency || !_currencies.contains(_commissionCurrency)) {
                     _commissionCurrency = _transferCurrency;
                   }
+                  _resetRateInput();
                 });
               },
           );
@@ -539,6 +595,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
             onChanged: (v) {
               setState(() {
                 _toCurrency = v ?? _transferCurrency;
+                _resetRateInput();
               });
             },
           );
@@ -546,7 +603,9 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         const SizedBox(height: 6),
         if (_toCurrency != _transferCurrency)
           Text(
-            'Разные валюты — укажите курс $_transferCurrency → $_toCurrency',
+            _quotePair(_transferCurrency, _toCurrency) != null
+                ? 'Курс — сколько ${_quotePair(_transferCurrency, _toCurrency)!.$2} за 1 ${_quotePair(_transferCurrency, _toCurrency)!.$1}'
+                : 'Разные валюты — укажите множитель $_transferCurrency → $_toCurrency',
             style: TextStyle(
               fontSize: 11,
               color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -676,10 +735,13 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                   child: TextFormField(
                     controller: _exchangeRateController,
                     decoration: InputDecoration(
-                      labelText: 'Курс $_transferCurrency → $_toCurrency',
-                      hintText: '1.0',
+                      labelText: _rateLabel(_transferCurrency, _toCurrency),
+                      hintText: _rateHint(_transferCurrency, _toCurrency),
                       border: const OutlineInputBorder(),
                       errorText: _exchangeRateError,
+                      // Подсказка валюты «слабой» части курса справа в поле.
+                      suffixText:
+                          _quotePair(_transferCurrency, _toCurrency)?.$2,
                     ),
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
@@ -705,7 +767,11 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         : commissionValue;
     final rate = _toCurrency == _transferCurrency
         ? 1.0
-        : (double.tryParse(_exchangeRateController.text) ?? 1.0);
+        : _multiplierFromInput(
+            double.tryParse(_exchangeRateController.text) ?? 1.0,
+            _transferCurrency,
+            _toCurrency,
+          );
     // For fixed commission in different currency: fetch exchange rate. Percentage is already in transfer currency.
     final needsCommissionRate = _commissionType == CommissionType.fixed &&
         commission > 0 &&
@@ -890,10 +956,11 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
 
     final commissionValue =
         double.tryParse(_commissionValueController.text) ?? 0;
+    final rateInput = double.tryParse(_exchangeRateController.text) ?? 1.0;
     final exchangeRate = _toCurrency == _transferCurrency
         ? 1.0
-        : (double.tryParse(_exchangeRateController.text) ?? 1.0);
-    if (_toCurrency != _transferCurrency && exchangeRate <= 0) {
+        : _multiplierFromInput(rateInput, _transferCurrency, _toCurrency);
+    if (_toCurrency != _transferCurrency && (rateInput <= 0 || exchangeRate <= 0)) {
       setState(() {
         _exchangeRateError = 'Укажите положительный курс для разных валют';
       });
