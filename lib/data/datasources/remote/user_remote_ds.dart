@@ -14,37 +14,69 @@ class UserRemoteDataSource {
 
   UserRemoteDataSource(this._client);
 
-  Stream<List<AppUser>> watchUsers() {
-    final controller = StreamController<List<AppUser>>.broadcast();
+  /// Singleton-контроллер: один источник правды для всех подписчиков. После
+  /// каждой админ-операции мы можем явно вызвать [refreshUsers] и список
+  /// мгновенно обновится у всех экранов, не дожидаясь realtime.
+  StreamController<List<AppUser>>? _controller;
+  RealtimeChannel? _channel;
+  int _listeners = 0;
 
-    _fetchUsers().then((list) {
-      if (!controller.isClosed) controller.add(list);
+  Stream<List<AppUser>> watchUsers() {
+    _controller ??= StreamController<List<AppUser>>.broadcast(
+      onListen: () {},
+      onCancel: () {},
+    );
+    _listeners++;
+
+    // Первая загрузка — сразу.
+    fetchUsers().then((list) {
+      final c = _controller;
+      if (c != null && !c.isClosed) c.add(list);
     }).catchError((e) {
-      if (!controller.isClosed) controller.addError(e);
+      final c = _controller;
+      if (c != null && !c.isClosed) c.addError(e);
     });
 
-    final channel = _client
+    // Realtime — подписываемся один раз.
+    _channel ??= _client
         .channel('users_changes')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
           table: 'users',
-          callback: (payload) {
-            _fetchUsers().then((list) {
-              if (!controller.isClosed) controller.add(list);
-            });
-          },
+          callback: (payload) => refreshUsers(),
         )
         .subscribe();
 
-    controller.onCancel = () {
-      _client.removeChannel(channel);
-    };
-
-    return controller.stream;
+    final base = _controller!.stream;
+    // Когда последний слушатель отписался — гасим канал, чтобы не висел
+    // realtime-сокет в фоне.
+    return base.transform(StreamTransformer<List<AppUser>, List<AppUser>>.fromHandlers(
+      handleDone: (sink) {
+        _listeners--;
+        if (_listeners <= 0) {
+          if (_channel != null) {
+            _client.removeChannel(_channel!);
+            _channel = null;
+          }
+        }
+        sink.close();
+      },
+    ));
   }
 
-  Future<List<AppUser>> _fetchUsers() async {
+  /// Принудительно перечитать список пользователей и протолкнуть его
+  /// в общий стрим. Зовётся после успешных update/delete/email-change,
+  /// чтобы UI обновился мгновенно.
+  Future<void> refreshUsers() async {
+    try {
+      final list = await fetchUsers();
+      final c = _controller;
+      if (c != null && !c.isClosed) c.add(list);
+    } catch (_) {/* swallow — следующий тик realtime подтянет */}
+  }
+
+  Future<List<AppUser>> fetchUsers() async {
     final data = await _client.from('users').select().order('display_name');
     return (data as List)
         .map((e) => _mapUser(Map<String, dynamic>.from(e as Map)))
@@ -87,6 +119,7 @@ class UserRemoteDataSource {
         return {'success': false, 'error': _friendlyAuthError(msg)};
       }
       if (data['success'] == true) {
+        await refreshUsers();
         return {'success': true, 'userId': data['userId']};
       }
       return {
@@ -144,6 +177,43 @@ class UserRemoteDataSource {
     });
   }
 
+  /// Меняет email через Edge Function `admin-update-user-email`.
+  /// (auth.users менять обычным SQL нельзя — нужен service_role.)
+  Future<Map<String, dynamic>> updateUserEmail({
+    required String userId,
+    required String email,
+  }) async {
+    try {
+      final res = await _client.functions.invoke(
+        'admin-update-user-email',
+        body: {'userId': userId, 'email': email.trim().toLowerCase()},
+      );
+      final data = res.data;
+      if (res.status != 200 || data is! Map) {
+        final msg = (data is Map && data['error'] != null)
+            ? data['error'].toString()
+            : 'Ошибка смены email';
+        return {'success': false, 'error': _friendlyAuthError(msg)};
+      }
+      if (data['success'] == true) {
+        return {'success': true};
+      }
+      return {
+        'success': false,
+        'error':
+            _friendlyAuthError(data['error']?.toString() ?? 'Ошибка'),
+      };
+    } on FunctionException catch (e) {
+      return {
+        'success': false,
+        'error': _friendlyAuthError(
+            e.details?.toString() ?? e.reasonPhrase ?? 'Ошибка функции'),
+      };
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
+  }
+
   /// Legacy dispatcher — keeps the old call-sites in `admin_panel_page.dart`
   /// working. Internally splits the update into dedicated admin_* RPC calls
   /// (each one writes an audit log row).
@@ -154,6 +224,7 @@ class UserRemoteDataSource {
     AccountantPermissions? permissions,
     bool? isActive,
     String? displayName,
+    String? email,
   }) async {
     try {
       if (role != null) {
@@ -171,6 +242,17 @@ class UserRemoteDataSource {
       if (displayName != null) {
         await updateUserProfile(userId, displayName: displayName);
       }
+      if (email != null) {
+        final r = await updateUserEmail(userId: userId, email: email);
+        if (r['success'] != true) {
+          // ВАЖНО: остальные изменения уже применены — не теряем их.
+          // Возвращаем ошибку email отдельно, чтобы UI её показал.
+          await refreshUsers();
+          return {'success': false, 'error': r['error']};
+        }
+      }
+      // Принудительное обновление списка — UI увидит изменения мгновенно.
+      await refreshUsers();
       return {'success': true};
     } catch (e) {
       return {'success': false, 'error': e.toString()};
@@ -196,6 +278,7 @@ class UserRemoteDataSource {
         return {'success': false, 'error': msg};
       }
       if (data['success'] == true) {
+        await refreshUsers();
         return {'success': true};
       }
       return {

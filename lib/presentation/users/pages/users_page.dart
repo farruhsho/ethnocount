@@ -572,6 +572,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   late String _role;
   late bool _isActive;
   late List<String> _assignedBranches;
+  late final TextEditingController _emailCtrl;
+  late final TextEditingController _nameCtrl;
   List<Branch> _allBranches = [];
   bool _loading = false;
   StreamSubscription<List<Branch>>? _branchSub;
@@ -582,6 +584,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     _role = widget.user.role.name;
     _isActive = widget.user.isActive;
     _assignedBranches = List.from(widget.user.assignedBranchIds);
+    _emailCtrl = TextEditingController(text: widget.user.email);
+    _nameCtrl = TextEditingController(text: widget.user.displayName);
 
     _branchSub = sl<BranchRepository>().watchBranches().listen((branches) {
       if (mounted) setState(() => _allBranches = branches);
@@ -590,6 +594,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
 
   @override
   void dispose() {
+    _emailCtrl.dispose();
+    _nameCtrl.dispose();
     _branchSub?.cancel();
     super.dispose();
   }
@@ -619,11 +625,32 @@ class _EditUserDialogState extends State<_EditUserDialog> {
       ),
       content: SizedBox(
         width: 480,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DropdownButtonFormField<String>(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextFormField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Имя',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextFormField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.email_outlined),
+                  helperText: 'Меняется через защищённую серверную функцию',
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              DropdownButtonFormField<String>(
               key: ValueKey('edit-role-$_role'),
               initialValue: _role,
               decoration: const InputDecoration(
@@ -688,7 +715,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 );
               }),
             ],
-          ],
+            ],
+          ),
         ),
       ),
       actions: [
@@ -717,11 +745,17 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     try {
       final ds = sl<UserRemoteDataSource>();
       final roleChanged = _role != widget.user.role.name;
+      final emailChanged = _emailCtrl.text.trim().toLowerCase() !=
+          widget.user.email.toLowerCase();
+      final newName = _nameCtrl.text.trim();
+      final nameChanged = newName.isNotEmpty && newName != widget.user.displayName;
       final result = await ds.updateUser(
         userId: widget.user.id,
         role: roleChanged ? _role : null,
         isActive: _isActive,
         assignedBranchIds: _assignedBranches,
+        displayName: nameChanged ? newName : null,
+        email: emailChanged ? _emailCtrl.text.trim() : null,
       );
       if (!mounted) return;
       if (result['success'] == true) {

@@ -2386,6 +2386,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   late Set<String> _assignedBranches;
   late AccountantPermissions _permissions;
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _emailCtrl;
   bool _loading = false;
 
   @override
@@ -2396,11 +2397,13 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     _assignedBranches = Set.from(widget.user.assignedBranchIds);
     _permissions = widget.user.permissions;
     _nameCtrl = TextEditingController(text: widget.user.displayName);
+    _emailCtrl = TextEditingController(text: widget.user.email);
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _emailCtrl.dispose();
     super.dispose();
   }
 
@@ -2434,15 +2437,21 @@ class _EditUserDialogState extends State<_EditUserDialog> {
               ),
               const SizedBox(height: AppSpacing.md),
 
-              // Email (read-only)
+              // Email — теперь редактируемый (через защищённую Edge Function).
               TextFormField(
-                initialValue: widget.user.email,
-                readOnly: true,
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
                 decoration: const InputDecoration(
                   labelText: 'Email',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.email_outlined),
+                  helperText: 'Меняется через защищённую серверную функцию',
                 ),
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Введите email';
+                  if (!v.contains('@')) return 'Некорректный email';
+                  return null;
+                },
               ),
               const SizedBox(height: AppSpacing.md),
 
@@ -2532,6 +2541,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     try {
       final ds = sl<UserRemoteDataSource>();
       final roleChanged = _role != widget.user.role.name;
+      final emailChanged = _emailCtrl.text.trim().toLowerCase() !=
+          widget.user.email.toLowerCase();
       final result = await ds.updateUser(
         userId: widget.user.id,
         role: roleChanged ? _role : null,
@@ -2539,6 +2550,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
         assignedBranchIds: _assignedBranches.toList(),
         permissions: _permissions,
         displayName: _nameCtrl.text.trim() != widget.user.displayName ? _nameCtrl.text.trim() : null,
+        email: emailChanged ? _emailCtrl.text.trim() : null,
       );
       if (!mounted) return;
       if (result['success'] == true) {
