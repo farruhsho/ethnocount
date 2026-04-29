@@ -18,7 +18,7 @@ interface CreateUserBody {
   email: string;
   password: string;
   displayName: string;
-  role: 'accountant' | 'creator';
+  role: 'accountant' | 'creator' | 'director';
   assignedBranchIds?: string[];
   permissions?: Record<string, unknown>;
 }
@@ -61,8 +61,12 @@ Deno.serve(async (req) => {
     if (callerErr || !callerRow) {
       return json({ error: 'Caller profile not found' }, 403);
     }
-    if (callerRow.role !== 'creator' || callerRow.is_active === false) {
-      return json({ error: 'Forbidden — creator only' }, 403);
+    const callerRole = callerRow.role;
+    if (
+      callerRow.is_active === false ||
+      (callerRole !== 'creator' && callerRole !== 'director')
+    ) {
+      return json({ error: 'Forbidden — creator or director only' }, 403);
     }
 
     // 3. Validate body
@@ -77,8 +81,12 @@ Deno.serve(async (req) => {
     if (!email || !email.includes('@')) return json({ error: 'Некорректный email' }, 400);
     if (password.length < 6) return json({ error: 'Пароль минимум 6 символов' }, 400);
     if (displayName.length < 2) return json({ error: 'Имя минимум 2 символа' }, 400);
-    if (role !== 'accountant' && role !== 'creator') {
+    if (role !== 'accountant' && role !== 'creator' && role !== 'director') {
       return json({ error: 'Invalid role' }, 400);
+    }
+    // Director can only create accountants — never creator/director.
+    if (callerRole === 'director' && role !== 'accountant') {
+      return json({ error: 'Director может создавать только бухгалтеров' }, 403);
     }
 
     // 4. Create auth user (no email sent — email_confirm=true)

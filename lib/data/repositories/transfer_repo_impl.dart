@@ -164,6 +164,7 @@ class TransferRepoImpl implements TransferRepository {
     required String transferId,
     required double amount,
     String? note,
+    String? fromAccountId,
   }) async {
     try {
       if (!await _connectivity.isConnected) {
@@ -176,6 +177,7 @@ class TransferRepoImpl implements TransferRepository {
         transferId,
         amount,
         note: note,
+        fromAccountId: fromAccountId,
       );
       if (result['success'] != true) {
         return Left(ServerFailure(

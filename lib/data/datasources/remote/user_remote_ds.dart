@@ -177,13 +177,39 @@ class UserRemoteDataSource {
     }
   }
 
-  /// Delete user profile (auth account would need admin API).
+  /// Delete user (profile + auth account) via the `admin-delete-user` Edge Function.
+  ///
+  /// Caller must be creator (any target) or director (accountant target only) —
+  /// enforced server-side. The Edge Function uses the service_role key to call
+  /// `auth.admin.deleteUser`, then removes the public.users row.
   Future<Map<String, dynamic>> deleteUser(String userId) async {
-    await _client.from('users').delete().eq('id', userId);
-    return {
-      'success': true,
-      'note': 'Profile deleted; auth account persists without Admin API',
-    };
+    try {
+      final res = await _client.functions.invoke(
+        'admin-delete-user',
+        body: {'userId': userId},
+      );
+      final data = res.data;
+      if (res.status != 200 || data is! Map) {
+        final msg = (data is Map && data['error'] != null)
+            ? data['error'].toString()
+            : 'Ошибка удаления пользователя';
+        return {'success': false, 'error': msg};
+      }
+      if (data['success'] == true) {
+        return {'success': true};
+      }
+      return {
+        'success': false,
+        'error': data['error']?.toString() ?? 'Ошибка',
+      };
+    } on FunctionException catch (e) {
+      return {
+        'success': false,
+        'error': e.details?.toString() ?? e.reasonPhrase ?? 'Ошибка функции',
+      };
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
   }
 
   String _friendlyAuthError(String raw) {
@@ -201,6 +227,7 @@ class UserRemoteDataSource {
 
   SystemRole _parseRole(dynamic role) {
     if (role == 'creator' || role == 'admin') return SystemRole.creator;
+    if (role == 'director') return SystemRole.director;
     return SystemRole.accountant;
   }
 

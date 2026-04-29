@@ -7,6 +7,7 @@ import 'package:ethnocount/core/services/credential_storage_service.dart';
 import 'package:ethnocount/core/services/session_service.dart';
 import 'package:ethnocount/core/services/grid_column_preferences_service.dart';
 import 'package:ethnocount/core/services/fcm_service.dart';
+import 'package:ethnocount/core/services/notification_fx_service.dart';
 
 // ─── Data Sources ───
 import 'package:ethnocount/data/datasources/remote/auth_remote_ds.dart';
@@ -92,6 +93,7 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => SessionService());
   sl.registerLazySingleton(() => GridColumnPreferencesService());
   sl.registerLazySingleton(() => FcmService(sl()));
+  sl.registerLazySingleton(() => NotificationFxService());
   sl.registerLazySingleton(() => ConnectivityService());
 
   // ─── Data Sources (all take SupabaseClient) ───
@@ -198,6 +200,7 @@ Future<void> initDependencies() async {
       ));
   sl.registerFactory(() => NotificationBloc(
         repository: sl(),
+        fx: sl(),
       ));
   sl.registerFactory(() => ExchangeRateBloc(
         repository: sl(),

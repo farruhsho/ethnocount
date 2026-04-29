@@ -1,6 +1,7 @@
-/// System roles — only Creator (super admin) and Accountant.
+/// System roles: Creator (super admin), Director (manages accountants), Accountant.
 enum SystemRole {
   creator,
+  director,
   accountant;
 
   bool get canCreateTransfer => true;
@@ -11,11 +12,13 @@ enum SystemRole {
   bool get canManageBranches => this == creator;
   bool get canManageAccounts => this == creator;
 
-  /// Only Creator can create/edit/delete users.
-  bool get canManageUsers => this == creator;
+  /// Creator and Director can create/edit/delete users.
+  /// Director is restricted to managing accountants only (enforced by RLS + RPC).
+  bool get canManageUsers => this == creator || this == director;
 
-  /// Only Creator can change user branch assignments.
-  bool get canChangeBranch => this == creator;
+  /// Creator and Director can change user branch assignments
+  /// (Director can only assign branches to accountants).
+  bool get canChangeBranch => this == creator || this == director;
 
   bool get canSetExchangeRates => true;
   bool get canViewReports => true;
@@ -23,14 +26,18 @@ enum SystemRole {
   bool get canCreatePurchase => true;
 
   bool get isCreator => this == creator;
+  bool get isDirector => this == director;
 
-  /// Backward-compatible alias — now same as isCreator.
+  /// True for roles with all-branch operational access.
+  /// Director focuses on user management, not operations, so this stays creator-only.
   bool get isAdminOrCreator => this == creator;
 
   String get displayName {
     switch (this) {
       case creator:
         return 'Creator';
+      case director:
+        return 'Director';
       case accountant:
         return 'Accountant';
     }
@@ -40,6 +47,8 @@ enum SystemRole {
     switch (this) {
       case creator:
         return 'Создатель (Creator)';
+      case director:
+        return 'Директор';
       case accountant:
         return 'Бухгалтер';
     }

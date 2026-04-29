@@ -13,11 +13,13 @@ class IssuePartialTransferUseCase {
     required String transferId,
     required double amount,
     String? note,
+    String? fromAccountId,
   }) {
     return _repository.issuePartialTransfer(
       transferId: transferId,
       amount: amount,
       note: note,
+      fromAccountId: fromAccountId,
     );
   }
 }

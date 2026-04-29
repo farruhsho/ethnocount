@@ -137,6 +137,7 @@ class _DesktopShellState extends State<_DesktopShell> {
   (List<String> routes, List<NavigationRailDestination> dests) _buildNavItems(
       BuildContext context, dynamic user) {
     final isCreator = user?.role.isCreator ?? false;
+    final canManageUsers = user?.role.canManageUsers ?? false;
     final perms = user?.permissions ?? AccountantPermissions.all;
 
     final all = [
@@ -205,7 +206,7 @@ class _DesktopShellState extends State<_DesktopShell> {
       if (route == '/exchange-rates' && !perms.canExchangeRates && !isCreator) continue;
       if (route == '/reports' && !perms.canReports && !isCreator) continue;
       if (route == '/branches' && !perms.canBranchesView && !isCreator) continue;
-      if (route == '/users' && !isCreator) continue;
+      if (route == '/users' && !canManageUsers) continue;
       filtered.add(e);
     }
     return (
@@ -241,11 +242,12 @@ class _MobileShellState extends State<_MobileShell> {
       builder: (context, authState) {
         final user = authState.user;
         final isCreator = user?.role.isCreator ?? false;
+        final canManageUsers = user?.role.canManageUsers ?? false;
         final perms = user?.permissions ?? AccountantPermissions.all;
 
         final userEmail = user?.email ?? '';
         final userName = user?.displayName ?? '';
-        final roleLabel = isCreator ? 'Создатель' : 'Бухгалтер';
+        final roleLabel = user?.role.displayNameRu ?? '';
 
         return Scaffold(
           body: SafeArea(
@@ -260,6 +262,7 @@ class _MobileShellState extends State<_MobileShell> {
               index,
               perms,
               isCreator,
+              canManageUsers: canManageUsers,
               userEmail: userEmail,
               userName: userName,
               roleLabel: roleLabel,
@@ -315,6 +318,7 @@ Future<void> _showMoreSheet(
   BuildContext context, {
   required AccountantPermissions perms,
   required bool isCreator,
+  bool canManageUsers = false,
   String userEmail = '',
   String userName = '',
   String roleLabel = '',
@@ -350,7 +354,7 @@ Future<void> _showMoreSheet(
         label: 'Филиалы',
         route: '/branches',
       ),
-    if (isCreator)
+    if (canManageUsers)
       const _MoreDestination(
         icon: Icons.admin_panel_settings_outlined,
         label: 'Управление',
@@ -577,6 +581,7 @@ void _onMobileTap(
   int index,
   AccountantPermissions perms,
   bool isCreator, {
+  bool canManageUsers = false,
   String userEmail = '',
   String userName = '',
   String roleLabel = '',
@@ -586,6 +591,7 @@ void _onMobileTap(
       context,
       perms: perms,
       isCreator: isCreator,
+      canManageUsers: canManageUsers,
       userEmail: userEmail,
       userName: userName,
       roleLabel: roleLabel,

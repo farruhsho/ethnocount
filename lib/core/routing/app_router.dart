@@ -104,7 +104,9 @@ class AppRouter {
           final user = auth.user;
           if (user != null && !user.role.isCreator) {
             final p = user.permissions;
-            if (path.startsWith('/users')) return '/';
+            if (path.startsWith('/users') && !user.role.canManageUsers) {
+              return '/';
+            }
             if (path.startsWith('/transfers') &&
                 !p.canTransfers &&
                 !(path == '/transfers/topup' && p.canBranchTopUp)) {

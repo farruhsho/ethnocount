@@ -236,13 +236,16 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                   onBranchTap: (branch) => _showAssignAccountantsDialog(context, branch),
                 ),
                 _UsersTab(
-                  users: _users,
+                  users: _visibleUsers(),
                   branches: _branches,
                   loading: _loadingUsers,
                   search: _userSearch,
                   onSearchChanged: (v) => setState(() => _userSearch = v),
                   onEdit: (u) => _showEditUserDialog(context, u),
+                  onDelete: (u) => _confirmDeleteUser(context, u),
                   onCreate: () => _showCreateUserDialog(context),
+                  viewerRole: _currentUser?.role,
+                  viewerId: _currentUser?.id,
                 ),
                 _BranchesTab(
                   branches: _branches,
@@ -341,6 +344,70 @@ class _AdminPanelPageState extends State<AdminPanelPage>
     );
   }
 
+  /// Director не видит creators / других директоров — фильтруем на клиенте
+  /// (RLS делает то же самое серверно).
+  List<AppUser> _visibleUsers() {
+    final me = _currentUser;
+    if (me?.role == SystemRole.director) {
+      return _users
+          .where((u) => u.id == me!.id || u.role == SystemRole.accountant)
+          .toList();
+    }
+    return _users;
+  }
+
+  Future<void> _confirmDeleteUser(BuildContext context, AppUser user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Expanded(child: Text('Удалить сотрудника?')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${user.displayName} (${user.email}) будет удалён без возможности восстановления.',
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'Учётная запись и пароль будут стёрты. Войти больше нельзя.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.delete_forever_rounded),
+            label: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final result = await sl<UserRemoteDataSource>().deleteUser(user.id);
+    if (!context.mounted) return;
+    if (result['success'] == true) {
+      context.showSuccessSnackBar('${user.displayName} удалён');
+    } else {
+      context.showSnackBar(
+        result['error']?.toString() ?? 'Ошибка удаления',
+        isError: true,
+      );
+    }
+  }
+
   void _showEditBranchDialog(BuildContext context, Branch branch) {
     showDialog(
       context: context,
@@ -399,6 +466,7 @@ class _OverviewTab extends StatelessWidget {
     if (loading) return const Center(child: CircularProgressIndicator());
 
     final creators = users.where((u) => u.role == SystemRole.creator).length;
+    final directors = users.where((u) => u.role == SystemRole.director).length;
     final accountants = users.where((u) => u.role == SystemRole.accountant).length;
     final activeUsers = users.where((u) => u.isActive).length;
     final blockedUsers = users.where((u) => !u.isActive).length;
@@ -430,6 +498,14 @@ class _OverviewTab extends StatelessWidget {
                 color: Colors.purple,
                 subtitle: 'Полные права',
               ),
+              if (directors > 0)
+                _KpiCard(
+                  title: 'Директоры',
+                  value: '$directors',
+                  icon: Icons.supervisor_account_rounded,
+                  color: Colors.orange,
+                  subtitle: 'Управление бухгалтерами',
+                ),
               _KpiCard(
                 title: 'Бухгалтеры',
                 value: '$accountants',
@@ -462,7 +538,7 @@ class _OverviewTab extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.md),
           ...users.take(5).map((user) {
-            final roleColor = user.role == SystemRole.creator ? Colors.purple : AppColors.primary;
+            final roleColor = _roleColor(user.role);
             return Card(
               elevation: 0,
               margin: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -533,7 +609,10 @@ class _UsersTab extends StatelessWidget {
     required this.search,
     required this.onSearchChanged,
     required this.onEdit,
+    required this.onDelete,
     required this.onCreate,
+    this.viewerRole,
+    this.viewerId,
   });
 
   final List<AppUser> users;
@@ -542,7 +621,20 @@ class _UsersTab extends StatelessWidget {
   final String search;
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<AppUser> onEdit;
+  final ValueChanged<AppUser> onDelete;
   final VoidCallback onCreate;
+  final SystemRole? viewerRole;
+  final String? viewerId;
+
+  bool _canDelete(AppUser user) {
+    if (viewerId == null || user.id == viewerId) return false;
+    if (user.email.toLowerCase() == 'farruh@gmail.com') return false;
+    if (viewerRole == SystemRole.creator) return true;
+    if (viewerRole == SystemRole.director) {
+      return user.role == SystemRole.accountant;
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -607,6 +699,8 @@ class _UsersTab extends StatelessWidget {
                         user: user,
                         branches: branches,
                         onEdit: () => onEdit(user),
+                        onDelete:
+                            _canDelete(user) ? () => onDelete(user) : null,
                       );
                     },
                   ),
@@ -672,6 +766,8 @@ class _UsersTab extends StatelessWidget {
                           user: user,
                           branches: branches,
                           onEdit: () => onEdit(user),
+                          onDelete:
+                              _canDelete(user) ? () => onDelete(user) : null,
                         );
                       },
                     ),
@@ -693,17 +789,19 @@ class _UserCard extends StatelessWidget {
     required this.user,
     required this.branches,
     required this.onEdit,
+    this.onDelete,
   });
 
   final AppUser user;
   final List<Branch> branches;
   final VoidCallback onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
     final roleColor =
-        user.role == SystemRole.creator ? Colors.purple : AppColors.primary;
+        _roleColor(user.role);
     final secondary =
         isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
 
@@ -806,6 +904,13 @@ class _UserCard extends StatelessWidget {
                 onPressed: onEdit,
                 tooltip: 'Редактировать',
               ),
+              if (onDelete != null)
+                IconButton(
+                  icon: const Icon(Icons.delete_outline, size: 20),
+                  color: Colors.red,
+                  onPressed: onDelete,
+                  tooltip: 'Удалить',
+                ),
             ],
           ),
         ),
@@ -815,14 +920,20 @@ class _UserCard extends StatelessWidget {
 }
 
 class _UserRow extends StatelessWidget {
-  const _UserRow({required this.user, required this.branches, required this.onEdit});
+  const _UserRow({
+    required this.user,
+    required this.branches,
+    required this.onEdit,
+    this.onDelete,
+  });
   final AppUser user;
   final List<Branch> branches;
   final VoidCallback onEdit;
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
-    final roleColor = user.role == SystemRole.creator ? Colors.purple : AppColors.primary;
+    final roleColor = _roleColor(user.role);
     final branchNames = user.role.isAdminOrCreator
         ? 'Все филиалы'
         : user.assignedBranchIds
@@ -869,11 +980,23 @@ class _UserRow extends StatelessWidget {
             ),
             Expanded(flex: 1, child: _StatusDot(isActive: user.isActive)),
             SizedBox(
-              width: 48,
-              child: IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                onPressed: onEdit,
-                tooltip: 'Редактировать',
+              width: onDelete != null ? 96 : 48,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    onPressed: onEdit,
+                    tooltip: 'Редактировать',
+                  ),
+                  if (onDelete != null)
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      color: Colors.red,
+                      onPressed: onDelete,
+                      tooltip: 'Удалить',
+                    ),
+                ],
               ),
             ),
           ],
@@ -1400,18 +1523,33 @@ class _AccountTile extends StatelessWidget {
 // TAB 4: Access Matrix
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-class _AccessMatrixTab extends StatelessWidget {
+class _AccessMatrixTab extends StatefulWidget {
   const _AccessMatrixTab({required this.users, required this.branches, required this.loading});
   final List<AppUser> users;
   final List<Branch> branches;
   final bool loading;
 
   @override
+  State<_AccessMatrixTab> createState() => _AccessMatrixTabState();
+}
+
+class _AccessMatrixTabState extends State<_AccessMatrixTab> {
+  /// Локальная теневая копия `assigned_branch_ids` для оптимистичного UI:
+  /// клик мгновенно перерисовывает галочку, а после ответа сервера значение
+  /// либо подтверждается (приходит через realtime), либо откатывается.
+  final Map<String, Set<String>> _shadow = {};
+  final Set<String> _busy = {}; // user.id|branch.id keys, чтобы блокировать клики
+
+  Set<String> _branchesFor(AppUser user) =>
+      _shadow[user.id] ?? user.assignedBranchIds.toSet();
+
+  @override
   Widget build(BuildContext context) {
-    if (loading) return const Center(child: CircularProgressIndicator());
+    if (widget.loading) return const Center(child: CircularProgressIndicator());
 
     final isDark = context.isDark;
-    final accountants = users.where((u) => u.role == SystemRole.accountant).toList();
+    final accountants = widget.users.where((u) => u.role == SystemRole.accountant).toList();
+    final branches = widget.branches;
 
     if (branches.isEmpty || accountants.isEmpty) {
       return Center(
@@ -1496,11 +1634,18 @@ class _AccessMatrixTab extends StatelessWidget {
                         )),
                         DataCell(_RoleBadge(role: user.role)),
                         ...branches.map((branch) {
-                          final hasAccess = user.assignedBranchIds.contains(branch.id);
+                          final assigned = _branchesFor(user);
+                          final hasAccess = assigned.contains(branch.id);
+                          final key = '${user.id}|${branch.id}';
+                          final busy = _busy.contains(key);
                           return DataCell(
                             _AccessToggle(
                               hasAccess: hasAccess,
-                              onToggle: () => _toggleAccess(context, user, branch, !hasAccess),
+                              busy: busy,
+                              onToggle: busy
+                                  ? null
+                                  : () => _toggleAccess(
+                                      context, user, branch, !hasAccess),
                             ),
                           );
                         }),
@@ -1516,34 +1661,74 @@ class _AccessMatrixTab extends StatelessWidget {
     );
   }
 
-  void _toggleAccess(BuildContext ctx, AppUser user, Branch branch, bool grant) async {
-    final ds = sl<UserRemoteDataSource>();
-    final newBranches = List<String>.from(user.assignedBranchIds);
+  Future<void> _toggleAccess(
+      BuildContext ctx, AppUser user, Branch branch, bool grant) async {
+    final key = '${user.id}|${branch.id}';
+    final current = _branchesFor(user);
+    final next = Set<String>.from(current);
     if (grant) {
-      if (!newBranches.contains(branch.id)) newBranches.add(branch.id);
+      next.add(branch.id);
     } else {
-      newBranches.remove(branch.id);
+      next.remove(branch.id);
     }
-    final result = await ds.updateUser(
-      userId: user.id,
-      assignedBranchIds: newBranches,
-    );
-    if (ctx.mounted) {
-      if (result['success'] == true) {
-        ctx.showSuccessSnackBar(
-          grant ? '${user.displayName} → ${branch.name}: доступ выдан' : '${user.displayName} → ${branch.name}: доступ убран',
-        );
-      } else {
-        ctx.showSnackBar(result['error']?.toString() ?? 'Ошибка', isError: true);
+    // Оптимистично перерисовываем
+    setState(() {
+      _shadow[user.id] = next;
+      _busy.add(key);
+    });
+    final messenger = ScaffoldMessenger.of(ctx);
+    final errorColor = Theme.of(ctx).colorScheme.error;
+    final result = await sl<UserRemoteDataSource>()
+        .updateUser(userId: user.id, assignedBranchIds: next.toList());
+    if (!mounted) return;
+    setState(() => _busy.remove(key));
+    if (result['success'] == true) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            grant
+                ? '${user.displayName} → ${branch.name}: доступ выдан'
+                : '${user.displayName} → ${branch.name}: доступ убран',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      // Realtime обновит widget.users; после этого подтверждённое значение
+      // совпадёт с тенью, и shadow можно удалить.
+    } else {
+      // Откат
+      setState(() => _shadow[user.id] = current);
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(result['error']?.toString() ?? 'Ошибка'),
+          backgroundColor: errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _AccessMatrixTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Когда realtime принёс свежий список — сверяем с тенью и чистим её,
+    // если сервер уже подтвердил наше значение.
+    for (final user in widget.users) {
+      final shadow = _shadow[user.id];
+      if (shadow == null) continue;
+      final actual = user.assignedBranchIds.toSet();
+      if (shadow.length == actual.length && shadow.containsAll(actual)) {
+        _shadow.remove(user.id);
       }
     }
   }
 }
 
 class _AccessToggle extends StatelessWidget {
-  const _AccessToggle({required this.hasAccess, required this.onToggle});
+  const _AccessToggle({required this.hasAccess, required this.onToggle, this.busy = false});
   final bool hasAccess;
-  final VoidCallback onToggle;
+  final VoidCallback? onToggle;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
@@ -1561,9 +1746,14 @@ class _AccessToggle extends StatelessWidget {
             width: 1.5,
           ),
         ),
-        child: hasAccess
-            ? const Icon(Icons.check_rounded, color: AppColors.primary, size: 20)
-            : Icon(Icons.close_rounded, color: Colors.grey.withValues(alpha: 0.4), size: 16),
+        child: busy
+            ? const Padding(
+                padding: EdgeInsets.all(8),
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : hasAccess
+                ? const Icon(Icons.check_rounded, color: AppColors.primary, size: 20)
+                : Icon(Icons.close_rounded, color: Colors.grey.withValues(alpha: 0.4), size: 16),
       ),
     );
   }
@@ -1640,13 +1830,47 @@ class _KpiCard extends StatelessWidget {
   }
 }
 
+SystemRole? _currentUserRole(BuildContext context) {
+  try {
+    return context.read<AuthBloc>().state.user?.role;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Dropdown items for role pickers. Director / Creator items are visible only
+/// when the viewer is a creator — director may only create accountants.
+List<DropdownMenuItem<String>> _roleItems(SystemRole? viewerRole) {
+  return [
+    const DropdownMenuItem(
+        value: 'accountant', child: Text('Бухгалтер (Accountant)')),
+    if (viewerRole == SystemRole.creator) ...[
+      const DropdownMenuItem(
+          value: 'director', child: Text('Директор (Director)')),
+      const DropdownMenuItem(
+          value: 'creator', child: Text('Создатель (Creator)')),
+    ],
+  ];
+}
+
+Color _roleColor(SystemRole role) {
+  switch (role) {
+    case SystemRole.creator:
+      return Colors.purple;
+    case SystemRole.director:
+      return Colors.orange;
+    case SystemRole.accountant:
+      return AppColors.primary;
+  }
+}
+
 class _RoleBadge extends StatelessWidget {
   const _RoleBadge({required this.role});
   final SystemRole role;
 
   @override
   Widget build(BuildContext context) {
-    final color = role == SystemRole.creator ? Colors.purple : AppColors.primary;
+    final color = _roleColor(role);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -1913,7 +2137,9 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final isCreatorRole = _role == 'creator';
+    // Creator и Director не привязываются к филиалам и не имеют гранулярных
+    // разрешений (директор управляет бухгалтерами, а не операциями).
+    final isCreatorRole = _role == 'creator' || _role == 'director';
 
     return AlertDialog(
       title: const Row(
@@ -1985,10 +2211,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.admin_panel_settings_outlined),
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 'accountant', child: Text('Бухгалтер (Accountant)')),
-                    DropdownMenuItem(value: 'creator', child: Text('Создатель (Creator)')),
-                  ],
+                  items: _roleItems(_currentUserRole(context)),
                   onChanged: (v) => setState(() => _role = v ?? 'accountant'),
                 ),
 
@@ -2036,18 +2259,35 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                   Container(
                     padding: const EdgeInsets.all(AppSpacing.md),
                     decoration: BoxDecoration(
-                      color: Colors.purple.withValues(alpha: 0.08),
+                      color: (_role == 'director' ? Colors.orange : Colors.purple)
+                          .withValues(alpha: 0.08),
                       borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                      border: Border.all(color: Colors.purple.withValues(alpha: 0.2)),
+                      border: Border.all(
+                        color: (_role == 'director'
+                                ? Colors.orange
+                                : Colors.purple)
+                            .withValues(alpha: 0.2),
+                      ),
                     ),
-                    child: const Row(
+                    child: Row(
                       children: [
-                        Icon(Icons.info_outline, size: 18, color: Colors.purple),
-                        SizedBox(width: 8),
+                        Icon(Icons.info_outline,
+                            size: 18,
+                            color: _role == 'director'
+                                ? Colors.orange
+                                : Colors.purple),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Creator получит полный доступ ко всем филиалам и операциям',
-                            style: TextStyle(fontSize: 12, color: Colors.purple),
+                            _role == 'director'
+                                ? 'Director управляет бухгалтерами; не видит других директоров и Creator''ов'
+                                : 'Creator получит полный доступ ко всем филиалам и операциям',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: _role == 'director'
+                                  ? Colors.orange
+                                  : Colors.purple,
+                            ),
                           ),
                         ),
                       ],
@@ -2166,7 +2406,8 @@ class _EditUserDialogState extends State<_EditUserDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final isPrivileged = _role == 'admin' || _role == 'creator';
+    final isPrivileged =
+        _role == 'admin' || _role == 'creator' || _role == 'director';
 
     return AlertDialog(
       title: Row(
@@ -2213,11 +2454,10 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.admin_panel_settings_outlined),
                 ),
-                items: const [
-                  DropdownMenuItem(value: 'accountant', child: Text('Бухгалтер (Accountant)')),
-                  DropdownMenuItem(value: 'creator', child: Text('Создатель (Creator)')),
-                ],
-                onChanged: (v) => setState(() => _role = v ?? _role),
+                items: _roleItems(_currentUserRole(context)),
+                onChanged: _currentUserRole(context) == SystemRole.creator
+                    ? (v) => setState(() => _role = v ?? _role)
+                    : null,
               ),
               const SizedBox(height: AppSpacing.md),
 
@@ -2291,9 +2531,10 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     setState(() => _loading = true);
     try {
       final ds = sl<UserRemoteDataSource>();
+      final roleChanged = _role != widget.user.role.name;
       final result = await ds.updateUser(
         userId: widget.user.id,
-        role: _role,
+        role: roleChanged ? _role : null,
         isActive: _isActive,
         assignedBranchIds: _assignedBranches.toList(),
         permissions: _permissions,

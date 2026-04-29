@@ -137,8 +137,8 @@ class AppUser extends Equatable {
   bool canAccessBranch(String branchId) =>
       role.isAdminOrCreator || assignedBranchIds.contains(branchId);
 
-  /// Creator-only: Управление пользователями.
-  bool get canManageUsers => role.isCreator;
+  /// Creator или Director: Управление пользователями.
+  bool get canManageUsers => role.canManageUsers;
 
   /// Creator-only: полное управление филиалами и счетами.
   bool get canManageBranches => role.isCreator;

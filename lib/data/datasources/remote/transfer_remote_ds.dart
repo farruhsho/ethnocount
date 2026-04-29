@@ -215,15 +215,21 @@ class TransferRemoteDataSource {
   /// Issue a single tranche of a confirmed transfer. Pass `amount` in
   /// receiver currency. The transfer flips to `issued` only when cumulative
   /// tranches reach the credited amount.
+  ///
+  /// [fromAccountId] — счёт получающего филиала, с которого реально вышли
+  /// деньги (карта/наличные кассы). Сохраняется в `transfer_issuances` и
+  /// показывается в истории выдач.
   Future<Map<String, dynamic>> issueTransferPartial(
     String transferId,
     double amount, {
     String? note,
+    String? fromAccountId,
   }) async {
     final result = await _client.rpc('issue_transfer_partial', params: {
       'p_transfer_id': transferId,
       'p_amount': amount,
       'p_note': note,
+      'p_from_account_id': fromAccountId,
     });
     return Map<String, dynamic>.from(result as Map);
   }

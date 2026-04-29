@@ -106,17 +106,20 @@ class TransferIssueRequested extends TransferEvent {
 
 /// Pay out one tranche of a confirmed transfer.
 /// `amount` is in receiver currency; `note` is optional bookkeeping comment.
+/// [fromAccountId] — счёт получающего филиала, с которого выданы деньги.
 class TransferIssuePartialRequested extends TransferEvent {
   final String transferId;
   final double amount;
   final String? note;
+  final String? fromAccountId;
   const TransferIssuePartialRequested({
     required this.transferId,
     required this.amount,
     this.note,
+    this.fromAccountId,
   });
   @override
-  List<Object?> get props => [transferId, amount, note];
+  List<Object?> get props => [transferId, amount, note, fromAccountId];
 }
 
 class TransferRejectRequested extends TransferEvent {
@@ -406,6 +409,7 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
       transferId: event.transferId,
       amount: event.amount,
       note: event.note,
+      fromAccountId: event.fromAccountId,
     );
     result.fold(
       (failure) => emit(state.copyWith(

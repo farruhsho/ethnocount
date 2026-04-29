@@ -42,17 +42,22 @@ class AppColors {
   static const Color darkTextDisabled = Color(0xFF3D465E);
 
   // ─── Light Theme ───
-  static const Color lightBg = Color(0xFFF5F7FA);
-  static const Color lightSurface = Color(0xFFFFFFFF);
+  // Refined for prolonged daily use:
+  //   • bg: тёпло-серый (а не голубоватый) — меньше нагружает глаза;
+  //   • surface/card: чуть мягче белого, чтобы не было бликов;
+  //   • text primary: мягкий чарко вместо почти-чёрного — снижает контраст,
+  //     но WCAG AA на белом всё ещё держится (≈12:1).
+  static const Color lightBg = Color(0xFFF6F5F2);          // warm off-white
+  static const Color lightSurface = Color(0xFFFCFBF8);     // soft surface
   static const Color lightCard = Color(0xFFFFFFFF);
-  static const Color lightCardHover = Color(0xFFF0F2F5);
-  static const Color lightBorder = Color(0xFFE2E6EF);
-  static const Color lightDivider = Color(0xFFEDF0F5);
+  static const Color lightCardHover = Color(0xFFF1EFEA);
+  static const Color lightBorder = Color(0xFFE6E2D9);      // warm border
+  static const Color lightDivider = Color(0xFFEFECE5);
 
-  static const Color lightTextPrimary = Color(0xFF0F1729);
-  static const Color lightTextSecondary = Color(0xFF5A6480);
-  static const Color lightTextTertiary = Color(0xFF8B95B0);
-  static const Color lightTextDisabled = Color(0xFFBCC4D6);
+  static const Color lightTextPrimary = Color(0xFF1F2733);   // soft charcoal
+  static const Color lightTextSecondary = Color(0xFF5C6675); // calm mid
+  static const Color lightTextTertiary = Color(0xFF8C95A4);
+  static const Color lightTextDisabled = Color(0xFFBFC6D2);
 
   // ─── Glassmorphism ───
   static const Color glassWhite = Color(0x1AFFFFFF);

@@ -2,6 +2,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import 'package:ethnocount/domain/entities/notification.dart';
 import 'package:ethnocount/domain/repositories/notification_repository.dart';
+import 'package:ethnocount/core/services/notification_fx_service.dart';
 
 // ─── Events ───
 
@@ -72,9 +73,13 @@ class NotificationState extends Equatable {
 
 class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
   final NotificationRepository _repository;
+  final NotificationFxService? _fx;
 
-  NotificationBloc({required NotificationRepository repository})
-      : _repository = repository,
+  NotificationBloc({
+    required NotificationRepository repository,
+    NotificationFxService? fx,
+  })  : _repository = repository,
+        _fx = fx,
         super(const NotificationState()) {
     on<NotificationsLoadRequested>(_onLoad);
     on<NotificationMarkAsRead>(_onMarkRead);
@@ -87,6 +92,10 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
   ) async {
     emit(state.copyWith(status: NotificationBlocStatus.loading));
 
+    // Сбрасываем "виденные" при новой подписке (например, смена пользователя
+    // или ассайнмент филиалов изменился) — иначе fx сработал бы лишний раз.
+    _fx?.reset();
+
     await emit.forEach(
       _repository.watchNotifications(
         branchIds: event.branchIds,
@@ -94,6 +103,11 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
       ),
       onData: (notifications) {
         final unread = notifications.where((n) => !n.isRead).length;
+        // Звук + вибрация на новые непрочитанные уведомления.
+        // Первая порция после prime() пройдёт молча.
+        _fx?.checkAndPlay(
+          notifications.where((n) => !n.isRead).map((n) => n.id),
+        );
         return state.copyWith(
           status: NotificationBlocStatus.loaded,
           notifications: notifications,

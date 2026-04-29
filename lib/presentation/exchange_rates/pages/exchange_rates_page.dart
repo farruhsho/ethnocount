@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
-import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/utils/currency_utils.dart';
 import 'package:ethnocount/domain/entities/exchange_rate.dart';
@@ -90,9 +89,7 @@ class _ExchangeRatesPageState extends State<ExchangeRatesPage> {
                     : state.rates.isEmpty
                         ? const Center(
                             child: Text('Нет данных о курсах. Установите первый курс.'))
-                        : context.isDesktop
-                            ? _DesktopRatesGrid(rates: state.rates)
-                            : _MobileRatesList(rates: state.rates),
+                        : _RatesView(rates: state.rates),
               ),
             ],
           ),
@@ -250,24 +247,25 @@ class _FilterBar extends StatelessWidget {
   }
 }
 
-// ─── Desktop Grid ───
+// ─── Unified responsive view (desktop + tablet + phone) ───
+//
+// Структура одинакова на всех экранах: «Текущие курсы» сверху —
+// сетка адаптивных карточек, «История» — список карточек. На широких
+// экранах карточки выстраиваются в несколько колонок, на узких — в одну.
 
-class _DesktopRatesGrid extends StatelessWidget {
+class _RatesView extends StatelessWidget {
   final List<ExchangeRate> rates;
-  const _DesktopRatesGrid({required this.rates});
+  const _RatesView({required this.rates});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final dateFmt = DateFormat('dd.MM.yyyy HH:mm');
 
-    // Group by unique pair and show latest
     final latestByPair = <String, ExchangeRate>{};
     for (final r in rates) {
       final key = '${r.fromCurrency}/${r.toCurrency}';
-      if (!latestByPair.containsKey(key)) {
-        latestByPair[key] = r;
-      }
+      latestByPair.putIfAbsent(key, () => r);
     }
 
     return SingleChildScrollView(
@@ -275,141 +273,201 @@ class _DesktopRatesGrid extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Текущие курсы', style: theme.textTheme.titleMedium),
+          Text('Текущие курсы',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: AppSpacing.md),
-          _CurrentRatesCards(latestByPair: latestByPair, dateFmt: dateFmt),
+          _ResponsiveCardGrid(
+            minCardWidth: 220,
+            children: [
+              for (final entry in latestByPair.entries)
+                _CurrentRateCard(rate: entry.value, dateFmt: dateFmt),
+            ],
+          ),
           const SizedBox(height: AppSpacing.xl),
-          Text('История изменений', style: theme.textTheme.titleMedium),
+          Text('История изменений',
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700)),
           const SizedBox(height: AppSpacing.md),
-          _RatesDataTable(rates: rates, dateFmt: dateFmt),
+          _ResponsiveCardGrid(
+            minCardWidth: 280,
+            children: [
+              for (final r in rates) _HistoryRateCard(rate: r, dateFmt: dateFmt),
+            ],
+          ),
         ],
       ),
     );
   }
 }
 
-class _CurrentRatesCards extends StatelessWidget {
-  final Map<String, ExchangeRate> latestByPair;
-  final DateFormat dateFmt;
-
-  const _CurrentRatesCards({required this.latestByPair, required this.dateFmt});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
-    return Wrap(
-      spacing: AppSpacing.md,
-      runSpacing: AppSpacing.md,
-      children: latestByPair.entries.map((e) {
-        final rate = e.value;
-        return SizedBox(
-          width: 220,
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(
-                        '${CurrencyUtils.flag(rate.fromCurrency)} → ${CurrencyUtils.flag(rate.toCurrency)}',
-                        style: const TextStyle(fontSize: 18),
-                      ),
-                      const SizedBox(width: AppSpacing.xs),
-                      Expanded(
-                        child: Text(e.key,
-                            style: theme.textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    rate.rate.toStringAsFixed(4),
-                    style: theme.textTheme.headlineSmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    dateFmt.format(rate.effectiveAt),
-                    style: theme.textTheme.bodySmall
-                        ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _RatesDataTable extends StatelessWidget {
-  final List<ExchangeRate> rates;
-  final DateFormat dateFmt;
-
-  const _RatesDataTable({required this.rates, required this.dateFmt});
+/// Универсальная сетка: внутри Wrap, ширина каждой карточки считается из
+/// доступной ширины так, чтобы поместилось максимум целых колонок при
+/// `minCardWidth`. Высота — по содержимому.
+class _ResponsiveCardGrid extends StatelessWidget {
+  const _ResponsiveCardGrid({
+    required this.children,
+    required this.minCardWidth,
+  });
+  final List<Widget> children;
+  final double minCardWidth;
+  static const double spacing = AppSpacing.md;
 
   @override
   Widget build(BuildContext context) {
-    return DataTable(
-      columns: const [
-        DataColumn(label: Text('Пара')),
-        DataColumn(label: Text('Курс'), numeric: true),
-        DataColumn(label: Text('Обратный'), numeric: true),
-        DataColumn(label: Text('Дата')),
-        DataColumn(label: Text('Установил')),
-      ],
-      rows: rates.map((r) {
-        return DataRow(cells: [
-          DataCell(Text('${r.fromCurrency}/${r.toCurrency}')),
-          DataCell(Text(r.rate.toStringAsFixed(4))),
-          DataCell(Text(r.inverseRate.toStringAsFixed(4))),
-          DataCell(Text(dateFmt.format(r.effectiveAt))),
-          DataCell(Text(r.setBy)),
-        ]);
-      }).toList(),
-    );
-  }
-}
-
-// ─── Mobile List ───
-
-class _MobileRatesList extends StatelessWidget {
-  final List<ExchangeRate> rates;
-  const _MobileRatesList({required this.rates});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final dateFmt = DateFormat('dd.MM.yyyy HH:mm');
-
-    return ListView.separated(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      itemCount: rates.length,
-      separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
-      itemBuilder: (context, index) {
-        final r = rates[index];
-        return Card(
-          child: ListTile(
-            leading: Icon(Icons.currency_exchange, color: theme.colorScheme.primary),
-            title: Text('${r.fromCurrency}/${r.toCurrency}'),
-            subtitle: Text(dateFmt.format(r.effectiveAt)),
-            trailing: Text(
-              r.rate.toStringAsFixed(4),
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: theme.colorScheme.primary,
-              ),
-            ),
-          ),
+    return LayoutBuilder(
+      builder: (ctx, c) {
+        final cols = (c.maxWidth / minCardWidth).floor().clamp(1, 6);
+        final cardWidth =
+            (c.maxWidth - (cols - 1) * spacing) / cols;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final child in children)
+              SizedBox(width: cardWidth, child: child),
+          ],
         );
       },
+    );
+  }
+}
+
+class _CurrentRateCard extends StatelessWidget {
+  const _CurrentRateCard({required this.rate, required this.dateFmt});
+  final ExchangeRate rate;
+  final DateFormat dateFmt;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  '${CurrencyUtils.flag(rate.fromCurrency)} → ${CurrencyUtils.flag(rate.toCurrency)}',
+                  style: const TextStyle(fontSize: 18),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    '${rate.fromCurrency}/${rate.toCurrency}',
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                rate.rate.toStringAsFixed(4),
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              dateFmt.format(rate.effectiveAt),
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HistoryRateCard extends StatelessWidget {
+  const _HistoryRateCard({required this.rate, required this.dateFmt});
+  final ExchangeRate rate;
+  final DateFormat dateFmt;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final secondary = theme.colorScheme.onSurfaceVariant;
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        border: Border.all(
+            color: theme.colorScheme.outline.withValues(alpha: 0.18)),
+      ),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.currency_exchange,
+                  size: 16, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${rate.fromCurrency} / ${rate.toCurrency}',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 14),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(
+                rate.rate.toStringAsFixed(4),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.bold,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Icon(Icons.swap_vert_rounded, size: 12, color: secondary),
+              const SizedBox(width: 4),
+              Text('Обратный: ${rate.inverseRate.toStringAsFixed(4)}',
+                  style: TextStyle(fontSize: 11, color: secondary)),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Row(
+            children: [
+              Icon(Icons.schedule_rounded, size: 12, color: secondary),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(dateFmt.format(rate.effectiveAt),
+                    style: TextStyle(fontSize: 11, color: secondary)),
+              ),
+            ],
+          ),
+          if (rate.setBy.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                Icon(Icons.person_outline, size: 12, color: secondary),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text('Установил: ${rate.setBy}',
+                      style: TextStyle(fontSize: 11, color: secondary),
+                      overflow: TextOverflow.ellipsis),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
     );
   }
 }

@@ -72,10 +72,14 @@ abstract class TransferRepository {
   /// Pay out one tranche of a confirmed transfer. The transfer flips to
   /// `issued` only when cumulative tranches reach the credited amount.
   /// Returns `true` if this tranche fully closed the transfer.
+  ///
+  /// [fromAccountId] — счёт получающего филиала (карта/наличные), с которого
+  /// фактически выданы деньги. Сохраняется в истории выдач.
   Future<Either<Failure, bool>> issuePartialTransfer({
     required String transferId,
     required double amount,
     String? note,
+    String? fromAccountId,
   });
 
   /// Realtime stream of payout tranches for a single transfer.

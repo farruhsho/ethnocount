@@ -14,6 +14,7 @@ import 'package:ethnocount/domain/entities/transfer.dart';
 import 'package:ethnocount/domain/entities/user.dart';
 import 'package:ethnocount/data/datasources/remote/user_remote_ds.dart';
 import 'package:ethnocount/domain/repositories/branch_repository.dart';
+import 'package:ethnocount/domain/repositories/transfer_repository.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
@@ -260,16 +261,18 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
       FinancialColumns.text(title: 'Конвертировано', field: 'convertedDisplay', width: 100),
       FinancialColumns.text(title: 'Валюта получателя', field: 'toCurrency', width: 75),
       FinancialColumns.text(title: 'Комиссия', field: 'commissionDisplay', width: 90),
-      FinancialColumns.text(title: 'Счёт получателя', field: 'toAccount', width: 100),
+      FinancialColumns.text(title: 'Счёт выдачи', field: 'toAccount', width: 140),
       FinancialColumns.status(title: 'Статус', field: 'status', width: 80),
       FinancialColumns.text(title: 'Создал', field: 'createdBy', width: 100),
       FinancialColumns.text(title: 'Принял', field: 'confirmedBy', width: 100),
     ];
 
-    return FutureBuilder<Map<String, BranchAccount>>(
-      future: _loadAllAccounts(transfers),
-      builder: (ctx, accSnap) {
-        final accMap = accSnap.data ?? {};
+    return FutureBuilder<_TransfersGridContext>(
+      future: _loadGridContext(transfers),
+      builder: (ctx, snap) {
+        final accMap = snap.data?.accountsById ?? const <String, BranchAccount>{};
+        final issuanceAccountIds =
+            snap.data?.payoutAccountIdsByTransferId ?? const <String, List<String>>{};
         final rows = transfers.map((t) {
           final sentCur = t.currency;
           final recvCur = t.toCurrency ?? t.currency;
@@ -281,7 +284,19 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
           final commissionText = t.commission > 0
               ? '${t.commission.formatCurrencyNoDecimals()} ${t.commissionCurrency}'
               : '—';
+          // «Счёт выдачи» — реальная карта/касса, с которой получателя
+          // выдали деньги. Берём из transfer_issuances; если выдачи ещё
+          // не было — fallback на запланированный toAccountId.
+          final paidFromIds = issuanceAccountIds[t.id] ?? const <String>[];
+          final paidFromNames = paidFromIds
+              .map((id) => accMap[id]?.name)
+              .whereType<String>()
+              .toSet()
+              .toList();
           final toAcc = t.toAccountId.isNotEmpty ? accMap[t.toAccountId] : null;
+          final toAccountDisplay = paidFromNames.isNotEmpty
+              ? paidFromNames.join(', ')
+              : (toAcc?.name ?? '—');
 
           return TrinaRow(cells: {
             'code': TrinaCell(value: t.transactionCode ?? t.id.substring(0, 8)),
@@ -297,7 +312,7 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
             'convertedDisplay': TrinaCell(value: recvText),
             'toCurrency': TrinaCell(value: recvCur),
             'commissionDisplay': TrinaCell(value: commissionText),
-            'toAccount': TrinaCell(value: toAcc?.name ?? '—'),
+            'toAccount': TrinaCell(value: toAccountDisplay),
             'status': TrinaCell(value: t.isIssued ? 'issued' : 'confirmed'),
             'createdBy': TrinaCell(value: _userDisplay(userNames, t.createdBy)),
             'confirmedBy': TrinaCell(value: t.confirmedBy != null ? _userDisplay(userNames, t.confirmedBy!) : '—'),
@@ -332,20 +347,58 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
     );
   }
 
-  Future<Map<String, BranchAccount>> _loadAllAccounts(List<Transfer> transfers) async {
-    final repo = sl<BranchRepository>();
-    final accMap = <String, BranchAccount>{};
+  /// Загружает справочник счетов и сопоставление transfer → список счетов,
+  /// с которых деньги реально вышли (из `transfer_issuances`). Нужно, чтобы
+  /// в колонке «Счёт выдачи» показывать действительно использованные
+  /// карты/кассы, а не только запланированный toAccountId.
+  Future<_TransfersGridContext> _loadGridContext(
+      List<Transfer> transfers) async {
+    final branchRepo = sl<BranchRepository>();
+    final transferRepo = sl<TransferRepository>();
+
+    final payoutByTransfer = <String, List<String>>{};
+    for (final t in transfers) {
+      if (!(t.isIssued || t.issuedAmount > 0)) continue;
+      try {
+        final issuances = await transferRepo.watchIssuances(t.id).first;
+        final ids = issuances
+            .map((i) => i.fromAccountId)
+            .whereType<String>()
+            .where((id) => id.isNotEmpty)
+            .toList();
+        if (ids.isNotEmpty) payoutByTransfer[t.id] = ids;
+      } catch (_) {/* пропускаем — fallback на toAccountId */}
+    }
+
     final ids = <String>{};
     for (final t in transfers) {
       if (t.fromAccountId.isNotEmpty) ids.add(t.fromAccountId);
       if (t.toAccountId.isNotEmpty) ids.add(t.toAccountId);
     }
+    for (final list in payoutByTransfer.values) {
+      ids.addAll(list);
+    }
+
+    final accMap = <String, BranchAccount>{};
     for (final id in ids) {
-      final r = await repo.getBranchAccount(id);
+      final r = await branchRepo.getBranchAccount(id);
       r.fold((_) {}, (a) => accMap[id] = a);
     }
-    return accMap;
+
+    return _TransfersGridContext(
+      accountsById: accMap,
+      payoutAccountIdsByTransferId: payoutByTransfer,
+    );
   }
+}
+
+class _TransfersGridContext {
+  const _TransfersGridContext({
+    required this.accountsById,
+    required this.payoutAccountIdsByTransferId,
+  });
+  final Map<String, BranchAccount> accountsById;
+  final Map<String, List<String>> payoutAccountIdsByTransferId;
 }
 
 class _AcceptedTransferTile extends StatelessWidget {

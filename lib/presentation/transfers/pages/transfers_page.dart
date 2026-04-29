@@ -632,13 +632,18 @@ class _TransfersPageState extends State<TransfersPage> {
                   context.read<TransferBloc>().add(TransferIssueRequested(t.id));
                 },
                 onIssuePartial: () async {
-                  final result = await _showPartialIssueDialog(innerCtx, t);
+                  final result = await _showPartialIssueDialog(
+                    innerCtx,
+                    t,
+                    payoutAccounts: branchAccounts[t.toBranchId] ?? const [],
+                  );
                   if (result != null && context.mounted) {
                     Navigator.of(innerCtx).pop();
                     context.read<TransferBloc>().add(TransferIssuePartialRequested(
                           transferId: t.id,
                           amount: result.amount,
                           note: result.note,
+                          fromAccountId: result.fromAccountId,
                         ));
                   }
                 },
@@ -696,13 +701,18 @@ class _TransfersPageState extends State<TransfersPage> {
             context.read<TransferBloc>().add(TransferIssueRequested(t.id));
           },
           onIssuePartial: () async {
-            final result = await _showPartialIssueDialog(ctx, t);
+            final result = await _showPartialIssueDialog(
+              ctx,
+              t,
+              payoutAccounts: branchAccounts[t.toBranchId] ?? const [],
+            );
             if (result != null && context.mounted) {
               Navigator.of(ctx).pop();
               context.read<TransferBloc>().add(TransferIssuePartialRequested(
                     transferId: t.id,
                     amount: result.amount,
                     note: result.note,
+                    fromAccountId: result.fromAccountId,
                   ));
             }
           },
@@ -725,8 +735,9 @@ class _TransfersPageState extends State<TransfersPage> {
 
   Future<_PartialIssueResult?> _showPartialIssueDialog(
     BuildContext sheetContext,
-    Transfer t,
-  ) async {
+    Transfer t, {
+    List<BranchAccount> payoutAccounts = const [],
+  }) async {
     final repo = sl<TransferRepository>();
     // Refresh transfer just before showing the dialog so the remaining
     // amount reflects any tranches issued by other users since this list
@@ -752,6 +763,7 @@ class _TransfersPageState extends State<TransfersPage> {
         currency: cur,
         alreadyIssued: actual.issuedAmount,
         totalAmount: actual.convertedAmount,
+        payoutAccounts: payoutAccounts,
       ),
     );
   }
@@ -1347,6 +1359,7 @@ class _TransferDetailContent extends StatelessWidget {
           _PayoutProgressBlock(
             transfer: t,
             userResolver: _userDisplay,
+            accountResolver: _accountName,
           ),
         ],
         if (t.commission > 0) ...[
@@ -2113,10 +2126,12 @@ class _PayoutProgressBlock extends StatelessWidget {
   const _PayoutProgressBlock({
     required this.transfer,
     required this.userResolver,
+    this.accountResolver,
   });
 
   final Transfer transfer;
   final String Function(String?) userResolver;
+  final String Function(String)? accountResolver;
 
   @override
   Widget build(BuildContext context) {
@@ -2244,6 +2259,28 @@ class _PayoutProgressBlock extends StatelessWidget {
                                   '   •   ${userResolver(list[i].issuedBy)}',
                                   style: const TextStyle(fontSize: 12, height: 1.35),
                                 ),
+                                if (list[i].fromAccountId != null &&
+                                    accountResolver != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Row(
+                                      children: [
+                                        Icon(Icons.credit_card_outlined,
+                                            size: 12, color: secondary),
+                                        const SizedBox(width: 4),
+                                        Flexible(
+                                          child: Text(
+                                            'Со счёта: ${accountResolver!(list[i].fromAccountId!)}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: secondary,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 if (list[i].note != null && list[i].note!.trim().isNotEmpty)
                                   Padding(
                                     padding: const EdgeInsets.only(top: 2),
@@ -2415,7 +2452,8 @@ class _CardPayoutProgress extends StatelessWidget {
 class _PartialIssueResult {
   final double amount;
   final String? note;
-  const _PartialIssueResult(this.amount, this.note);
+  final String? fromAccountId;
+  const _PartialIssueResult(this.amount, this.note, this.fromAccountId);
 }
 
 class _PartialIssueDialog extends StatefulWidget {
@@ -2425,6 +2463,7 @@ class _PartialIssueDialog extends StatefulWidget {
     required this.currency,
     required this.alreadyIssued,
     required this.totalAmount,
+    this.payoutAccounts = const [],
   });
 
   final String transactionCode;
@@ -2432,6 +2471,9 @@ class _PartialIssueDialog extends StatefulWidget {
   final String currency;
   final double alreadyIssued;
   final double totalAmount;
+
+  /// Счета получающего филиала, из которых можно выдать (карта/наличные).
+  final List<BranchAccount> payoutAccounts;
 
   @override
   State<_PartialIssueDialog> createState() => _PartialIssueDialogState();
@@ -2442,6 +2484,18 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
   final _amountCtrl = TextEditingController();
   final _noteCtrl = TextEditingController();
   bool _submitting = false;
+  String? _accountId;
+
+  @override
+  void initState() {
+    super.initState();
+    // Преселект: первый счёт нужной валюты, иначе первый из списка.
+    final list = widget.payoutAccounts;
+    if (list.isNotEmpty) {
+      final match = list.where((a) => a.currency == widget.currency);
+      _accountId = (match.isNotEmpty ? match.first : list.first).id;
+    }
+  }
 
   void _quickAmount(double v) {
     _amountCtrl.text = v.toStringAsFixed(2);
@@ -2546,6 +2600,33 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),
+              if (widget.payoutAccounts.isNotEmpty) ...[
+                DropdownButtonFormField<String>(
+                  initialValue: _accountId,
+                  decoration: const InputDecoration(
+                    labelText: 'Счёт выдачи (карта/касса) *',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.credit_card_outlined),
+                  ),
+                  items: [
+                    for (final a in widget.payoutAccounts)
+                      DropdownMenuItem(
+                        value: a.id,
+                        child: Text(
+                          '${a.name} • ${a.currency}'
+                          '${a.cardLast4 != null && a.cardLast4!.isNotEmpty ? ' • •••${a.cardLast4}' : ''}',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() => _accountId = v),
+                  validator: (v) =>
+                      (v == null || v.isEmpty) ? 'Выберите счёт' : null,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+              ],
               TextFormField(
                 controller: _noteCtrl,
                 decoration: const InputDecoration(
@@ -2577,6 +2658,7 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
                   Navigator.of(context).pop(_PartialIssueResult(
                     amount,
                     note.isEmpty ? null : note,
+                    _accountId,
                   ));
                 },
           style: FilledButton.styleFrom(backgroundColor: Colors.teal),

@@ -129,6 +129,7 @@ class AuthRemoteDataSource {
 
   SystemRole _parseRole(dynamic role) {
     if (role == 'creator' || role == 'admin') return SystemRole.creator;
+    if (role == 'director') return SystemRole.director;
     return SystemRole.accountant;
   }
 

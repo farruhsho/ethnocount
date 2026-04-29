@@ -211,6 +211,7 @@ class _MobileLayout extends StatelessWidget {
       body: loading
           ? const Center(child: CircularProgressIndicator())
           : ListView.builder(
+              padding: const EdgeInsets.only(bottom: 80),
               itemCount: branches.length,
               itemBuilder: (context, i) {
                 final branch = branches[i];
@@ -225,11 +226,162 @@ class _MobileLayout extends StatelessWidget {
                           fontWeight: FontWeight.w700),
                     ),
                   ),
-                  title: Text(branch.name),
+                  title: Text(branch.name,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
                   subtitle: Text(branch.baseCurrency),
                   trailing: const Icon(Icons.chevron_right_rounded),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => _BranchDetailScreen(
+                          branch: branch,
+                          canManage: canManage,
+                        ),
+                      ),
+                    );
+                  },
                 );
               },
+            ),
+    );
+  }
+}
+
+/// Mobile: full-screen branch detail with accounts. Reuses the same flexible
+/// `_AccountCard` grid as desktop so creator gets edit/archive actions and
+/// accountant sees full card data without горизонтального скролла таблицы.
+class _BranchDetailScreen extends StatefulWidget {
+  const _BranchDetailScreen({required this.branch, required this.canManage});
+  final Branch branch;
+  final bool canManage;
+
+  @override
+  State<_BranchDetailScreen> createState() => _BranchDetailScreenState();
+}
+
+class _BranchDetailScreenState extends State<_BranchDetailScreen> {
+  final _repo = sl<BranchRepository>();
+  final _ledgerDs = sl<LedgerRemoteDataSource>();
+  List<BranchAccount> _accounts = [];
+  Map<String, double> _balances = {};
+  StreamSubscription<List<BranchAccount>>? _accSub;
+  StreamSubscription<Map<String, double>>? _balSub;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _accSub = _repo.watchBranchAccounts(widget.branch.id).listen((accs) {
+      if (mounted) setState(() {
+        _accounts = accs;
+        _loading = false;
+      });
+    });
+    _balSub = _ledgerDs.watchBranchBalances(widget.branch.id).listen((bals) {
+      if (mounted) setState(() => _balances = bals);
+    });
+  }
+
+  @override
+  void dispose() {
+    _accSub?.cancel();
+    _balSub?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final branch = widget.branch;
+    final canManage = widget.canManage;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(branch.name, overflow: TextOverflow.ellipsis),
+        actions: [
+          if (canManage)
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: () => _showEditBranchDialog(context, branch),
+              tooltip: 'Изменить филиал',
+            ),
+        ],
+      ),
+      floatingActionButton: canManage
+          ? FloatingActionButton.extended(
+              onPressed: () => _showAddAccountDialog(context, branch),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Счёт'),
+            )
+          : null,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md, AppSpacing.md, AppSpacing.md, 80),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Базовая валюта: ${branch.baseCurrency}',
+                      style: context.textTheme.bodySmall?.copyWith(
+                        color: context.isDark
+                            ? AppColors.darkTextSecondary
+                            : AppColors.lightTextSecondary,
+                      )),
+                  const SizedBox(height: AppSpacing.md),
+                  Text('Счета филиала',
+                      style: context.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  const SizedBox(height: AppSpacing.sm),
+                  if (_accounts.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 40),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.account_balance_outlined,
+                                size: 48,
+                                color: context.isDark
+                                    ? AppColors.darkTextSecondary
+                                    : AppColors.lightTextSecondary),
+                            const SizedBox(height: AppSpacing.sm),
+                            const Text('Нет счетов'),
+                          ],
+                        ),
+                      ),
+                    )
+                  else
+                    LayoutBuilder(builder: (ctx, c) {
+                      // На телефоне (узкое окно) — одна колонка во всю ширину.
+                      // На планшете — 2 колонки.
+                      const target = 320.0;
+                      final cols =
+                          (c.maxWidth / target).floor().clamp(1, 3);
+                      final cardWidth = (c.maxWidth -
+                              (cols - 1) * AppSpacing.md) /
+                          cols;
+                      return Wrap(
+                        spacing: AppSpacing.md,
+                        runSpacing: AppSpacing.md,
+                        children: [
+                          for (final acc in _accounts)
+                            SizedBox(
+                              width: cardWidth,
+                              child: _AccountCard(
+                                account: acc,
+                                balance: _balances[acc.id] ?? 0.0,
+                                canManage: canManage,
+                                onEdit: () => _showEditAccountDialog(
+                                    context, branch, acc),
+                                onArchive: () =>
+                                    _confirmArchiveAccount(context, acc),
+                              ),
+                            ),
+                        ],
+                      );
+                    }),
+                ],
+              ),
             ),
     );
   }
@@ -421,7 +573,7 @@ class _BranchDetail extends StatelessWidget {
             const Divider(),
             const SizedBox(height: AppSpacing.md),
 
-            // Accounts table
+            // Accounts grid — flexible cards with full details
             Text('Счета филиала',
                 style: context.textTheme.titleMedium
                     ?.copyWith(fontWeight: FontWeight.w600)),
@@ -442,64 +594,39 @@ class _BranchDetail extends StatelessWidget {
                         ],
                       ),
                     )
-                  : SingleChildScrollView(
-                      child: DataTable(
-                        columnSpacing: 24,
-                        headingRowColor: WidgetStateProperty.all(
-                          Theme.of(context)
-                              .colorScheme
-                              .surfaceContainerHighest,
-                        ),
-                        columns: const [
-                          DataColumn(label: Text('Название')),
-                          DataColumn(label: Text('Тип')),
-                          DataColumn(label: Text('Валюта')),
-                          DataColumn(label: Text('Баланс')),
-                          DataColumn(label: Text('Статус')),
-                        ],
-                        rows: accounts.map((acc) {
-                          final balance = balances[acc.id] ?? 0.0;
-                          final balColor = balance > 0 ? Colors.green : (balance < 0 ? Colors.red : null);
-                          return DataRow(cells: [
-                            DataCell(Text(acc.name)),
-                            DataCell(_AccountTypeBadge(type: acc.type)),
-                            DataCell(Text(acc.currency)),
-                            DataCell(
-                              Text(
-                                '${balance.toStringAsFixed(2)} ${acc.currency}',
-                                style: balColor != null
-                                    ? TextStyle(color: balColor, fontWeight: FontWeight.w600)
-                                    : null,
-                              ),
-                            ),
-                            DataCell(
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    acc.isActive ? 'Активен' : 'Неактивен',
-                                    style: TextStyle(
-                                      color: acc.isActive
-                                          ? Colors.green
-                                          : Colors.red,
-                                      fontWeight: FontWeight.w500,
-                                    ),
+                  : LayoutBuilder(
+                      builder: (ctx, constraints) {
+                        // Карточки шириной ~340px; помещаем по ширине,
+                        // оставшееся пространство равномерно распределяет Wrap.
+                        const target = 340.0;
+                        final cols = (constraints.maxWidth / target)
+                            .floor()
+                            .clamp(1, 4);
+                        final cardWidth =
+                            (constraints.maxWidth - (cols - 1) * AppSpacing.md) /
+                                cols;
+                        return SingleChildScrollView(
+                          child: Wrap(
+                            spacing: AppSpacing.md,
+                            runSpacing: AppSpacing.md,
+                            children: [
+                              for (final acc in accounts)
+                                SizedBox(
+                                  width: cardWidth,
+                                  child: _AccountCard(
+                                    account: acc,
+                                    balance: balances[acc.id] ?? 0.0,
+                                    canManage: canManage,
+                                    onEdit: () => _showEditAccountDialog(
+                                        context, branch, acc),
+                                    onArchive: () => _confirmArchiveAccount(
+                                        context, acc),
                                   ),
-                                  if (canManage) ...[
-                                    const SizedBox(width: 8),
-                                    IconButton(
-                                      icon: const Icon(Icons.edit_outlined, size: 18),
-                                      onPressed: () =>
-                                          _showEditAccountDialog(context, branch, acc),
-                                      tooltip: 'Изменить счёт',
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ]);
-                        }).toList(),
-                      ),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
                     ),
             ),
           ],
@@ -507,6 +634,316 @@ class _BranchDetail extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Гибкая карточка счёта: вся информация про карту (номер, держатель, банк,
+/// expiry, заметки) на одном экране. Ширина задаётся снаружи (через Wrap +
+/// LayoutBuilder), высота — по содержимому. Бухгалтер видит только данные;
+/// у creator справа в шапке появляются кнопки edit / archive.
+class _AccountCard extends StatelessWidget {
+  const _AccountCard({
+    required this.account,
+    required this.balance,
+    required this.canManage,
+    required this.onEdit,
+    required this.onArchive,
+  });
+
+  final BranchAccount account;
+  final double balance;
+  final bool canManage;
+  final VoidCallback onEdit;
+  final VoidCallback onArchive;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final secondary = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.lightTextSecondary;
+    final balColor = balance > 0
+        ? Colors.green
+        : (balance < 0 ? Colors.red : null);
+
+    final cardNumberLine = account.cardMasked ??
+        (account.cardNumber != null && account.cardNumber!.isNotEmpty
+            ? account.cardNumber
+            : null);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.18),
+        ),
+      ),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // Header: name + type badge + actions
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  account.name,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w700),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              _AccountTypeBadge(type: account.type),
+              if (canManage) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  onPressed: onEdit,
+                  tooltip: 'Изменить',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
+                IconButton(
+                  icon: Icon(
+                    account.archivedAt != null
+                        ? Icons.unarchive_outlined
+                        : Icons.archive_outlined,
+                    size: 18,
+                  ),
+                  color: account.archivedAt != null ? Colors.teal : Colors.red,
+                  onPressed: onArchive,
+                  tooltip:
+                      account.archivedAt != null ? 'Восстановить' : 'Удалить',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+
+          // Balance + currency + status
+          Row(
+            children: [
+              Text(
+                '${balance.toStringAsFixed(2)} ${account.currency}',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: balColor ?? Theme.of(context).colorScheme.onSurface,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: (account.isActive ? Colors.green : Colors.red)
+                      .withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  account.isActive ? 'Активен' : 'Неактивен',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: account.isActive ? Colors.green : Colors.red,
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // Card-specific fields (if present)
+          if (cardNumberLine != null ||
+              account.cardholderName != null ||
+              account.bankName != null ||
+              account.expiryFormatted != null) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Container(
+              padding: const EdgeInsets.all(AppSpacing.sm),
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .surfaceContainerHighest
+                    .withValues(alpha: 0.5),
+                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (cardNumberLine != null)
+                    _AccountField(
+                      icon: Icons.credit_card_outlined,
+                      label: 'Номер карты',
+                      value: cardNumberLine,
+                      mono: true,
+                    ),
+                  if (account.cardholderName != null &&
+                      account.cardholderName!.isNotEmpty)
+                    _AccountField(
+                      icon: Icons.person_outline,
+                      label: 'Держатель',
+                      value: account.cardholderName!,
+                    ),
+                  if (account.bankName != null &&
+                      account.bankName!.isNotEmpty)
+                    _AccountField(
+                      icon: Icons.account_balance_outlined,
+                      label: 'Банк',
+                      value: account.bankName!,
+                    ),
+                  if (account.expiryFormatted != null)
+                    _AccountField(
+                      icon: Icons.calendar_today_outlined,
+                      label: 'Срок',
+                      value: account.expiryFormatted!,
+                    ),
+                ],
+              ),
+            ),
+          ],
+
+          if (account.notes != null && account.notes!.trim().isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.notes_rounded, size: 14, color: secondary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    account.notes!.trim(),
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: secondary,
+                        fontStyle: FontStyle.italic,
+                        height: 1.35),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _AccountField extends StatelessWidget {
+  const _AccountField({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.mono = false,
+  });
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool mono;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondary = context.isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.lightTextSecondary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: secondary),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 84,
+            child: Text(
+              label,
+              style: TextStyle(fontSize: 11, color: secondary),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                fontFamily: mono ? 'JetBrains Mono' : null,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _confirmArchiveAccount(
+    BuildContext context, BranchAccount account) async {
+  final isArchived = account.archivedAt != null;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (_) => AlertDialog(
+      title: Row(
+        children: [
+          Icon(
+            isArchived ? Icons.unarchive_outlined : Icons.warning_amber_rounded,
+            color: isArchived ? Colors.teal : Colors.red,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(isArchived ? 'Восстановить счёт?' : 'Удалить счёт?'),
+          ),
+        ],
+      ),
+      content: Text(isArchived
+          ? '${account.name} снова станет активным.'
+          : '${account.name} будет архивирован. Историю операций это не затронет, но новые проводки в этот счёт будут невозможны.'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Отмена'),
+        ),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: isArchived ? Colors.teal : Colors.red,
+          ),
+          onPressed: () => Navigator.of(context).pop(true),
+          icon: Icon(isArchived
+              ? Icons.unarchive_outlined
+              : Icons.delete_forever_rounded),
+          label: Text(isArchived ? 'Восстановить' : 'Удалить'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  final messenger = ScaffoldMessenger.of(context);
+  final result = await sl<BranchRepository>().archiveBranchAccount(
+    accountId: account.id,
+    archive: !isArchived,
+  );
+  if (!context.mounted) return;
+  result.fold(
+    (failure) => messenger.showSnackBar(
+      SnackBar(
+        content: Text(failure.message),
+        backgroundColor: Theme.of(context).colorScheme.error,
+        behavior: SnackBarBehavior.floating,
+      ),
+    ),
+    (_) => messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+            isArchived ? '${account.name} восстановлен' : '${account.name} удалён'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    ),
+  );
 }
 
 class _AccountTypeBadge extends StatelessWidget {

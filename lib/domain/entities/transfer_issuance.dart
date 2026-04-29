@@ -15,6 +15,10 @@ class TransferIssuance extends Equatable {
   final DateTime issuedAt;
   final String? note;
 
+  /// Счёт получающего филиала, с которого реально вышли деньги
+  /// (наличная касса / карта). null для старых записей до миграции 014.
+  final String? fromAccountId;
+
   const TransferIssuance({
     required this.id,
     required this.transferId,
@@ -23,6 +27,7 @@ class TransferIssuance extends Equatable {
     required this.issuedBy,
     required this.issuedAt,
     this.note,
+    this.fromAccountId,
   });
 
   factory TransferIssuance.fromMap(Map<String, dynamic> m) {
@@ -37,10 +42,19 @@ class TransferIssuance extends Equatable {
       note: (m['note'] is String && (m['note'] as String).trim().isNotEmpty)
           ? m['note'] as String
           : null,
+      fromAccountId: m['from_account_id']?.toString(),
     );
   }
 
   @override
-  List<Object?> get props =>
-      [id, transferId, amount, currency, issuedBy, issuedAt, note];
+  List<Object?> get props => [
+        id,
+        transferId,
+        amount,
+        currency,
+        issuedBy,
+        issuedAt,
+        note,
+        fromAccountId,
+      ];
 }

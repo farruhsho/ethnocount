@@ -44,8 +44,29 @@ class _UsersPageState extends State<UsersPage> {
     super.dispose();
   }
 
+  /// Director не должен видеть creators и других директоров — даже если RLS на
+  /// сервере вдруг пропустит их. Дублируем фильтр на клиенте.
+  List<AppUser> _visibleUsers(SystemRole? viewerRole, String? viewerId) {
+    if (viewerRole == SystemRole.director) {
+      return _users
+          .where((u) =>
+              u.id == viewerId || u.role == SystemRole.accountant)
+          .toList();
+    }
+    return _users;
+  }
+
   @override
   Widget build(BuildContext context) {
+    SystemRole? viewerRole;
+    String? viewerId;
+    try {
+      final authState = context.read<AuthBloc>().state;
+      viewerRole = authState.user?.role;
+      viewerId = authState.user?.id;
+    } catch (_) {}
+    final visible = _visibleUsers(viewerRole, viewerId);
+
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.lg),
       child: Column(
@@ -64,7 +85,7 @@ class _UsersPageState extends State<UsersPage> {
                           ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                     Text(
-                      '${_users.length} пользователей в системе',
+                      '${visible.length} пользователей в системе',
                       style: context.textTheme.bodySmall?.copyWith(
                         color: context.isDark
                             ? AppColors.darkTextSecondary
@@ -75,7 +96,7 @@ class _UsersPageState extends State<UsersPage> {
                 ),
               ),
               FilledButton.icon(
-                onPressed: () => _showCreateDialog(context),
+                onPressed: () => _showCreateDialog(context, viewerRole),
                 icon: const Icon(Icons.person_add_rounded),
                 label: const Text('Добавить пользователя'),
               ),
@@ -87,8 +108,11 @@ class _UsersPageState extends State<UsersPage> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _UsersTable(
-                    users: _users,
-                    onEdit: (user) => _showEditDialog(context, user),
+                    users: visible,
+                    viewerRole: viewerRole,
+                    viewerId: viewerId,
+                    onEdit: (user) => _showEditDialog(context, user, viewerRole),
+                    onDelete: (user) => _confirmDelete(context, user),
                   ),
           ),
         ],
@@ -96,25 +120,30 @@ class _UsersPageState extends State<UsersPage> {
     );
   }
 
-  void _showCreateDialog(BuildContext context) {
+  void _showCreateDialog(BuildContext context, SystemRole? viewerRole) {
     showDialog(
       context: context,
-      builder: (_) => _CreateUserDialog(onCreated: () {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Пользователь создан'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-      }),
+      builder: (_) => _CreateUserDialog(
+        viewerRole: viewerRole,
+        onCreated: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Пользователь создан'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        },
+      ),
     );
   }
 
-  void _showEditDialog(BuildContext context, AppUser user) {
+  void _showEditDialog(
+      BuildContext context, AppUser user, SystemRole? viewerRole) {
     showDialog(
       context: context,
       builder: (_) => _EditUserDialog(
         user: user,
+        viewerRole: viewerRole,
         onUpdated: () {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -126,19 +155,100 @@ class _UsersPageState extends State<UsersPage> {
       ),
     );
   }
+
+  Future<void> _confirmDelete(BuildContext context, AppUser user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            SizedBox(width: 8),
+            Expanded(child: Text('Удалить пользователя?')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${user.displayName} (${user.email}) будет удалён без возможности восстановления.',
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            const Text(
+              'Учётная запись и пароль будут стёрты. Войти больше нельзя.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(context).pop(true),
+            icon: const Icon(Icons.delete_forever_rounded),
+            label: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final errorColor = Theme.of(context).colorScheme.error;
+    final result = await sl<UserRemoteDataSource>().deleteUser(user.id);
+    if (result['success'] == true) {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('${user.displayName} удалён'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else {
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(result['error']?.toString() ?? 'Ошибка удаления'),
+          backgroundColor: errorColor,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
 }
 
 // ─── Users Table ───
 
 class _UsersTable extends StatelessWidget {
-  const _UsersTable({required this.users, required this.onEdit});
+  const _UsersTable({
+    required this.users,
+    required this.onEdit,
+    required this.onDelete,
+    this.viewerRole,
+    this.viewerId,
+  });
   final List<AppUser> users;
   final ValueChanged<AppUser> onEdit;
+  final ValueChanged<AppUser> onDelete;
+  final SystemRole? viewerRole;
+  final String? viewerId;
 
   static const _roleColors = {
     SystemRole.creator: Colors.purple,
+    SystemRole.director: Colors.orange,
     SystemRole.accountant: Colors.teal,
   };
+
+  bool _canDelete(AppUser user) {
+    if (viewerId == null || user.id == viewerId) return false;
+    if (user.email.toLowerCase() == 'farruh@gmail.com') return false;
+    if (viewerRole == SystemRole.creator) return true;
+    if (viewerRole == SystemRole.director) {
+      return user.role == SystemRole.accountant;
+    }
+    return false;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -238,10 +348,22 @@ class _UsersTable extends StatelessWidget {
                 ),
               ),
               DataCell(
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined, size: 18),
-                  onPressed: () => onEdit(user),
-                  tooltip: 'Редактировать',
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      onPressed: () => onEdit(user),
+                      tooltip: 'Редактировать',
+                    ),
+                    if (_canDelete(user))
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        color: Colors.red,
+                        onPressed: () => onDelete(user),
+                        tooltip: 'Удалить',
+                      ),
+                  ],
                 ),
               ),
             ]);
@@ -255,8 +377,9 @@ class _UsersTable extends StatelessWidget {
 // ─── Create User Dialog ───
 
 class _CreateUserDialog extends StatefulWidget {
-  const _CreateUserDialog({required this.onCreated});
+  const _CreateUserDialog({required this.onCreated, this.viewerRole});
   final VoidCallback onCreated;
+  final SystemRole? viewerRole;
 
   @override
   State<_CreateUserDialog> createState() => _CreateUserDialogState();
@@ -352,11 +475,19 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.admin_panel_settings_outlined),
                 ),
-                items: const [
-                  DropdownMenuItem(
-                      value: 'accountant', child: Text('Accountant — Бухгалтер')),
-                  DropdownMenuItem(
-                      value: 'creator', child: Text('Creator — Создатель')),
+                items: [
+                  const DropdownMenuItem(
+                      value: 'accountant',
+                      child: Text('Accountant — Бухгалтер')),
+                  // Director / Creator только для creator'а
+                  if (widget.viewerRole == SystemRole.creator) ...[
+                    const DropdownMenuItem(
+                        value: 'director',
+                        child: Text('Director — Директор')),
+                    const DropdownMenuItem(
+                        value: 'creator',
+                        child: Text('Creator — Создатель')),
+                  ],
                 ],
                 onChanged: (v) => setState(() => _role = v ?? 'accountant'),
               ),
@@ -424,9 +555,14 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
 // ─── Edit User Dialog ───
 
 class _EditUserDialog extends StatefulWidget {
-  const _EditUserDialog({required this.user, required this.onUpdated});
+  const _EditUserDialog({
+    required this.user,
+    required this.onUpdated,
+    this.viewerRole,
+  });
   final AppUser user;
   final VoidCallback onUpdated;
+  final SystemRole? viewerRole;
 
   @override
   State<_EditUserDialog> createState() => _EditUserDialogState();
@@ -460,15 +596,18 @@ class _EditUserDialogState extends State<_EditUserDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final isPrivileged = _role == 'admin' || _role == 'creator';
+    final isPrivileged =
+        _role == 'admin' || _role == 'creator' || _role == 'director';
 
-    // Check if current logged-in user can change branches
-    SystemRole? currentUserRole;
+    // Check if current logged-in user can change branches / role
+    SystemRole? currentUserRole = widget.viewerRole;
     try {
       final authState = context.read<AuthBloc>().state;
-      currentUserRole = authState.user?.role;
+      currentUserRole ??= authState.user?.role;
     } catch (_) {}
     final canEditBranches = currentUserRole?.canChangeBranch ?? false;
+    // Только creator может менять роль (повышать/понижать).
+    final canEditRole = currentUserRole == SystemRole.creator;
 
     return AlertDialog(
       title: Row(
@@ -495,9 +634,13 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 DropdownMenuItem(
                     value: 'accountant', child: Text('Accountant — Бухгалтер')),
                 DropdownMenuItem(
+                    value: 'director', child: Text('Director — Директор')),
+                DropdownMenuItem(
                     value: 'creator', child: Text('Creator — Создатель')),
               ],
-              onChanged: (v) => setState(() => _role = v ?? _role),
+              onChanged: canEditRole
+                  ? (v) => setState(() => _role = v ?? _role)
+                  : null,
             ),
             const SizedBox(height: AppSpacing.md),
             SwitchListTile(
@@ -573,9 +716,10 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     setState(() => _loading = true);
     try {
       final ds = sl<UserRemoteDataSource>();
+      final roleChanged = _role != widget.user.role.name;
       final result = await ds.updateUser(
         userId: widget.user.id,
-        role: _role,
+        role: roleChanged ? _role : null,
         isActive: _isActive,
         assignedBranchIds: _assignedBranches,
       );
