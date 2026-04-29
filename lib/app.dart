@@ -12,6 +12,7 @@ import 'package:ethnocount/core/theme/app_theme.dart';
 import 'package:ethnocount/presentation/analytics/bloc/analytics_bloc.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
+import 'package:ethnocount/presentation/exchange_rates/bloc/exchange_rate_bloc.dart';
 import 'package:ethnocount/presentation/ledger/bloc/ledger_bloc.dart';
 import 'package:ethnocount/presentation/notifications/bloc/notification_bloc.dart';
 import 'package:ethnocount/presentation/settings/bloc/theme_cubit.dart';
@@ -32,6 +33,11 @@ class EthnoCountApp extends StatelessWidget {
         BlocProvider(create: (_) => sl<TransferBloc>()),
         BlocProvider(create: (_) => sl<AnalyticsBloc>()),
         BlocProvider(create: (_) => sl<LedgerBloc>()),
+        BlocProvider(
+          create: (_) => sl<ExchangeRateBloc>()
+            ..add(const ExchangeRateLoadRequested())
+            ..add(const ExchangeRateCurrenciesRequested()),
+        ),
         BlocProvider(create: (_) => sl<NotificationBloc>()),
         BlocProvider(create: (_) => ThemeCubit()),
       ],

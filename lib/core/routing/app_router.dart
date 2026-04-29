@@ -22,7 +22,6 @@ import 'package:ethnocount/presentation/bank_import/bloc/bank_import_bloc.dart';
 import 'package:ethnocount/presentation/notifications/pages/notifications_page.dart';
 import 'package:ethnocount/presentation/settings/pages/settings_page.dart';
 import 'package:ethnocount/presentation/exchange_rates/pages/exchange_rates_page.dart';
-import 'package:ethnocount/presentation/exchange_rates/bloc/exchange_rate_bloc.dart';
 import 'package:ethnocount/presentation/analytics/pages/analytics_page.dart';
 import 'package:ethnocount/presentation/reports/pages/reports_page.dart';
 import 'package:ethnocount/presentation/clients/pages/clients_page.dart';
@@ -236,10 +235,10 @@ class AppRouter {
             GoRoute(
               path: '/exchange-rates',
               name: RouteNames.exchangeRates,
-              builder: (context, state) => BlocProvider(
-                create: (_) => sl<ExchangeRateBloc>(),
-                child: const ExchangeRatesPage(),
-              ),
+              // ExchangeRateBloc провайдится глобально в app.dart, чтобы
+              // дашборд тоже мог читать актуальные курсы. Здесь — просто
+              // страница.
+              builder: (context, state) => const ExchangeRatesPage(),
             ),
             GoRoute(
               path: '/reports',

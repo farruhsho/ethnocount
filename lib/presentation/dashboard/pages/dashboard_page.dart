@@ -125,10 +125,10 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
           GridView.count(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: context.isWidescreen ? 4 : 4,
+            crossAxisCount: 4,
             crossAxisSpacing: AppSpacing.md,
             mainAxisSpacing: AppSpacing.md,
-            childAspectRatio: 2.2,
+            childAspectRatio: 1.7,
             children: [
               KpiCard(
                 hero: true,
@@ -144,24 +144,22 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
                     : null,
                 icon: Icons.account_balance_wallet_rounded,
                 iconColor: AppColors.primary,
-                delta: '+2.4%',
-                deltaValue: 2.4,
               ),
               KpiCard(
                 label: 'Активных филиалов',
-                primary: '${state.branches.length}',
-                secondary: '${state.branches.where((b) => b.isActive).length} активны',
+                primary: '${state.branches.where((b) => b.isActive).length}',
+                secondary: '${state.branches.length} всего',
                 icon: Icons.business_rounded,
                 iconColor: AppColors.secondary,
               ),
               KpiCard(
                 label: 'Ожидающие переводы',
                 primary: '${state.pendingCount}',
-                secondary: 'требуют действия',
+                secondary: state.pendingCount > 0
+                    ? 'требуют действия'
+                    : 'нет ожидающих',
                 icon: Icons.pending_actions_rounded,
                 iconColor: AppColors.warning,
-                delta: state.pendingCount > 0 ? '+${state.pendingCount} со вчера' : null,
-                deltaValue: state.pendingCount > 0 ? state.pendingCount.toDouble() : null,
               ),
               KpiCard(
                 label: 'Активных счетов',
@@ -223,9 +221,7 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
             children: [
               Expanded(
                 flex: 17,
-                child: ActivityFeedCard(
-                  items: ActivityFeedCard.fromPending(state.pendingTransfers),
-                ),
+                child: const ActivityFeedCard(),
               ),
               const SizedBox(width: AppSpacing.md),
               Expanded(
@@ -514,8 +510,6 @@ class _MobileDashboardState extends State<_MobileDashboard> {
                         : null,
                     icon: Icons.account_balance_wallet_rounded,
                     iconColor: AppColors.primary,
-                    delta: '+2.4%',
-                    deltaValue: 2.4,
                   ),
                 const SizedBox(height: AppSpacing.md),
 
@@ -642,9 +636,7 @@ class _MobileDashboardState extends State<_MobileDashboard> {
                 const FxRatesCard(),
                 const SizedBox(height: AppSpacing.md),
 
-                ActivityFeedCard(
-                  items: ActivityFeedCard.fromPending(state.pendingTransfers),
-                ),
+                const ActivityFeedCard(),
                 const SizedBox(height: 80),
               ]),
             ),

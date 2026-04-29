@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -25,19 +24,23 @@ extension on BalancePeriod {
       };
 }
 
-/// График динамики общего баланса. Сейчас данных по дням нет в стейте —
-/// синтезируем правдоподобную серию из текущего total как baseline + лёгкий
-/// синтетический шум. Когда появится репозиторий ledger snapshots, источник
-/// заменится без правки UI.
+/// График динамики общего баланса. Если переданы [history] — рисуем
+/// настоящую кривую; если нет — показываем плейсхолдер «История появится
+/// после первых снапшотов». Никаких синтетических данных.
 class BalanceChartCard extends StatefulWidget {
   const BalanceChartCard({
     super.key,
     required this.currentTotal,
+    this.history = const [],
     this.title = 'Динамика баланса',
     this.currency = 'USD',
   });
 
   final double currentTotal;
+
+  /// История значений баланса (старые → новые). Пусто = плейсхолдер.
+  final List<double> history;
+
   final String title;
   final String currency;
 
@@ -49,20 +52,13 @@ class _BalanceChartCardState extends State<BalanceChartCard> {
   BalancePeriod _period = BalancePeriod.d30;
 
   List<FlSpot> _series() {
-    final n = _period.points;
-    final base = widget.currentTotal == 0 ? 100000.0 : widget.currentTotal;
-    final rng = math.Random(42 + n);
-    final spots = <FlSpot>[];
-    var v = base * 0.85;
-    for (var i = 0; i < n; i++) {
-      // Тренд +small drift + шум; завершаем на текущем total.
-      v = v + (base * 0.005) + (rng.nextDouble() - 0.45) * base * 0.012;
-      spots.add(FlSpot(i.toDouble(), v));
-    }
-    if (spots.isNotEmpty) {
-      spots[spots.length - 1] = FlSpot(spots.length - 1.0, base);
-    }
-    return spots;
+    final h = widget.history;
+    if (h.isEmpty) return const [];
+    final take = h.length > _period.points ? h.length - _period.points : 0;
+    final slice = h.skip(take).toList();
+    return [
+      for (var i = 0; i < slice.length; i++) FlSpot(i.toDouble(), slice[i]),
+    ];
   }
 
   @override
@@ -72,10 +68,13 @@ class _BalanceChartCardState extends State<BalanceChartCard> {
         ? AppColors.darkTextSecondary
         : AppColors.lightTextSecondary;
     final spots = _series();
-    final minY =
-        spots.map((s) => s.y).reduce((a, b) => a < b ? a : b) * 0.95;
-    final maxY =
-        spots.map((s) => s.y).reduce((a, b) => a > b ? a : b) * 1.05;
+    final hasData = spots.isNotEmpty;
+    final minY = hasData
+        ? spots.map((s) => s.y).reduce((a, b) => a < b ? a : b) * 0.95
+        : 0.0;
+    final maxY = hasData
+        ? spots.map((s) => s.y).reduce((a, b) => a > b ? a : b) * 1.05
+        : 1.0;
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -122,7 +121,31 @@ class _BalanceChartCardState extends State<BalanceChartCard> {
           const SizedBox(height: AppSpacing.lg),
           SizedBox(
             height: 220,
-            child: LineChart(
+            child: !hasData
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.show_chart_rounded,
+                            size: 32, color: secondary.withValues(alpha: 0.6)),
+                        const SizedBox(height: 8),
+                        Text(
+                          'История баланса появится после операций',
+                          style: TextStyle(fontSize: 12, color: secondary),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Сейчас: ${_format(widget.currentTotal)} ${widget.currency}',
+                          style: GoogleFonts.jetBrainsMono(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : LineChart(
               LineChartData(
                 minY: minY,
                 maxY: maxY,

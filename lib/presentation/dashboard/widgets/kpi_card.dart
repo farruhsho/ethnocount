@@ -55,7 +55,7 @@ class KpiCard extends StatelessWidget {
         : AppColors.lightTextSecondary;
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.lg),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: isDark ? AppColors.darkCard : AppColors.lightCard,
         borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
@@ -64,51 +64,63 @@ class KpiCard extends StatelessWidget {
           width: 0.5,
         ),
       ),
+      // Compact layout: row "icon + delta", row "label", flexible primary,
+      // optional secondary. Все элементы ужимаются — нет фиксированных
+      // высот, нет overflow на 92×242.
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              _IconBadge(icon: icon, color: iconColor),
+              _IconBadge(icon: icon, color: iconColor, size: 28),
               const Spacer(),
               if (delta != null) DeltaChip(label: delta!, delta: deltaValue),
             ],
           ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: 6),
           Text(
             label,
             style: TextStyle(
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
               color: secondaryColor,
               letterSpacing: 0.3,
             ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 4),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              primary,
-              style: GoogleFonts.jetBrainsMono(
-                fontSize: 24,
-                fontWeight: FontWeight.w700,
-                color: isDark
-                    ? AppColors.darkTextPrimary
-                    : AppColors.lightTextPrimary,
+          const SizedBox(height: 2),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                primary,
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  height: 1.0,
+                  color: isDark
+                      ? AppColors.darkTextPrimary
+                      : AppColors.lightTextPrimary,
+                ),
               ),
             ),
           ),
           if (secondary != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              secondary!,
-              style: TextStyle(
-                fontSize: 11,
-                color: secondaryColor,
+            const SizedBox(height: 2),
+            Flexible(
+              child: Text(
+                secondary!,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  color: secondaryColor,
+                  height: 1.2,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
           ],
         ],

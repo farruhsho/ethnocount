@@ -1,13 +1,16 @@
-import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
+import 'package:ethnocount/domain/entities/exchange_rate.dart';
 import 'package:ethnocount/presentation/dashboard/widgets/delta_chip.dart';
+import 'package:ethnocount/presentation/exchange_rates/bloc/exchange_rate_bloc.dart';
 
-/// Локальная in-memory модель FX для UI до появления стрима курсов.
+/// Строка курса для отображения: пара, последний курс, delta% к предыдущему,
+/// спарклайн из исторических курсов этой же пары.
 class FxRateRow {
   const FxRateRow({
     required this.from,
@@ -23,40 +26,79 @@ class FxRateRow {
   final List<double> spark;
 }
 
-/// Карточка курсов валют: 4 пары + спарклайны + delta-чипы.
-/// Сейчас — заглушки (см. [defaultRates]); когда появится репозиторий
-/// курсов, заменить на реальные данные без правки UI.
+/// Карточка курсов валют. Источник — `ExchangeRateBloc.state.rates` (полная
+/// история курсов из public.exchange_rates). По каждой паре берём последние
+/// до 20 значений → спарклайн, текущий курс — самый свежий, delta% — между
+/// двумя последними.
 class FxRatesCard extends StatelessWidget {
   const FxRatesCard({
     super.key,
     this.title = 'Курсы валют',
-    this.rates,
   });
 
   final String title;
-  final List<FxRateRow>? rates;
 
-  static List<FxRateRow> defaultRates() {
-    final rng = math.Random(7);
-    List<double> spark(double base) {
-      var v = base;
-      return List.generate(20, (_) {
-        v = v + (rng.nextDouble() - 0.45) * base * 0.005;
-        return v;
-      });
+  /// Свернуть полную историю в список FxRateRow по уникальным парам.
+  static List<FxRateRow> _buildRows(List<ExchangeRate> all) {
+    if (all.isEmpty) return const [];
+    // Группируем по паре, сохраняя порядок «новые сверху».
+    final grouped = <String, List<ExchangeRate>>{};
+    for (final r in all) {
+      final key = '${r.fromCurrency}/${r.toCurrency}';
+      grouped.putIfAbsent(key, () => []).add(r);
     }
-    return [
-      FxRateRow(from: 'USD', to: 'UZS', rate: 12780.5, deltaPercent: 0.3, spark: spark(12780.5)),
-      FxRateRow(from: 'USD', to: 'RUB', rate: 92.4, deltaPercent: -0.6, spark: spark(92.4)),
-      FxRateRow(from: 'USD', to: 'KZT', rate: 522.1, deltaPercent: 0.1, spark: spark(522.1)),
-      FxRateRow(from: 'EUR', to: 'USD', rate: 1.085, deltaPercent: 0.2, spark: spark(1.085)),
-    ];
+    final rows = <FxRateRow>[];
+    grouped.forEach((key, list) {
+      // list в порядке как пришёл из стрима (обычно DESC по effectiveAt).
+      final sorted = [...list]
+        ..sort((a, b) => a.effectiveAt.compareTo(b.effectiveAt));
+      final last = sorted.last;
+      final prev = sorted.length > 1 ? sorted[sorted.length - 2] : null;
+      final delta = prev == null
+          ? 0.0
+          : ((last.rate - prev.rate) / (prev.rate == 0 ? 1 : prev.rate)) * 100;
+      final spark = sorted
+          .skip(sorted.length > 20 ? sorted.length - 20 : 0)
+          .map((e) => e.rate)
+          .toList();
+      rows.add(FxRateRow(
+        from: last.fromCurrency,
+        to: last.toCurrency,
+        rate: last.rate,
+        deltaPercent: delta,
+        spark: spark.isEmpty ? [last.rate, last.rate] : spark,
+      ));
+    });
+    // Сортируем по абсолютному изменению — самые "движущиеся" наверху.
+    rows.sort(
+        (a, b) => b.deltaPercent.abs().compareTo(a.deltaPercent.abs()));
+    return rows;
   }
 
   @override
   Widget build(BuildContext context) {
+    return BlocBuilder<ExchangeRateBloc, ExchangeRateBlocState>(
+      builder: (context, state) {
+        final rows = _buildRows(state.rates).take(6).toList();
+        return _FxRatesView(title: title, rows: rows, loading: state.isLoading);
+      },
+    );
+  }
+}
+
+class _FxRatesView extends StatelessWidget {
+  const _FxRatesView({
+    required this.title,
+    required this.rows,
+    required this.loading,
+  });
+  final String title;
+  final List<FxRateRow> rows;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
     final isDark = context.isDark;
-    final list = rates ?? defaultRates();
     final secondary = isDark
         ? AppColors.darkTextSecondary
         : AppColors.lightTextSecondary;
@@ -94,15 +136,26 @@ class FxRatesCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          for (var i = 0; i < list.length; i++) ...[
-            _FxRateRowTile(row: list[i]),
-            if (i != list.length - 1)
-              Divider(
-                height: AppSpacing.md,
-                thickness: 0.4,
-                color: secondary.withValues(alpha: 0.15),
+          if (rows.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+              child: Center(
+                child: Text(
+                  loading ? 'Загрузка курсов…' : 'Курсы ещё не установлены',
+                  style: TextStyle(fontSize: 12, color: secondary),
+                ),
               ),
-          ],
+            )
+          else
+            for (var i = 0; i < rows.length; i++) ...[
+              _FxRateRowTile(row: rows[i]),
+              if (i != rows.length - 1)
+                Divider(
+                  height: AppSpacing.md,
+                  thickness: 0.4,
+                  color: secondary.withValues(alpha: 0.15),
+                ),
+            ],
         ],
       ),
     );

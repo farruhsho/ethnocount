@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
+import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/core/extensions/date_x.dart';
+import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
+import 'package:ethnocount/domain/repositories/transfer_repository.dart';
 
 enum ActivityFilter { all, incoming, outgoing, transfers }
 
@@ -38,40 +41,104 @@ class ActivityItem {
   final ActivityFilter kind;
 }
 
-/// Лента событий с chip-фильтрами. Источник — последние ожидающие переводы
-/// (mapped в [ActivityItem]); когда появится репозиторий событий, сюда
-/// прокинется реальный поток.
-class ActivityFeedCard extends StatefulWidget {
+/// Лента событий: подписана на `TransferRepository.watchTransfers()` и
+/// показывает 12 самых свежих переводов всех статусов. Цвет/иконка зависят
+/// от статуса. Chip-фильтр: Все / Поступления / Расходы / Переводы.
+class ActivityFeedCard extends StatelessWidget {
   const ActivityFeedCard({
     super.key,
-    required this.items,
     this.title = 'Лента событий',
   });
 
-  final List<ActivityItem> items;
   final String title;
 
-  /// Адаптер: маппит ожидающие переводы в события.
-  static List<ActivityItem> fromPending(List<Transfer> transfers) {
-    return [
-      for (final t in transfers.take(8))
-        ActivityItem(
-          title: 'Перевод #${t.transactionCode ?? t.id.substring(0, 6)}',
-          subtitle: '${t.senderName ?? '—'} → ${t.receiverName ?? '—'}',
-          amount: t.amount,
-          currency: t.currency,
-          icon: Icons.swap_horiz_rounded,
-          color: AppColors.secondary,
-          time: t.createdAt,
-        ),
-    ];
+  /// Маппинг Transfer → ActivityItem (статус → иконка/цвет).
+  static ActivityItem _itemFor(Transfer t) {
+    final (icon, color, kind, label) = switch (t.status) {
+      TransferStatus.pending => (
+        Icons.pending_actions_rounded,
+        AppColors.warning,
+        ActivityFilter.transfers,
+        'Перевод создан',
+      ),
+      TransferStatus.confirmed => (
+        Icons.task_alt_rounded,
+        AppColors.secondary,
+        ActivityFilter.transfers,
+        'Перевод подтверждён',
+      ),
+      TransferStatus.issued => (
+        Icons.payments_rounded,
+        AppColors.primary,
+        ActivityFilter.outgoing,
+        'Выдан получателю',
+      ),
+      TransferStatus.rejected => (
+        Icons.cancel_outlined,
+        AppColors.error,
+        ActivityFilter.transfers,
+        'Отклонён',
+      ),
+      TransferStatus.cancelled => (
+        Icons.do_disturb_alt_rounded,
+        AppColors.darkTextSecondary,
+        ActivityFilter.transfers,
+        'Отменён',
+      ),
+    };
+    return ActivityItem(
+      title: '$label · #${t.transactionCode ?? t.id.substring(0, 6)}',
+      subtitle: '${t.senderName ?? '—'} → ${t.receiverName ?? '—'}',
+      amount: t.amount,
+      currency: t.currency,
+      icon: icon,
+      color: color,
+      time: (t.issuedAt ?? t.confirmedAt ?? t.cancelledAt ?? t.rejectedAt ?? t.createdAt),
+      kind: kind,
+    );
   }
 
   @override
-  State<ActivityFeedCard> createState() => _ActivityFeedCardState();
+  Widget build(BuildContext context) {
+    return StreamBuilder<List<Transfer>>(
+      stream: sl<TransferRepository>().watchTransfers(),
+      builder: (context, snap) {
+        final all = snap.data ?? const <Transfer>[];
+        DateTime ts(Transfer t) => t.issuedAt ??
+            t.confirmedAt ??
+            t.cancelledAt ??
+            t.rejectedAt ??
+            t.createdAt;
+        final sorted = [...all]..sort((a, b) => ts(b).compareTo(ts(a)));
+        final items = sorted
+            .take(12)
+            .map(_itemFor)
+            .toList();
+        return _ActivityFeedView(
+          title: title,
+          items: items,
+          loading: snap.connectionState == ConnectionState.waiting && all.isEmpty,
+        );
+      },
+    );
+  }
 }
 
-class _ActivityFeedCardState extends State<ActivityFeedCard> {
+class _ActivityFeedView extends StatefulWidget {
+  const _ActivityFeedView({
+    required this.title,
+    required this.items,
+    required this.loading,
+  });
+  final String title;
+  final List<ActivityItem> items;
+  final bool loading;
+
+  @override
+  State<_ActivityFeedView> createState() => _ActivityFeedCardState();
+}
+
+class _ActivityFeedCardState extends State<_ActivityFeedView> {
   ActivityFilter _filter = ActivityFilter.all;
 
   @override
