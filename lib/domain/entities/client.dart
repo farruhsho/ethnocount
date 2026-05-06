@@ -15,6 +15,8 @@ class Client extends Equatable {
   final String? branchId;
   /// Валюты кошелька клиента (основная + дополнительные для нескольких остатков).
   final List<String> walletCurrencies;
+  /// Telegram chat_id группы клиента (для уведомлений). Может быть пусто.
+  final String? telegramChatId;
   final bool isActive;
   final String createdBy;
   final DateTime createdAt;
@@ -28,6 +30,7 @@ class Client extends Equatable {
     required this.currency,
     this.branchId,
     this.walletCurrencies = const [],
+    this.telegramChatId,
     this.isActive = true,
     required this.createdBy,
     required this.createdAt,
@@ -50,7 +53,8 @@ class Client extends Equatable {
 
   @override
   List<Object?> get props =>
-      [id, clientCode, name, phone, country, currency, branchId, walletCurrencies, isActive];
+      [id, clientCode, name, phone, country, currency, branchId,
+       walletCurrencies, telegramChatId, isActive];
 }
 
 /// A single client transaction (deposit or debit).
@@ -62,6 +66,12 @@ class ClientTransaction extends Equatable {
   final String currency;
   final String? description;
   final String createdBy;
+  /// display_name сотрудника, оформившего операцию (резолвится из public.users).
+  final String? createdByName;
+  /// Код операции (ETH-TX-YYYY-NNNNNN) — может отсутствовать у старых записей.
+  final String? transactionCode;
+  /// Остаток клиента в этой валюте сразу после операции.
+  final double? balanceAfter;
   final DateTime createdAt;
 
   const ClientTransaction({
@@ -72,13 +82,19 @@ class ClientTransaction extends Equatable {
     required this.currency,
     this.description,
     required this.createdBy,
+    this.createdByName,
+    this.transactionCode,
+    this.balanceAfter,
     required this.createdAt,
   });
 
   bool get isDeposit => type == 'deposit';
 
   @override
-  List<Object?> get props => [id, clientId, type, amount, currency, createdAt];
+  List<Object?> get props => [
+        id, clientId, type, amount, currency, description,
+        createdBy, createdByName, transactionCode, balanceAfter, createdAt,
+      ];
 }
 
 /// Denormalized client balance document (O(1) read).

@@ -118,4 +118,33 @@ class ClientRepoImpl implements ClientRepository {
       return Left(UnexpectedFailure(e.toString()));
     }
   }
+
+  @override
+  Future<Either<Failure, void>> setTelegramChatId({
+    required String clientId,
+    required String? chatId,
+  }) async {
+    try {
+      await _remoteDs.setTelegramChatId(clientId: clientId, chatId: chatId);
+      return const Right(null);
+    } on CallableFunctionsException catch (e) {
+      return Left(ServerFailure(e.message));
+    } catch (e) {
+      return Left(UnexpectedFailure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Either<Failure, void>> sendTelegramTest({
+    required String clientId,
+  }) async {
+    try {
+      await _remoteDs.sendTelegramTest(clientId: clientId);
+      return const Right(null);
+    } on CallableFunctionsException catch (e) {
+      return Left(ServerFailure(e.message));
+    } catch (e) {
+      return Left(UnexpectedFailure(e.toString()));
+    }
+  }
 }

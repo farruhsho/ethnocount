@@ -358,7 +358,13 @@ class _MobileLayout extends StatelessWidget {
           builder: (_, ctrl) => SingleChildScrollView(
             controller: ctrl,
             padding: const EdgeInsets.all(AppSpacing.lg),
-            child: _ClientActions(client: client),
+            child: Column(
+              children: [
+                _ClientActions(client: client),
+                const SizedBox(height: AppSpacing.md),
+                _TelegramSettingsBlock(client: client),
+              ],
+            ),
           ),
         ),
       ),
@@ -729,6 +735,9 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
             // Actions
             _ClientActions(client: widget.client),
 
+            const SizedBox(height: AppSpacing.md),
+            _TelegramSettingsBlock(client: widget.client),
+
             const Divider(height: AppSpacing.xl),
 
             Text('Последние операции',
@@ -741,39 +750,9 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
                   ? const Center(child: Text('Нет операций'))
                   : ListView.separated(
                       itemCount: transactions.length,
-                      separatorBuilder: (_, _) =>
-                          const Divider(height: 1),
-                      itemBuilder: (context, i) {
-                        final tx = transactions[i];
-                        final isDeposit = tx.isDeposit;
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            isDeposit
-                                ? Icons.arrow_downward_rounded
-                                : Icons.arrow_upward_rounded,
-                            color: isDeposit ? Colors.green : Colors.red,
-                            size: 18,
-                          ),
-                          title: Text(
-                            tx.description ?? tx.type,
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                          trailing: Text(
-                            '${isDeposit ? '+' : '-'}${tx.amount.toStringAsFixed(2)} ${tx.currency}',
-                            style: TextStyle(
-                              fontFamily: 'JetBrains Mono',
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: isDeposit ? Colors.green : Colors.red,
-                            ),
-                          ),
-                          subtitle: Text(
-                            _formatDate(tx.createdAt),
-                            style: const TextStyle(fontSize: 11),
-                          ),
-                        );
-                      },
+                      separatorBuilder: (_, _) => const SizedBox(height: 8),
+                      itemBuilder: (context, i) =>
+                          _TransactionTile(tx: transactions[i]),
                     ),
             ),
           ],
@@ -782,10 +761,6 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
     );
   }
 
-  String _formatDate(DateTime dt) {
-    return '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')}.${dt.year} '
-        '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-  }
 }
 
 class _EmptyDetailPanel extends StatelessWidget {
@@ -1050,6 +1025,457 @@ class _TransactionDialogState extends State<_TransactionDialog> {
             currency: _opCurrency,
           ));
     }
+  }
+}
+
+// ─── Telegram Settings Block ───
+
+class _TelegramSettingsBlock extends StatefulWidget {
+  const _TelegramSettingsBlock({required this.client});
+  final Client client;
+
+  @override
+  State<_TelegramSettingsBlock> createState() => _TelegramSettingsBlockState();
+}
+
+class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
+  bool _editing = false;
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.client.telegramChatId ?? '');
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  /// Берём свежего клиента из bloc state (после save bloc обновляет
+  /// selectedClient + clients, поэтому здесь видим актуальный chat_id).
+  Client _currentClient(ClientBlocState s) {
+    if (s.selectedClient?.id == widget.client.id) return s.selectedClient!;
+    for (final c in s.clients) {
+      if (c.id == widget.client.id) return c;
+    }
+    return widget.client;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocConsumer<ClientBloc, ClientBlocState>(
+      listenWhen: (prev, curr) => prev.status != curr.status,
+      listener: (context, state) {
+        // После успешного save закрываем режим редактирования.
+        if (state.status == ClientBlocStatus.success && _editing) {
+          setState(() => _editing = false);
+        }
+      },
+      builder: (context, state) {
+        final client = _currentClient(state);
+        final isOperating = state.status == ClientBlocStatus.operating;
+        final hasChatId = (client.telegramChatId ?? '').isNotEmpty;
+
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+            border: Border.all(
+              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.send_rounded, size: 18,
+                      color: Color(0xFF2AABEE)),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Telegram-уведомления',
+                    style: context.textTheme.labelLarge
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  if (hasChatId && !_editing)
+                    _StatusPill(
+                      icon: Icons.check_circle_rounded,
+                      text: 'подключено',
+                      color: Colors.green,
+                    )
+                  else if (!hasChatId && !_editing)
+                    _StatusPill(
+                      icon: Icons.power_off_rounded,
+                      text: 'не привязано',
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              if (_editing)
+                _editForm(context, client, isOperating)
+              else if (hasChatId)
+                _connectedRow(context, client, isOperating)
+              else
+                _emptyRow(context, isOperating),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ─── режим: уже подключено ───
+  Widget _connectedRow(BuildContext context, Client client, bool isOperating) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.chat_bubble_outline_rounded, size: 16),
+            const SizedBox(width: 6),
+            Expanded(
+              child: SelectableText(
+                client.telegramChatId ?? '',
+                style: const TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: isOperating
+                    ? null
+                    : () => context.read<ClientBloc>().add(
+                          ClientTelegramTestRequested(client.id),
+                        ),
+                icon: const Icon(Icons.send_outlined, size: 18),
+                label: const Text('Тест'),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            IconButton.outlined(
+              onPressed: isOperating
+                  ? null
+                  : () {
+                      _ctrl.text = client.telegramChatId ?? '';
+                      setState(() => _editing = true);
+                    },
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              tooltip: 'Изменить',
+            ),
+            const SizedBox(width: 4),
+            IconButton.outlined(
+              onPressed: isOperating
+                  ? null
+                  : () => _confirmAndUnlink(context, client),
+              icon: const Icon(Icons.link_off_rounded, size: 18),
+              tooltip: 'Отвязать',
+              style: IconButton.styleFrom(foregroundColor: Colors.red),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ─── режим: не привязано (компактно) ───
+  Widget _emptyRow(BuildContext context, bool isOperating) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: isOperating
+            ? null
+            : () {
+                _ctrl.text = '';
+                setState(() => _editing = true);
+              },
+        icon: const Icon(Icons.add_link_rounded, size: 18),
+        label: const Text('Привязать Telegram-группу'),
+      ),
+    );
+  }
+
+  // ─── режим: ввод/редактирование ───
+  Widget _editForm(BuildContext context, Client client, bool isOperating) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Введите chat_id группы клиента (число с «-» для супергрупп). '
+          'Бот должен быть админом группы.',
+          style: context.textTheme.bodySmall?.copyWith(
+            color: context.isDark
+                ? AppColors.darkTextSecondary
+                : AppColors.lightTextSecondary,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        TextField(
+          controller: _ctrl,
+          autofocus: true,
+          enabled: !isOperating,
+          keyboardType: TextInputType.text,
+          decoration: const InputDecoration(
+            hintText: '-1001234567890',
+            prefixIcon: Icon(Icons.chat_bubble_outline_rounded, size: 18),
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[0-9\-]')),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: isOperating
+                    ? null
+                    : () {
+                        final v = _ctrl.text.trim();
+                        if (v.isEmpty) return;
+                        context.read<ClientBloc>().add(
+                              ClientTelegramChatIdUpdated(
+                                clientId: client.id,
+                                chatId: v,
+                              ),
+                            );
+                      },
+                icon: isOperating
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.save_outlined, size: 18),
+                label: const Text('Сохранить'),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            TextButton(
+              onPressed: isOperating
+                  ? null
+                  : () => setState(() => _editing = false),
+              child: const Text('Отмена'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmAndUnlink(BuildContext context, Client client) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Отвязать Telegram-группу?'),
+        content: Text(
+          'Уведомления о пополнении/снятии/выкупе клиента «${client.name}» '
+          'больше не будут отправляться в Telegram.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Отвязать'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    if (!context.mounted) return;
+    context.read<ClientBloc>().add(
+          ClientTelegramChatIdUpdated(
+            clientId: client.id,
+            chatId: null,
+          ),
+        );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({
+    required this.icon,
+    required this.text,
+    required this.color,
+  });
+  final IconData icon;
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Transaction Tile (полная карточка операции в истории) ───
+
+class _TransactionTile extends StatelessWidget {
+  const _TransactionTile({required this.tx});
+  final ClientTransaction tx;
+
+  String _fmtDate(DateTime dt) =>
+      '${dt.day.toString().padLeft(2, '0')}.'
+      '${dt.month.toString().padLeft(2, '0')}.'
+      '${dt.year}, '
+      '${dt.hour.toString().padLeft(2, '0')}:'
+      '${dt.minute.toString().padLeft(2, '0')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final isDeposit = tx.isDeposit;
+    final color = isDeposit ? Colors.green : Colors.red;
+    final scheme = Theme.of(context).colorScheme;
+    final secondary = context.isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.lightTextSecondary;
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isDeposit
+                    ? Icons.arrow_downward_rounded
+                    : Icons.arrow_upward_rounded,
+                color: color,
+                size: 18,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                isDeposit ? 'Пополнение' : 'Снятие',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${isDeposit ? '+' : '−'}'
+                '${tx.amount.toStringAsFixed(2)} ${tx.currency}',
+                style: TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+          if ((tx.transactionCode ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              tx.transactionCode!,
+              style: TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 11,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          if ((tx.description ?? '').isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              tx.description!,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ],
+          if (tx.balanceAfter != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Остаток: ${tx.balanceAfter!.toStringAsFixed(2)} ${tx.currency}',
+              style: TextStyle(
+                fontFamily: 'JetBrains Mono',
+                fontSize: 12,
+                color: secondary,
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          DefaultTextStyle.merge(
+            style: TextStyle(fontSize: 11, color: secondary),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 2,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.person_outline_rounded,
+                        size: 12, color: secondary),
+                    const SizedBox(width: 2),
+                    Text(tx.createdByName ?? '—'),
+                  ],
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.access_time_rounded,
+                        size: 12, color: secondary),
+                    const SizedBox(width: 2),
+                    Text(_fmtDate(tx.createdAt)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

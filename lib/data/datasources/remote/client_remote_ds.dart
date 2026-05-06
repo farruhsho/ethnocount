@@ -188,7 +188,36 @@ class ClientRemoteDataSource {
         .eq('client_id', clientId)
         .order('created_at', ascending: false)
         .limit(limit);
-    return (data as List).map((e) => _mapTransaction(Map<String, dynamic>.from(e as Map))).toList();
+    final rows = (data as List)
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+
+    // Резолвим display_name всех уникальных авторов одним запросом.
+    final userIds = <String>{};
+    for (final r in rows) {
+      final uid = r['created_by'] as String?;
+      if (uid != null && uid.isNotEmpty) userIds.add(uid);
+    }
+    Map<String, String> nameById = {};
+    if (userIds.isNotEmpty) {
+      try {
+        final userRows = await _client
+            .from('users')
+            .select('id, display_name, email')
+            .inFilter('id', userIds.toList());
+        for (final u in (userRows as List)) {
+          final m = Map<String, dynamic>.from(u as Map);
+          final id = m['id'] as String? ?? '';
+          final name = (m['display_name'] as String?)?.trim();
+          final email = (m['email'] as String?)?.trim();
+          nameById[id] = (name != null && name.isNotEmpty)
+              ? name
+              : (email ?? '—');
+        }
+      } catch (_) {/* без имён — не критично */}
+    }
+
+    return rows.map((r) => _mapTransaction(r, nameById)).toList();
   }
 
   /// Create client via PostgreSQL RPC (atomic).
@@ -272,13 +301,37 @@ class ClientRemoteDataSource {
       currency: cur,
       branchId: data['branch_id'] as String?,
       walletCurrencies: walletCurrencies,
+      telegramChatId: data['telegram_chat_id'] as String?,
       isActive: data['is_active'] ?? true,
       createdBy: data['created_by'] ?? '',
       createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
     );
   }
 
-  ClientTransaction _mapTransaction(Map<String, dynamic> data) {
+  /// Задать/удалить telegram_chat_id у клиента.
+  Future<void> setTelegramChatId({
+    required String clientId,
+    required String? chatId,
+  }) async {
+    await _client.rpc('set_client_telegram_chat_id', params: {
+      'p_client_id': clientId,
+      'p_chat_id': chatId ?? '',
+    });
+  }
+
+  /// Отправить тестовое сообщение в группу клиента.
+  Future<void> sendTelegramTest({required String clientId}) async {
+    await _client.rpc('send_telegram_test', params: {
+      'p_client_id': clientId,
+    });
+  }
+
+  ClientTransaction _mapTransaction(
+    Map<String, dynamic> data, [
+    Map<String, String> nameById = const {},
+  ]) {
+    final createdBy = data['created_by'] as String? ?? '';
+    final balanceRaw = data['balance_after'];
     return ClientTransaction(
       id: data['id'] ?? '',
       clientId: data['client_id'] ?? '',
@@ -286,7 +339,10 @@ class ClientRemoteDataSource {
       amount: (data['amount'] ?? 0).toDouble(),
       currency: data['currency'] ?? 'USD',
       description: data['description'],
-      createdBy: data['created_by'] ?? '',
+      createdBy: createdBy,
+      createdByName: nameById[createdBy],
+      transactionCode: data['transaction_code'] as String?,
+      balanceAfter: balanceRaw is num ? balanceRaw.toDouble() : null,
       createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
     );
   }

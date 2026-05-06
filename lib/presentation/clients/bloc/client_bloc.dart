@@ -76,6 +76,24 @@ class ClientDetailRequested extends ClientEvent {
   List<Object?> get props => [clientId];
 }
 
+class ClientTelegramChatIdUpdated extends ClientEvent {
+  final String clientId;
+  final String? chatId;
+  const ClientTelegramChatIdUpdated({
+    required this.clientId,
+    required this.chatId,
+  });
+  @override
+  List<Object?> get props => [clientId, chatId];
+}
+
+class ClientTelegramTestRequested extends ClientEvent {
+  final String clientId;
+  const ClientTelegramTestRequested(this.clientId);
+  @override
+  List<Object?> get props => [clientId];
+}
+
 /// Internal: pushed by the all-balances watcher each time the
 /// `client_balances` table changes.
 class _ClientBalancesUpdated extends ClientEvent {
@@ -163,7 +181,71 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
     on<ClientDepositRequested>(_onDeposit);
     on<ClientDebitRequested>(_onDebit);
     on<ClientDetailRequested>(_onDetail);
+    on<ClientTelegramChatIdUpdated>(_onTelegramChatIdUpdated);
+    on<ClientTelegramTestRequested>(_onTelegramTestRequested);
     on<_ClientBalancesUpdated>(_onBalancesUpdated);
+  }
+
+  Future<void> _onTelegramChatIdUpdated(
+    ClientTelegramChatIdUpdated event,
+    Emitter<ClientBlocState> emit,
+  ) async {
+    emit(state.copyWith(status: ClientBlocStatus.operating));
+    final result = await _repository.setTelegramChatId(
+      clientId: event.clientId,
+      chatId: event.chatId,
+    );
+    await result.fold(
+      (f) async => emit(state.copyWith(
+        status: ClientBlocStatus.error,
+        errorMessage: f.message,
+      )),
+      (_) async {
+        // Перечитать клиента, чтобы обновлённый telegram_chat_id отразился
+        // в карточке и в списке без ожидания realtime broadcast.
+        final fresh = await _repository.getClient(event.clientId);
+        Client? updated;
+        fresh.fold((_) => null, (c) => updated = c);
+
+        Client? newSelected = state.selectedClient;
+        List<Client> newList = state.clients;
+        if (updated != null) {
+          if (state.selectedClient?.id == event.clientId) {
+            newSelected = updated;
+          }
+          newList = state.clients
+              .map((c) => c.id == event.clientId ? updated! : c)
+              .toList();
+        }
+
+        emit(state.copyWith(
+          status: ClientBlocStatus.success,
+          successMessage: (event.chatId == null || event.chatId!.isEmpty)
+              ? 'Telegram-группа отвязана'
+              : 'Telegram-группа сохранена',
+          selectedClient: newSelected,
+          clients: newList,
+        ));
+      },
+    );
+  }
+
+  Future<void> _onTelegramTestRequested(
+    ClientTelegramTestRequested event,
+    Emitter<ClientBlocState> emit,
+  ) async {
+    emit(state.copyWith(status: ClientBlocStatus.operating));
+    final result = await _repository.sendTelegramTest(clientId: event.clientId);
+    result.fold(
+      (f) => emit(state.copyWith(
+        status: ClientBlocStatus.error,
+        errorMessage: f.message,
+      )),
+      (_) => emit(state.copyWith(
+        status: ClientBlocStatus.success,
+        successMessage: 'Тестовое сообщение отправлено',
+      )),
+    );
   }
 
   Future<void> _onLoad(
@@ -241,15 +323,9 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
         status: ClientBlocStatus.error,
         errorMessage: f.message,
       )),
-      (_) async {
-        final balanceResult = await _repository.getClientBalance(event.clientId);
-        final newBalance = balanceResult.fold((_) => null, (b) => b);
-        emit(state.copyWith(
-          status: ClientBlocStatus.success,
-          successMessage: 'Пополнение выполнено',
-          selectedBalance: newBalance ?? state.selectedBalance,
-        ));
-      },
+      (_) async => _emitWithRefreshedBalance(
+        emit, event.clientId, 'Пополнение выполнено',
+      ),
     );
   }
 
@@ -269,16 +345,38 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
         status: ClientBlocStatus.error,
         errorMessage: f.message,
       )),
-      (_) async {
-        final balanceResult = await _repository.getClientBalance(event.clientId);
-        final newBalance = balanceResult.fold((_) => null, (b) => b);
-        emit(state.copyWith(
-          status: ClientBlocStatus.success,
-          successMessage: 'Списание выполнено',
-          selectedBalance: newBalance ?? state.selectedBalance,
-        ));
-      },
+      (_) async => _emitWithRefreshedBalance(
+        emit, event.clientId, 'Списание выполнено',
+      ),
     );
+  }
+
+  /// Перечитывает баланс клиента и публикует его сразу в двух местах:
+  ///   * `selectedBalance` — для правой панели,
+  ///   * `balancesByClientId[clientId]` — для строки в таблице/списке.
+  /// Без этого пользователю приходилось перезаходить в карточку, чтобы
+  /// увидеть свежий баланс — realtime-канал догоняет с задержкой.
+  Future<void> _emitWithRefreshedBalance(
+    Emitter<ClientBlocState> emit,
+    String clientId,
+    String successMessage,
+  ) async {
+    final balanceResult = await _repository.getClientBalance(clientId);
+    final newBalance = balanceResult.fold((_) => null, (b) => b);
+
+    final updatedMap = Map<String, ClientBalance>.from(state.balancesByClientId);
+    if (newBalance != null) {
+      updatedMap[clientId] = newBalance;
+    }
+
+    emit(state.copyWith(
+      status: ClientBlocStatus.success,
+      successMessage: successMessage,
+      selectedBalance: state.selectedClient?.id == clientId
+          ? (newBalance ?? state.selectedBalance)
+          : state.selectedBalance,
+      balancesByClientId: updatedMap,
+    ));
   }
 
   Future<void> _onDetail(

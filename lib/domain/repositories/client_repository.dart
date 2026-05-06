@@ -39,4 +39,13 @@ abstract class ClientRepository {
     String? description,
     String? currency,
   });
+
+  /// Задать или удалить (передать null/пусто) Telegram chat ID клиента.
+  Future<Either<Failure, void>> setTelegramChatId({
+    required String clientId,
+    required String? chatId,
+  });
+
+  /// Послать тестовое сообщение в Telegram-группу клиента.
+  Future<Either<Failure, void>> sendTelegramTest({required String clientId});
 }
