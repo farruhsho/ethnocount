@@ -159,7 +159,7 @@ class _UsersPageState extends State<UsersPage> {
   Future<void> _confirmDelete(BuildContext context, AppUser user) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Row(
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.red),
@@ -183,12 +183,12 @@ class _UsersPageState extends State<UsersPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
             child: const Text('Отмена'),
           ),
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
             icon: const Icon(Icons.delete_forever_rounded),
             label: const Text('Удалить'),
           ),
@@ -199,6 +199,11 @@ class _UsersPageState extends State<UsersPage> {
     final messenger = ScaffoldMessenger.of(context);
     final errorColor = Theme.of(context).colorScheme.error;
     final result = await sl<UserRemoteDataSource>().deleteUser(user.id);
+    // Если пользователь удалил собственный аккаунт, supabase-auth разлогинит
+    // сессию, GoRouter уведёт на /login, а текущий элемент `users_page`
+    // деактивируется. Любое обращение к контексту тут спровоцирует
+    // _ElementLifecycle.inactive (чёрный экран при возврате назад).
+    if (!mounted) return;
     if (result['success'] == true) {
       messenger.showSnackBar(
         SnackBar(
@@ -572,10 +577,12 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   late String _role;
   late bool _isActive;
   late List<String> _assignedBranches;
+  late AccountantPermissions _permissions;
   late final TextEditingController _emailCtrl;
   late final TextEditingController _nameCtrl;
   List<Branch> _allBranches = [];
   bool _loading = false;
+  bool _permsExpanded = false;
   StreamSubscription<List<Branch>>? _branchSub;
 
   @override
@@ -584,6 +591,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     _role = widget.user.role.name;
     _isActive = widget.user.isActive;
     _assignedBranches = List.from(widget.user.assignedBranchIds);
+    _permissions = widget.user.permissions;
     _emailCtrl = TextEditingController(text: widget.user.email);
     _nameCtrl = TextEditingController(text: widget.user.displayName);
 
@@ -692,6 +700,30 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                           color: Theme.of(context).colorScheme.outline),
                     ),
                   ],
+                  const Spacer(),
+                  if (canEditBranches)
+                    TextButton.icon(
+                      onPressed: () => setState(() {
+                        if (_assignedBranches.length == _allBranches.length) {
+                          _assignedBranches = [];
+                        } else {
+                          _assignedBranches =
+                              _allBranches.map((b) => b.id).toList();
+                        }
+                      }),
+                      icon: Icon(
+                        _assignedBranches.length == _allBranches.length
+                            ? Icons.deselect_outlined
+                            : Icons.select_all_outlined,
+                        size: 16,
+                      ),
+                      label: Text(
+                        _assignedBranches.length == _allBranches.length
+                            ? 'Снять все'
+                            : 'Все филиалы',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),
@@ -714,6 +746,16 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                       : null,
                 );
               }),
+              const SizedBox(height: AppSpacing.md),
+              _PermissionsMatrix(
+                value: _permissions,
+                onChanged: canEditBranches
+                    ? (p) => setState(() => _permissions = p)
+                    : null,
+                expanded: _permsExpanded,
+                onExpand: () =>
+                    setState(() => _permsExpanded = !_permsExpanded),
+              ),
             ],
             ],
           ),
@@ -754,6 +796,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
         role: roleChanged ? _role : null,
         isActive: _isActive,
         assignedBranchIds: _assignedBranches,
+        permissions: _permissions != widget.user.permissions ? _permissions : null,
         displayName: nameChanged ? newName : null,
         email: emailChanged ? _emailCtrl.text.trim() : null,
       );
@@ -783,5 +826,368 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+}
+
+// ─── Permissions Matrix ───
+
+class _PermissionGroup {
+  const _PermissionGroup(this.title, this.icon, this.items);
+  final String title;
+  final IconData icon;
+  final List<_PermissionItem> items;
+}
+
+class _PermissionItem {
+  const _PermissionItem({
+    required this.label,
+    required this.description,
+    required this.read,
+    required this.write,
+    this.soon = false,
+  });
+
+  final String label;
+  final String description;
+  final bool Function(AccountantPermissions) read;
+  final AccountantPermissions Function(AccountantPermissions, bool) write;
+
+  /// Флаг сохраняется в БД, но в UI/RLS пока не проверяется.
+  /// Чтобы админ не считал, что разграничение действует, рендерим как
+  /// disabled + чип «СКОРО».
+  final bool soon;
+}
+
+class _PermissionsMatrix extends StatelessWidget {
+  const _PermissionsMatrix({
+    required this.value,
+    required this.onChanged,
+    required this.expanded,
+    required this.onExpand,
+  });
+
+  final AccountantPermissions value;
+  final ValueChanged<AccountantPermissions>? onChanged;
+  final bool expanded;
+  final VoidCallback onExpand;
+
+  static final _groups = <_PermissionGroup>[
+    _PermissionGroup(
+      'Переводы и операции',
+      Icons.swap_horiz_rounded,
+      [
+        _PermissionItem(
+          label: 'Видеть переводы',
+          description: 'Доступ к экрану переводов',
+          read: (p) => p.canTransfers,
+          write: (p, v) => p.copyWith(canTransfers: v),
+        ),
+        _PermissionItem(
+          label: 'Создавать / редактировать переводы',
+          description: 'Включая суммы и реквизиты',
+          read: (p) => p.canManageTransfers,
+          write: (p, v) => p.copyWith(canManageTransfers: v),
+        ),
+        _PermissionItem(
+          label: 'Перевод в любой филиал',
+          description: 'Иначе — только между назначенными',
+          read: (p) => p.canCrossBranchTransfers,
+          write: (p, v) => p.copyWith(canCrossBranchTransfers: v),
+          soon: true,
+        ),
+        _PermissionItem(
+          label: 'Видеть покупки',
+          description: 'Экран закупок',
+          read: (p) => p.canPurchases,
+          write: (p, v) => p.copyWith(canPurchases: v),
+        ),
+        _PermissionItem(
+          label: 'Создавать / редактировать покупки',
+          description: 'Включая суммы и поставщиков',
+          read: (p) => p.canManagePurchases,
+          write: (p, v) => p.copyWith(canManagePurchases: v),
+        ),
+        _PermissionItem(
+          label: 'Пополнение филиала',
+          description: 'Топ-апы счетов',
+          read: (p) => p.canBranchTopUp,
+          write: (p, v) => p.copyWith(canBranchTopUp: v),
+        ),
+        _PermissionItem(
+          label: 'Удаление транзакций',
+          description: 'Soft-delete переводов и покупок',
+          read: (p) => p.canDeleteTransactions,
+          write: (p, v) => p.copyWith(canDeleteTransactions: v),
+          soon: true,
+        ),
+      ],
+    ),
+    _PermissionGroup(
+      'Справочники и аналитика',
+      Icons.dashboard_outlined,
+      [
+        _PermissionItem(
+          label: 'Видеть клиентов',
+          description: '',
+          read: (p) => p.canClients,
+          write: (p, v) => p.copyWith(canClients: v),
+        ),
+        _PermissionItem(
+          label: 'Управление клиентами',
+          description: 'Создание и редактирование',
+          read: (p) => p.canManageClients,
+          write: (p, v) => p.copyWith(canManageClients: v),
+          soon: true,
+        ),
+        _PermissionItem(
+          label: 'Журнал операций',
+          description: 'Экран ledger',
+          read: (p) => p.canLedger,
+          write: (p, v) => p.copyWith(canLedger: v),
+        ),
+        _PermissionItem(
+          label: 'Аналитика',
+          description: 'Графики и сводки',
+          read: (p) => p.canAnalytics,
+          write: (p, v) => p.copyWith(canAnalytics: v),
+        ),
+        _PermissionItem(
+          label: 'Отчёты',
+          description: 'Сводные отчёты',
+          read: (p) => p.canReports,
+          write: (p, v) => p.copyWith(canReports: v),
+        ),
+        _PermissionItem(
+          label: 'Курсы валют',
+          description: 'Просмотр курсов',
+          read: (p) => p.canExchangeRates,
+          write: (p, v) => p.copyWith(canExchangeRates: v),
+        ),
+        _PermissionItem(
+          label: 'Изменение курсов',
+          description: 'Ручная установка курсов',
+          read: (p) => p.canManageExchangeRates,
+          write: (p, v) => p.copyWith(canManageExchangeRates: v),
+          soon: true,
+        ),
+        _PermissionItem(
+          label: 'Видеть филиалы',
+          description: 'Экран филиалов и счетов',
+          read: (p) => p.canBranchesView,
+          write: (p, v) => p.copyWith(canBranchesView: v),
+        ),
+      ],
+    ),
+    _PermissionGroup(
+      'Чувствительные данные',
+      Icons.lock_outline,
+      [
+        _PermissionItem(
+          label: 'Видеть балансы',
+          description: 'Числовые остатки счетов',
+          read: (p) => p.canViewBalances,
+          write: (p, v) => p.copyWith(canViewBalances: v),
+          soon: true,
+        ),
+        _PermissionItem(
+          label: 'Полные данные карт',
+          description: 'Номер карты, держатель, банк',
+          read: (p) => p.canViewCardDetails,
+          write: (p, v) => p.copyWith(canViewCardDetails: v),
+          soon: true,
+        ),
+        _PermissionItem(
+          label: 'Журнал аудита',
+          description: 'История действий',
+          read: (p) => p.canViewAuditLog,
+          write: (p, v) => p.copyWith(canViewAuditLog: v),
+          soon: true,
+        ),
+        _PermissionItem(
+          label: 'Экспорт данных',
+          description: 'CSV / Excel',
+          read: (p) => p.canExportData,
+          write: (p, v) => p.copyWith(canExportData: v),
+          soon: true,
+        ),
+        _PermissionItem(
+          label: 'Уведомления',
+          description: 'Экран уведомлений',
+          read: (p) => p.canViewNotifications,
+          write: (p, v) => p.copyWith(canViewNotifications: v),
+          soon: true,
+        ),
+      ],
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = context.isDark;
+    final readOnly = onChanged == null;
+    final enabledCount = _groups
+        .expand((g) => g.items)
+        .where((i) => i.read(value))
+        .length;
+    final totalCount = _groups.expand((g) => g.items).length;
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.2),
+        ),
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: onExpand,
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Row(
+                children: [
+                  Icon(Icons.tune_rounded,
+                      size: 18, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Матрица разрешений',
+                            style: theme.textTheme.labelLarge
+                                ?.copyWith(fontWeight: FontWeight.w600)),
+                        Text(
+                          'Включено: $enabledCount из $totalCount',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark
+                                ? AppColors.darkTextSecondary
+                                : AppColors.lightTextSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (!readOnly && expanded)
+                    Wrap(
+                      spacing: 4,
+                      children: [
+                        TextButton(
+                          onPressed: () =>
+                              onChanged?.call(AccountantPermissions.all),
+                          child: const Text('Все', style: TextStyle(fontSize: 12)),
+                        ),
+                        TextButton(
+                          onPressed: () =>
+                              onChanged?.call(AccountantPermissions.none),
+                          child: const Text('Минимум',
+                              style: TextStyle(fontSize: 12)),
+                        ),
+                      ],
+                    ),
+                  Icon(
+                    expanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (expanded) ...[
+            Divider(
+                height: 1,
+                color: theme.colorScheme.outline.withValues(alpha: 0.2)),
+            for (final group in _groups) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md, AppSpacing.md, AppSpacing.md, 4),
+                child: Row(
+                  children: [
+                    Icon(group.icon,
+                        size: 14,
+                        color: theme.colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Text(
+                      group.title,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.4,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              for (final item in group.items)
+                SwitchListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md, vertical: 0),
+                  title: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          item.label,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: item.soon
+                                ? theme.colorScheme.onSurface
+                                    .withValues(alpha: 0.55)
+                                : null,
+                          ),
+                        ),
+                      ),
+                      if (item.soon) ...[
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 1),
+                          decoration: BoxDecoration(
+                            color: AppColors.warning.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(100),
+                          ),
+                          child: const Text(
+                            'СКОРО',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                              color: AppColors.warning,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  subtitle: item.description.isEmpty && !item.soon
+                      ? null
+                      : Text(
+                          item.soon
+                              ? 'Флаг сохраняется, но проверка пока не реализована'
+                              : item.description,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: item.soon
+                                ? theme.colorScheme.onSurfaceVariant
+                                    .withValues(alpha: 0.7)
+                                : null,
+                          ),
+                        ),
+                  value: item.read(value),
+                  onChanged: (readOnly || item.soon)
+                      ? null
+                      : (v) => onChanged?.call(item.write(value, v)),
+                ),
+            ],
+            const SizedBox(height: 4),
+          ],
+        ],
+      ),
+    );
   }
 }

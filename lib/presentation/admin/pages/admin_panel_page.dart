@@ -359,7 +359,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
   Future<void> _confirmDeleteUser(BuildContext context, AppUser user) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Row(
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.red),
@@ -383,12 +383,12 @@ class _AdminPanelPageState extends State<AdminPanelPage>
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
             child: const Text('Отмена'),
           ),
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
             icon: const Icon(Icons.delete_forever_rounded),
             label: const Text('Удалить'),
           ),

@@ -5,6 +5,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
+import 'package:ethnocount/core/extensions/number_x.dart';
 import 'package:ethnocount/core/utils/balance_utils.dart';
 import 'package:ethnocount/core/utils/currency_utils.dart';
 import 'package:ethnocount/presentation/analytics/bloc/analytics_bloc.dart';
@@ -139,7 +140,6 @@ class _TreasuryTab extends StatelessWidget {
       return const Center(child: Text('Нет данных'));
     }
     final theme = Theme.of(context);
-    final numFmt = NumberFormat('#,##0.00');
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -154,7 +154,7 @@ class _TreasuryTab extends StatelessWidget {
             children: treasury!.totalLiquidity.entries.map((e) {
               return _KpiCard(
                 label: '${e.key} · ликвидность',
-                value: numFmt.format(e.value),
+                value: formatNumberSpaced(e.value),
                 icon: Icons.account_balance_wallet,
                 color: theme.colorScheme.primary,
               );
@@ -177,7 +177,7 @@ class _TreasuryTab extends StatelessWidget {
               children: treasury!.pendingLockedByCurrency.entries.map((e) {
                 return _KpiCard(
                   label: e.key == '\u2014' ? 'Заблокировано' : 'Заблокировано (${e.key})',
-                  value: numFmt.format(e.value),
+                  value: formatNumberSpaced(e.value),
                   icon: Icons.lock_clock,
                   color: Colors.orange,
                 );
@@ -201,10 +201,7 @@ class _TreasuryTab extends StatelessWidget {
             const SizedBox(height: AppSpacing.xl),
             Text('Крупные переводы (30 дней)', style: theme.textTheme.titleLarge),
             const SizedBox(height: AppSpacing.md),
-            _LargeTransfersTable(
-              transfers: treasury!.largeTransfers,
-              numFmt: numFmt,
-            ),
+            _LargeTransfersTable(transfers: treasury!.largeTransfers),
           ],
         ],
       ),
@@ -262,9 +259,8 @@ class _CapitalByBranchTable extends StatelessWidget {
 
 class _LargeTransfersTable extends StatelessWidget {
   final List<Map<String, dynamic>> transfers;
-  final NumberFormat numFmt;
 
-  const _LargeTransfersTable({required this.transfers, required this.numFmt});
+  const _LargeTransfersTable({required this.transfers});
 
   @override
   Widget build(BuildContext context) {
@@ -280,7 +276,7 @@ class _LargeTransfersTable extends StatelessWidget {
       rows: transfers.map((t) {
         return DataRow(cells: [
           DataCell(Text((t['id'] as String?)?.substring(0, 8) ?? '')),
-          DataCell(Text(numFmt.format(t['amount'] ?? 0))),
+          DataCell(Text(formatNumberSpaced(t['amount'] ?? 0))),
           DataCell(Text(t['currency'] as String? ?? '')),
           DataCell(Text(t['from'] ?? '')),
           DataCell(Text(t['to'] ?? '')),
@@ -302,7 +298,6 @@ class _BranchesTab extends StatelessWidget {
     if (branches.isEmpty) return const Center(child: Text('Нет данных'));
 
     final theme = Theme.of(context);
-    final numFmt = NumberFormat('#,##0.00');
 
     return ListView.builder(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -362,7 +357,7 @@ class _BranchesTab extends StatelessWidget {
                         const SizedBox(width: AppSpacing.lg),
                         _MiniStat('В ожидании', '${b.pendingTransfersCount}'),
                         const SizedBox(width: AppSpacing.lg),
-                        _MiniStat('Комиссии (сумма)', numFmt.format(b.totalCommissions)),
+                        _MiniStat('Комиссии (сумма)', formatNumberSpaced(b.totalCommissions)),
                       ],
                     ),
                     Text(
@@ -381,7 +376,7 @@ class _BranchesTab extends StatelessWidget {
                           dense: true,
                           title: Text(e.key),
                           trailing: Text(
-                            '${numFmt.format(acc['balance'] ?? 0)} ${acc['currency'] ?? ''}',
+                            '${formatNumberSpaced(acc['balance'] ?? 0)} ${acc['currency'] ?? ''}',
                             style: theme.textTheme.bodyMedium
                                 ?.copyWith(fontWeight: FontWeight.bold),
                           ),
@@ -413,8 +408,8 @@ class _BranchesTab extends StatelessWidget {
                             return DataRow(cells: [
                               DataCell(Text(mc.$1)),
                               DataCell(Text(mc.$2)),
-                              DataCell(Text(numFmt.format(m['debit'] ?? 0))),
-                              DataCell(Text(numFmt.format(m['credit'] ?? 0))),
+                              DataCell(Text(formatNumberSpaced(m['debit'] ?? 0))),
+                              DataCell(Text(formatNumberSpaced(m['credit'] ?? 0))),
                               DataCell(Text('${m['count'] ?? 0}')),
                             ]);
                           }).toList();
@@ -465,7 +460,6 @@ class _TransfersTab extends StatelessWidget {
     if (transfers == null) return const Center(child: Text('Нет данных'));
 
     final theme = Theme.of(context);
-    final numFmt = NumberFormat('#,##0.00');
     final t = transfers!;
 
     return SingleChildScrollView(
@@ -491,7 +485,7 @@ class _TransfersTab extends StatelessWidget {
                 ...t.volumeByCurrency.entries.map((e) {
                   return _KpiCard(
                     label: 'Объём (${e.key})',
-                    value: numFmt.format(e.value),
+                    value: formatNumberSpaced(e.value),
                     icon: Icons.trending_up,
                     color: theme.colorScheme.primary,
                   );
@@ -499,7 +493,7 @@ class _TransfersTab extends StatelessWidget {
               else
                 _KpiCard(
                   label: 'Объём (amount, выборка)',
-                  value: numFmt.format(t.totalVolume),
+                  value: formatNumberSpaced(t.totalVolume),
                   icon: Icons.trending_up,
                   color: theme.colorScheme.primary,
                 ),
@@ -517,7 +511,7 @@ class _TransfersTab extends StatelessWidget {
               ),
               _KpiCard(
                 label: 'Комиссии (сумма)',
-                value: numFmt.format(t.totalCommissions),
+                value: formatNumberSpaced(t.totalCommissions),
                 icon: Icons.payments,
                 color: Colors.deepOrange,
               ),
@@ -708,7 +702,6 @@ class _CurrencyTab extends StatelessWidget {
     if (currencies.isEmpty) return const Center(child: Text('Нет данных о валютах'));
 
     final theme = Theme.of(context);
-    final numFmt = NumberFormat('#,##0.00');
 
     return ListView.builder(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -726,7 +719,7 @@ class _CurrencyTab extends StatelessWidget {
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             subtitle: Text('Текущий курс: ${c.latestRate.toStringAsFixed(4)}'),
             trailing: Text(
-              'Объём: ${numFmt.format(c.conversionVolume)}',
+              'Объём: ${formatNumberSpaced(c.conversionVolume)}',
               style: theme.textTheme.bodySmall,
             ),
             children: [

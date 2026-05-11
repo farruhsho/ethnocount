@@ -13,6 +13,7 @@ class AuthTextField extends StatelessWidget {
     this.textInputAction = TextInputAction.next,
     this.validator,
     this.onFieldSubmitted,
+    this.autofillHints,
   });
 
   final TextEditingController controller;
@@ -23,6 +24,11 @@ class AuthTextField extends StatelessWidget {
   final TextInputAction textInputAction;
   final String? Function(String?)? validator;
   final void Function(String)? onFieldSubmitted;
+
+  /// Подсказки для автозаполнения (см. AutofillHints).  Браузер / iOS / Android
+  /// предложат сохранить и подставить креды только если поле размечено
+  /// (email/username + password) и обёрнуто в [AutofillGroup].
+  final Iterable<String>? autofillHints;
 
   @override
   Widget build(BuildContext context) {
@@ -35,6 +41,7 @@ class AuthTextField extends StatelessWidget {
       textInputAction: textInputAction,
       validator: validator,
       onFieldSubmitted: onFieldSubmitted,
+      autofillHints: autofillHints,
       style: TextStyle(
         color: Theme.of(context).colorScheme.onSurface,
         fontSize: 16,

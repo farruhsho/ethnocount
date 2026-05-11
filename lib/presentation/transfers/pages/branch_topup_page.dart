@@ -120,24 +120,20 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
               context.watch<AuthBloc>().state.user,
             );
             final screenWidth = MediaQuery.sizeOf(context).width;
-            final screenHeight = MediaQuery.sizeOf(context).height;
             final isMobile = screenWidth < AppSpacing.breakpointMobile;
             final padding = isMobile ? AppSpacing.md : AppSpacing.lg;
-            final tabViewHeight = isMobile
-                ? (screenHeight - kToolbarHeight - 56 - padding * 2 - 24)
-                : 520.0;
 
             return DefaultTabController(
               length: 2,
-              child: SingleChildScrollView(
-                padding: EdgeInsets.all(padding),
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 600),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        TabBar(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 600),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(padding, padding, padding, 0),
+                        child: TabBar(
                           isScrollable: isMobile,
                           labelColor: Theme.of(context).colorScheme.primary,
                           tabAlignment: isMobile ? TabAlignment.start : TabAlignment.fill,
@@ -152,47 +148,22 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                             ),
                           ],
                         ),
-                        SizedBox(height: isMobile ? AppSpacing.sm : AppSpacing.md),
-                        ExpansionTile(
-                          leading: Icon(
-                            Icons.help_outline_rounded,
-                            size: 20,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                          title: Text(
-                            'Какой режим выбрать?',
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                          ),
-                          shape: const Border(),
-                          collapsedShape: const Border(),
-                          tilePadding: EdgeInsets.zero,
-                          childrenPadding: const EdgeInsets.only(bottom: AppSpacing.md),
+                      ),
+                      // ── Контент вкладок берёт всё оставшееся место.
+                      // Ранее тут был внешний SingleChildScrollView + фиксированная
+                      // высота TabBarView (clamp 280..600), что на мобилке давало
+                      // вложенные скроллы и отрезало кнопку «Пополнить» под фолд.
+                      // Теперь Expanded → каждый таб скроллится сам, кнопка всегда
+                      // достижима через свой внутренний SingleChildScrollView.
+                      Expanded(
+                        child: TabBarView(
                           children: [
-                            Text(
-                              '«За счёт источника» — списание с выбранного филиала и счёта; '
-                              'на счёте-источнике должно хватать денег на сумму перевода.\n\n'
-                              '«Без источника» — прямое зачисление (корректировка), например наличные '
-                              'или поступление с банка, без списания с другого филиала.',
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                    height: 1.45,
-                                  ),
-                            ),
+                            _buildFromSourceTab(context, branches, isMobile),
+                            _buildDirectTab(context, branches, isMobile),
                           ],
                         ),
-                        SizedBox(height: isMobile ? AppSpacing.sm : AppSpacing.md),
-                        SizedBox(
-                          height: tabViewHeight.clamp(280.0, 600.0),
-                          child: TabBarView(
-                            children: [
-                              _buildFromSourceTab(context, branches, isMobile),
-                              _buildDirectTab(context, branches, isMobile),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -205,7 +176,14 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
 
   Widget _buildFromSourceTab(BuildContext context, List<Branch> branches, [bool isMobile = false]) {
     final cardPadding = isMobile ? AppSpacing.md : AppSpacing.lg;
+    final outerPadding = isMobile ? AppSpacing.md : AppSpacing.lg;
     return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        outerPadding,
+        AppSpacing.md,
+        outerPadding,
+        AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
+      ),
       child: IgnorePointer(
         ignoring: _isSubmitting,
         child: Form(
@@ -514,7 +492,14 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
 
   Widget _buildDirectTab(BuildContext context, List<Branch> branches, [bool isMobile = false]) {
     final cardPadding = isMobile ? AppSpacing.md : AppSpacing.lg;
+    final outerPadding = isMobile ? AppSpacing.md : AppSpacing.lg;
     return SingleChildScrollView(
+      padding: EdgeInsets.fromLTRB(
+        outerPadding,
+        AppSpacing.md,
+        outerPadding,
+        AppSpacing.lg + MediaQuery.viewInsetsOf(context).bottom,
+      ),
       child: IgnorePointer(
         ignoring: _isDirectSubmitting,
         child: Form(

@@ -43,4 +43,7 @@ class RouteNames {
 
   // ─── Reports ───
   static const String reports = 'reports';
+
+  // ─── Approvals ───
+  static const String approvals = 'approvals';
 }

@@ -23,6 +23,7 @@ abstract class BranchRepository {
     required String name,
     required String code,
     required String baseCurrency,
+    List<String>? supportedCurrencies,
     String? address,
     String? phone,
     String? notes,
@@ -30,12 +31,14 @@ abstract class BranchRepository {
   });
 
   /// Update a branch. Changes to [code] are additionally recorded in
-  /// `branch_code_history`.
+  /// `branch_code_history`. Pass [supportedCurrencies]=null to leave the field
+  /// untouched, or an empty list to reset it (server interprets as "all").
   Future<Either<Failure, void>> updateBranch({
     required String branchId,
     String? name,
     String? code,
     String? baseCurrency,
+    List<String>? supportedCurrencies,
     String? address,
     String? phone,
     String? notes,

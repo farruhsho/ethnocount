@@ -74,6 +74,14 @@ class ClientTransaction extends Equatable {
   final double? balanceAfter;
   final DateTime createdAt;
 
+  /// Если ненулевое — операция является частью конвертации валют.  Обе ноги
+  /// (debit + deposit) получают одинаковый conversionId, в UI их можно
+  /// отобразить как одну строку «Конвертация USD → RUB».
+  final String? conversionId;
+
+  /// JSON-метаданные конвертации (from/to/rate/fromAmount/toAmount).
+  final Map<String, dynamic>? conversionMeta;
+
   const ClientTransaction({
     required this.id,
     required this.clientId,
@@ -86,15 +94,44 @@ class ClientTransaction extends Equatable {
     this.transactionCode,
     this.balanceAfter,
     required this.createdAt,
+    this.conversionId,
+    this.conversionMeta,
   });
 
   bool get isDeposit => type == 'deposit';
+
+  /// Является ли операция конвертацией.
+  bool get isConversion => conversionId != null;
 
   @override
   List<Object?> get props => [
         id, clientId, type, amount, currency, description,
         createdBy, createdByName, transactionCode, balanceAfter, createdAt,
+        conversionId, conversionMeta,
       ];
+}
+
+/// Результат успешной конвертации валют клиента.
+class ClientConversionResult extends Equatable {
+  final String conversionId;
+  final String fromCurrency;
+  final String toCurrency;
+  final double fromAmount;
+  final double toAmount;
+  final double rate;
+
+  const ClientConversionResult({
+    required this.conversionId,
+    required this.fromCurrency,
+    required this.toCurrency,
+    required this.fromAmount,
+    required this.toAmount,
+    required this.rate,
+  });
+
+  @override
+  List<Object?> get props =>
+      [conversionId, fromCurrency, toCurrency, fromAmount, toAmount, rate];
 }
 
 /// Denormalized client balance document (O(1) read).

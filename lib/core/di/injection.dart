@@ -23,6 +23,7 @@ import 'package:ethnocount/data/datasources/remote/analytics_remote_ds.dart';
 import 'package:ethnocount/data/datasources/remote/client_remote_ds.dart';
 import 'package:ethnocount/data/datasources/remote/user_remote_ds.dart';
 import 'package:ethnocount/data/datasources/remote/purchase_remote_ds.dart';
+import 'package:ethnocount/data/datasources/remote/approval_remote_ds.dart';
 
 // ─── Repositories (interface) ───
 import 'package:ethnocount/domain/repositories/auth_repository.dart';
@@ -34,6 +35,7 @@ import 'package:ethnocount/domain/repositories/audit_repository.dart';
 import 'package:ethnocount/domain/repositories/exchange_rate_repository.dart';
 import 'package:ethnocount/domain/repositories/client_repository.dart';
 import 'package:ethnocount/domain/repositories/purchase_repository.dart';
+import 'package:ethnocount/domain/repositories/approval_repository.dart';
 
 // ─── Repositories (implementation) ───
 import 'package:ethnocount/data/repositories/auth_repo_impl.dart';
@@ -45,6 +47,7 @@ import 'package:ethnocount/data/repositories/audit_repo_impl.dart';
 import 'package:ethnocount/data/repositories/exchange_rate_repo_impl.dart';
 import 'package:ethnocount/data/repositories/client_repo_impl.dart';
 import 'package:ethnocount/data/repositories/purchase_repo_impl.dart';
+import 'package:ethnocount/data/repositories/approval_repo_impl.dart';
 
 // ─── Services ───
 import 'package:ethnocount/domain/services/server_export_service.dart';
@@ -110,6 +113,7 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => ClientRemoteDataSource(supabase));
   sl.registerLazySingleton(() => UserRemoteDataSource(supabase));
   sl.registerLazySingleton(() => PurchaseRemoteDataSource(supabase));
+  sl.registerLazySingleton(() => ApprovalRemoteDataSource(supabase));
 
   // ─── Repositories ───
   sl.registerLazySingleton<AuthRepository>(
@@ -138,6 +142,9 @@ Future<void> initDependencies() async {
   );
   sl.registerLazySingleton<PurchaseRepository>(
     () => PurchaseRepoImpl(sl()),
+  );
+  sl.registerLazySingleton<ApprovalRepository>(
+    () => ApprovalRepoImpl(sl()),
   );
 
   // ─── Services ───

@@ -9,6 +9,7 @@ import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/branch_account.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
+import 'package:ethnocount/presentation/approvals/approval_guards.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
@@ -233,16 +234,17 @@ class _ManageTransfersPageState extends State<ManageTransfersPage> {
             child: const Text('Отмена'),
           ),
           FilledButton(
-            onPressed: () {
-              context.read<TransferBloc>().add(
-                    TransferRejectRequested(
-                      t.id,
-                      reasonCtrl.text.trim().isEmpty
-                          ? 'Отклонён'
-                          : reasonCtrl.text.trim(),
-                    ),
-                  );
+            onPressed: () async {
+              final reason = reasonCtrl.text.trim().isEmpty
+                  ? 'Отклонён'
+                  : reasonCtrl.text.trim();
               Navigator.pop(ctx);
+              if (!context.mounted) return;
+              final go = await context.guardRejectTransfer(t, reason: reason);
+              if (!go || !context.mounted) return;
+              context
+                  .read<TransferBloc>()
+                  .add(TransferRejectRequested(t.id, reason));
             },
             style: FilledButton.styleFrom(backgroundColor: AppColors.error),
             child: const Text('Отклонить'),

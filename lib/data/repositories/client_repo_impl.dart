@@ -120,6 +120,42 @@ class ClientRepoImpl implements ClientRepository {
   }
 
   @override
+  Future<Either<Failure, ClientConversionResult>> convertClientCurrency({
+    required String clientId,
+    required String fromCurrency,
+    required String toCurrency,
+    required double amount,
+    required double rate,
+    String? description,
+  }) async {
+    try {
+      final result = await _remoteDs.convertClientCurrency(
+        clientId: clientId,
+        fromCurrency: fromCurrency,
+        toCurrency: toCurrency,
+        amount: amount,
+        rate: rate,
+        description: description,
+      );
+      if (result['success'] == true) {
+        return Right(ClientConversionResult(
+          conversionId: result['conversionId']?.toString() ?? '',
+          fromCurrency: fromCurrency,
+          toCurrency: toCurrency,
+          fromAmount: (result['fromAmount'] as num?)?.toDouble() ?? amount,
+          toAmount: (result['toAmount'] as num?)?.toDouble() ?? (amount * rate),
+          rate: (result['rate'] as num?)?.toDouble() ?? rate,
+        ));
+      }
+      return Left(ServerFailure(result['error']?.toString() ?? 'Failed'));
+    } on CallableFunctionsException catch (e) {
+      return Left(ServerFailure(e.message));
+    } catch (e) {
+      return Left(UnexpectedFailure(e.toString()));
+    }
+  }
+
+  @override
   Future<Either<Failure, void>> setTelegramChatId({
     required String clientId,
     required String? chatId,

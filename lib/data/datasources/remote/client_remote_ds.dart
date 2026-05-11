@@ -270,6 +270,26 @@ class ClientRemoteDataSource {
     return Map<String, dynamic>.from(result as Map);
   }
 
+  /// Atomic currency conversion within a client wallet.
+  Future<Map<String, dynamic>> convertClientCurrency({
+    required String clientId,
+    required String fromCurrency,
+    required String toCurrency,
+    required double amount,
+    required double rate,
+    String? description,
+  }) async {
+    final result = await _client.rpc('convert_client_currency', params: {
+      'p_client_id': clientId,
+      'p_from_currency': fromCurrency,
+      'p_to_currency': toCurrency,
+      'p_amount': amount,
+      'p_rate': rate,
+      'p_description': description,
+    });
+    return Map<String, dynamic>.from(result as Map);
+  }
+
   double _round(double value, int decimals) {
     final factor = _powerOfTen(decimals);
     return (value * factor).round() / factor;
@@ -332,6 +352,11 @@ class ClientRemoteDataSource {
   ]) {
     final createdBy = data['created_by'] as String? ?? '';
     final balanceRaw = data['balance_after'];
+    final convMetaRaw = data['conversion_meta'];
+    Map<String, dynamic>? convMeta;
+    if (convMetaRaw is Map) {
+      convMeta = Map<String, dynamic>.from(convMetaRaw);
+    }
     return ClientTransaction(
       id: data['id'] ?? '',
       clientId: data['client_id'] ?? '',
@@ -344,6 +369,8 @@ class ClientRemoteDataSource {
       transactionCode: data['transaction_code'] as String?,
       balanceAfter: balanceRaw is num ? balanceRaw.toDouble() : null,
       createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
+      conversionId: data['conversion_id'] as String?,
+      conversionMeta: convMeta,
     );
   }
 }

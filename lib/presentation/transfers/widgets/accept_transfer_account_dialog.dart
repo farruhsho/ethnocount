@@ -4,6 +4,7 @@ import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/domain/entities/branch_account.dart';
+import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
 import 'package:ethnocount/domain/repositories/branch_repository.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
@@ -129,17 +130,20 @@ void showAcceptTransferAccountDialog(BuildContext context, Transfer t) {
                                       ? null
                                       : r.key,
                                   decoration: const InputDecoration(
-                                    labelText: 'Счёт',
+                                    labelText: 'Счёт зачисления',
                                     isDense: true,
                                     border: OutlineInputBorder(),
                                   ),
+                                  // Item с иконкой типа (касса/карта/резерв/
+                                  // транзит), названием, валютой и маской
+                                  // карты — проще ориентироваться, какой
+                                  // счёт выбрать (была голая строка
+                                  // «Имя (USD)» без визуальной разницы).
                                   items: accountsForPicker
                                       .map((a) => DropdownMenuItem(
                                             value: a.id,
-                                            child: Text(
-                                              '${a.name} (${a.currency})',
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
+                                            child: _AccountDropdownLabel(
+                                                account: a),
                                           ))
                                       .toList(),
                                   onChanged: (v) => setState(() {
@@ -241,4 +245,69 @@ void showAcceptTransferAccountDialog(BuildContext context, Transfer t) {
       },
     ),
   );
+}
+
+/// Compact-row для DropdownMenuItem: иконка типа + имя + бейдж валюты +
+/// маска карты, если она задана. Помогает кассиру с одного взгляда
+/// различать «Касса USD» и «Карта Сбер RUB».
+class _AccountDropdownLabel extends StatelessWidget {
+  const _AccountDropdownLabel({required this.account});
+  final BranchAccount account;
+
+  IconData get _typeIcon {
+    switch (account.type) {
+      case AccountType.cash:
+        return Icons.payments_rounded;
+      case AccountType.card:
+        return Icons.credit_card_rounded;
+      case AccountType.reserve:
+        return Icons.lock_outline_rounded;
+      case AccountType.transit:
+        return Icons.local_shipping_outlined;
+    }
+  }
+
+  Color _typeColor() {
+    switch (account.type) {
+      case AccountType.cash:
+        return Colors.green;
+      case AccountType.card:
+        return Colors.blue;
+      case AccountType.reserve:
+        return Colors.orange;
+      case AccountType.transit:
+        return Colors.purple;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tint = _typeColor();
+    final mask = account.cardLast4 != null && account.cardLast4!.isNotEmpty
+        ? ' •••${account.cardLast4}'
+        : '';
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(_typeIcon, size: 16, color: tint),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            '${account.name}$mask',
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          account.currency,
+          style: const TextStyle(
+            fontFamily: 'JetBrains Mono',
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
 }

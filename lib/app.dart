@@ -133,7 +133,13 @@ class _RootMaterialAppState extends State<_RootMaterialApp>
   void _onRouterNavigated() {
     final r = _router;
     if (r == null) return;
-    unawaited(RoutePersistence.onNavigated(r.state.uri));
+    // GoRouter.state reads the last route match; if a stray pop empties
+    // the stack we don't want this listener to throw and tear down the app.
+    try {
+      unawaited(RoutePersistence.onNavigated(r.state.uri));
+    } catch (_) {
+      // Router stack is transiently empty (e.g. mid-redirect) — skip.
+    }
   }
 
   @override

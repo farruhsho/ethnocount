@@ -126,6 +126,7 @@ class BranchRemoteDataSource {
     required String name,
     required String code,
     required String baseCurrency,
+    List<String>? supportedCurrencies,
     String? address,
     String? phone,
     String? notes,
@@ -135,6 +136,7 @@ class BranchRemoteDataSource {
       'p_name': name,
       'p_code': code,
       'p_base_currency': baseCurrency,
+      'p_supported_currencies': supportedCurrencies,
       'p_address': address,
       'p_phone': phone,
       'p_notes': notes,
@@ -148,6 +150,7 @@ class BranchRemoteDataSource {
     String? name,
     String? code,
     String? baseCurrency,
+    List<String>? supportedCurrencies,
     String? address,
     String? phone,
     String? notes,
@@ -159,6 +162,7 @@ class BranchRemoteDataSource {
       'p_name': name,
       'p_code': code,
       'p_base_currency': baseCurrency,
+      'p_supported_currencies': supportedCurrencies,
       'p_address': address,
       'p_phone': phone,
       'p_notes': notes,
@@ -264,11 +268,21 @@ class BranchRemoteDataSource {
   // ── Mapping helpers ───────────────────────────────────────────
 
   Branch _mapBranch(Map<String, dynamic> data) {
+    final rawSupported = data['supported_currencies'];
+    List<String>? supported;
+    if (rawSupported is List) {
+      supported = rawSupported
+          .map((e) => e?.toString() ?? '')
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (supported.isEmpty) supported = null;
+    }
     return Branch(
       id: data['id'] ?? '',
       name: data['name'] ?? '',
       code: data['code'] ?? '',
       baseCurrency: data['base_currency'] ?? 'USD',
+      supportedCurrencies: supported,
       isActive: data['is_active'] ?? true,
       address: data['address'] as String?,
       phone: data['phone'] as String?,

@@ -8,9 +8,11 @@ import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/core/extensions/number_x.dart';
 import 'package:ethnocount/core/utils/branch_access.dart';
+import 'package:ethnocount/core/utils/currency_utils.dart';
 import 'package:flutter/services.dart';
 import 'package:ethnocount/core/utils/decimal_input_formatter.dart';
 import 'package:ethnocount/core/utils/phone_input_formatter.dart';
+import 'package:ethnocount/data/datasources/remote/transfer_remote_ds.dart';
 import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/branch_account.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
@@ -40,6 +42,19 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
   final _receiverPhoneCtrl = TextEditingController();
   final _receiverInfoCtrl = TextEditingController();
   final _descriptionCtrl = TextEditingController();
+
+  // ── Phone-based contact lookup ──
+  // Когда оператор вводит номер, который уже встречался в истории,
+  // подтягиваем имя/доп.инфо/валюту из самого свежего перевода. Поля
+  // остаются редактируемыми. Чтобы не клабить уже введённые оператором
+  // данные, перезаписываем только пустые поля. После автозаполнения
+  // показываем хинт под полем, чтобы было видно «откуда взялось».
+  Timer? _senderLookupDebounce;
+  Timer? _receiverLookupDebounce;
+  String? _senderAutofillHint;
+  String? _receiverAutofillHint;
+  String _lastSenderLookup = '';
+  String _lastReceiverLookup = '';
 
   /// Clears "0" / "0.0" placeholder when field receives focus.
   void _smartClear(TextEditingController ctrl) {
@@ -184,7 +199,113 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     _receiverPhoneCtrl.dispose();
     _receiverInfoCtrl.dispose();
     _descriptionCtrl.dispose();
+    _senderLookupDebounce?.cancel();
+    _receiverLookupDebounce?.cancel();
     super.dispose();
+  }
+
+  /// Дебаунс-обёртка над `findContactByPhone` для одной из сторон ('sender'
+  /// либо 'receiver'). Срабатывает через 600 мс после последней правки поля.
+  /// Не запрашивает повторно один и тот же номер. Заполняет только пустые
+  /// поля, чтобы не перезатереть введённое оператором.
+  void _scheduleContactLookup({required String side}) {
+    final isSender = side == 'sender';
+    final phoneCtrl = isSender ? _senderPhoneCtrl : _receiverPhoneCtrl;
+    if (isSender) {
+      _senderLookupDebounce?.cancel();
+    } else {
+      _receiverLookupDebounce?.cancel();
+    }
+    final phone = phoneCtrl.text.trim();
+    if (phone.length < 4) {
+      // Слишком короткий номер — снимаем подсказку, если была.
+      if (mounted) {
+        setState(() {
+          if (isSender) {
+            _senderAutofillHint = null;
+          } else {
+            _receiverAutofillHint = null;
+          }
+        });
+      }
+      return;
+    }
+    final timer = Timer(const Duration(milliseconds: 600), () async {
+      // Проверяем, что значение не изменилось пока мы спали.
+      if (phoneCtrl.text.trim() != phone) return;
+      // И что мы не дёргали тот же номер только что.
+      if (isSender && _lastSenderLookup == phone) return;
+      if (!isSender && _lastReceiverLookup == phone) return;
+      try {
+        final snap = await sl<TransferRemoteDataSource>()
+            .findContactByPhone(phone: phone, side: side);
+        if (!mounted) return;
+        if (isSender) {
+          _lastSenderLookup = phone;
+        } else {
+          _lastReceiverLookup = phone;
+        }
+        if (snap == null) {
+          setState(() {
+            if (isSender) {
+              _senderAutofillHint = null;
+            } else {
+              _receiverAutofillHint = null;
+            }
+          });
+          return;
+        }
+        final nameCtrl = isSender ? _senderNameCtrl : _receiverNameCtrl;
+        final infoCtrl = isSender ? _senderInfoCtrl : _receiverInfoCtrl;
+        final filled = <String>[];
+        if ((snap.name ?? '').trim().isNotEmpty &&
+            nameCtrl.text.trim().isEmpty) {
+          nameCtrl.text = snap.name!.trim();
+          filled.add('имя');
+        }
+        if ((snap.info ?? '').trim().isNotEmpty &&
+            infoCtrl.text.trim().isEmpty) {
+          infoCtrl.text = snap.info!.trim();
+          filled.add('доп. инфо');
+        }
+        // Валюту трогаем только для «отправителя» (валюта перевода логически
+        // привязана к источнику). И только если оператор не успел поменять
+        // её вручную — иначе оставляем как есть.
+        if (isSender &&
+            (snap.currency ?? '').isNotEmpty &&
+            snap.currency != _transferCurrency &&
+            _availableCurrencies().contains(snap.currency)) {
+          setState(() => _transferCurrency = snap.currency!);
+          filled.add('валюту ${snap.currency}');
+        }
+        setState(() {
+          final hint = filled.isEmpty
+              ? 'Найдено в истории — данные совпадают'
+              : 'Подставлено из истории: ${filled.join(', ')} (можно изменить)';
+          if (isSender) {
+            _senderAutofillHint = hint;
+          } else {
+            _receiverAutofillHint = hint;
+          }
+        });
+      } catch (_) {
+        // Ошибки поиска не должны мешать оператору. Просто молча скрываем хинт.
+        if (mounted) {
+          setState(() {
+            if (isSender) {
+              _senderAutofillHint = null;
+            } else {
+              _receiverAutofillHint = null;
+            }
+          });
+        }
+      }
+    });
+    if (isSender) {
+      _senderLookupDebounce = timer;
+    } else {
+      _receiverLookupDebounce = timer;
+    }
   }
 
   @override
@@ -222,6 +343,8 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         }
       },
       builder: (context, state) {
+        final isCreating = state.status == TransferBlocStatus.creating;
+        final isMobile = !context.isDesktop;
         return Scaffold(
           appBar: AppBar(
             title: const Text('Новый перевод'),
@@ -229,6 +352,20 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
               icon: const Icon(Icons.arrow_back),
               onPressed: () => context.go('/transfers'),
             ),
+            actions: [
+              if (isMobile)
+                IconButton(
+                  tooltip: isCreating ? 'Обработка…' : 'Сохранить перевод',
+                  onPressed: isCreating ? null : () => _submit(context),
+                  icon: isCreating
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check_rounded),
+                ),
+            ],
           ),
           body: Center(
             child: ConstrainedBox(
@@ -236,7 +373,12 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
               child: Form(
                 key: _formKey,
                 child: ListView(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
+                  padding: EdgeInsets.fromLTRB(
+                    AppSpacing.lg,
+                    AppSpacing.lg,
+                    AppSpacing.lg,
+                    isMobile ? 96 : AppSpacing.lg,
+                  ),
                   children: [
                     if (context.isDesktop)
                       _buildDesktopForm(context, state)
@@ -247,6 +389,36 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
               ),
             ),
           ),
+          bottomNavigationBar: isMobile
+              ? SafeArea(
+                  top: false,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(
+                      AppSpacing.lg,
+                      AppSpacing.sm,
+                      AppSpacing.lg,
+                      AppSpacing.md,
+                    ),
+                    child: SizedBox(
+                      height: 48,
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: isCreating ? null : () => _submit(context),
+                        icon: isCreating
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.send_rounded),
+                        label: Text(
+                            isCreating ? 'Обработка…' : 'Создать перевод'),
+                      ),
+                    ),
+                  ),
+                )
+              : null,
         );
       },
     );
@@ -285,8 +457,9 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         _buildDetailsSection(),
         const SizedBox(height: AppSpacing.sectionGap),
         _buildPreview(),
-        const SizedBox(height: AppSpacing.sectionGap),
-        _buildSubmitButton(context, state),
+        // На мобильной версии кнопка «Создать перевод» вынесена в
+        // bottomNavigationBar и в действие AppBar, поэтому встроенная
+        // кнопка тут не нужна.
       ],
     );
   }
@@ -363,7 +536,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                     (a) => DropdownMenuItem(
                       value: a.id,
                       child: Text(
-                        '${_currFlag(a.currency)} ${a.name} (${a.currency})',
+                        '${CurrencyUtils.flag(a.currency)} ${a.name} (${a.currency})',
                       ),
                     ),
                   )
@@ -412,18 +585,25 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         const SizedBox(height: AppSpacing.formFieldGap),
         TextFormField(
           controller: _senderPhoneCtrl,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Телефон отправителя',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.phone_outlined, size: 20),
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.phone_outlined, size: 20),
             isDense: true,
             hintText: '+7 900 123 45 67',
+            helperText: _senderAutofillHint,
+            helperMaxLines: 2,
+            helperStyle: TextStyle(
+              color: AppColors.primary,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           keyboardType: TextInputType.phone,
           inputFormatters: [
             PhoneInputFormatter(),
             LengthLimitingTextInputFormatter(kPhoneMaxFormattedLength),
           ],
+          onChanged: (_) => _scheduleContactLookup(side: 'sender'),
         ),
         const SizedBox(height: AppSpacing.formFieldGap),
         TextFormField(
@@ -515,18 +695,25 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         const SizedBox(height: AppSpacing.formFieldGap),
         TextFormField(
           controller: _receiverPhoneCtrl,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             labelText: 'Телефон получателя',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.phone_outlined, size: 20),
+            border: const OutlineInputBorder(),
+            prefixIcon: const Icon(Icons.phone_outlined, size: 20),
             isDense: true,
             hintText: '+998 90 123 45 67',
+            helperText: _receiverAutofillHint,
+            helperMaxLines: 2,
+            helperStyle: TextStyle(
+              color: AppColors.primary,
+              fontWeight: FontWeight.w500,
+            ),
           ),
           keyboardType: TextInputType.phone,
           inputFormatters: [
             PhoneInputFormatter(),
             LengthLimitingTextInputFormatter(kPhoneMaxFormattedLength),
           ],
+          onChanged: (_) => _scheduleContactLookup(side: 'receiver'),
         ),
         const SizedBox(height: AppSpacing.formFieldGap),
         TextFormField(
@@ -544,217 +731,203 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     );
   }
 
-  static const _currencies = ['USD', 'USDT', 'UZS', 'RUB', 'EUR', 'TRY', 'AED', 'CNY', 'KZT', 'KGS', 'TJS'];
+  /// Возвращает список валют, доступных для выбранного отправляющего филиала.
+  /// Если в настройках филиала задан `supportedCurrencies` — используем его,
+  /// иначе — глобальный список (для обратной совместимости).
+  List<String> _availableCurrencies({Branch? branch}) {
+    final supported = branch?.supportedCurrencies;
+    if (supported != null && supported.isNotEmpty) {
+      return List<String>.from(supported);
+    }
+    return CurrencyUtils.supported;
+  }
 
   Widget _buildDetailsSection() {
+    final fromBranch = _branches
+        .where((b) => b.id == _fromBranchId)
+        .cast<Branch?>()
+        .firstWhere((_) => true, orElse: () => null);
+    final senderCurrencies = _availableCurrencies(branch: fromBranch);
+
     return _FormSection(
       title: 'Параметры перевода',
       icon: Icons.tune_rounded,
       children: [
-        Builder(builder: (_) {
-          final opts = List<String>.from(_currencies);
-          if (!opts.contains(_transferCurrency) && _transferCurrency.isNotEmpty) {
-            opts.insert(0, _transferCurrency);
-          }
-          final val = _transferCurrency.isEmpty ? 'USD' : _transferCurrency;
-          return DropdownButtonFormField<String>(
-            initialValue: opts.contains(val) ? val : opts.first,
-            decoration: const InputDecoration(
-              labelText: 'Валюта перевода',
-              border: OutlineInputBorder(),
-            ),
-            items: opts.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-            onChanged: (v) {
-                setState(() {
-                  _transferCurrency = v ?? _transferCurrency;
-                  if (_toCurrency == _transferCurrency || !_currencies.contains(_toCurrency)) {
-                    _toCurrency = _transferCurrency;
-                  }
-                  if (_commissionCurrency == _transferCurrency || !_currencies.contains(_commissionCurrency)) {
-                    _commissionCurrency = _transferCurrency;
-                  }
-                  _resetRateInput();
-                });
-              },
-          );
-        }),
-        const SizedBox(height: AppSpacing.sm),
-        Builder(builder: (_) {
-          final opts = List<String>.from(_currencies);
-          if (!opts.contains(_toCurrency) && _toCurrency.isNotEmpty) {
-            opts.insert(0, _toCurrency);
-          }
-          final val = _toCurrency.isEmpty ? 'USD' : _toCurrency;
-          return DropdownButtonFormField<String>(
-            initialValue: opts.contains(val) ? val : opts.first,
-            decoration: const InputDecoration(
-              labelText: 'Валюта получателя',
-              border: OutlineInputBorder(),
-            ),
-            items: opts.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-            onChanged: (v) {
-              setState(() {
-                _toCurrency = v ?? _transferCurrency;
-                _resetRateInput();
-              });
-            },
-          );
-        }),
-        const SizedBox(height: 6),
-        if (_toCurrency != _transferCurrency)
-          Text(
-            _quotePair(_transferCurrency, _toCurrency) != null
-                ? 'Курс — сколько ${_quotePair(_transferCurrency, _toCurrency)!.$2} за 1 ${_quotePair(_transferCurrency, _toCurrency)!.$1}'
-                : 'Разные валюты — укажите множитель $_transferCurrency → $_toCurrency',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          )
-        else
-          Text(
-            'Одинаковые валюты — курс не нужен',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        const SizedBox(height: AppSpacing.sm),
-        TextFormField(
-          controller: _amountController,
-          decoration: InputDecoration(
-            labelText: 'Сумма',
-            border: const OutlineInputBorder(),
-            prefixIcon: const Icon(Icons.payments_outlined),
-            suffixText: _transferCurrency,
-            errorText: _balanceError,
-            errorBorder: _balanceError != null
-                ? OutlineInputBorder(
-                    borderSide: BorderSide(color: Theme.of(context).colorScheme.error, width: 2),
-                  )
-                : null,
-            focusedErrorBorder: _balanceError != null
-                ? OutlineInputBorder(
-                    borderSide: BorderSide(color: Theme.of(context).colorScheme.error, width: 2),
-                  )
-                : null,
-          ),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          inputFormatters: [DecimalInputFormatter()],
-          onChanged: (_) => setState(() => _balanceError = null),
-          validator: (v) {
-            if (v == null || v.isEmpty) return 'Введите сумму';
-            final amount = double.tryParse(v);
-            if (amount == null || amount <= 0) return 'Сумма должна быть > 0';
-            return null;
-          },
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Text(
-          CommissionMode.fromTransfer.description,
-          style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        // Commission type toggle. Wrap, not Row — на узких экранах телефона
-        // лейбл + "Фиксированная / Процент (%)" не помещались в одну строку
-        // и давали overflow ~84 px. Wrap переносит сегменты на новую строку.
-        Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: AppSpacing.sm,
-          runSpacing: AppSpacing.xs,
-          children: [
-            const Text('Тип комиссии:', style: TextStyle(fontSize: 13)),
-            SegmentedButton<CommissionType>(
-              segments: CommissionType.values
-                  .map((t) => ButtonSegment<CommissionType>(
-                        value: t,
-                        label: Text(
-                          t.displayName,
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ))
-                  .toList(),
-              selected: {_commissionType},
-              onSelectionChanged: (v) =>
-                  setState(() => _commissionType = v.first),
-              style: const ButtonStyle(
-                  visualDensity: VisualDensity.compact),
-            ),
-          ],
-        ),
-        const SizedBox(height: AppSpacing.sm),
+        // ── Сумма + валюта отправителя в одной строке ──
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              flex: 2,
-              child: Focus(
-                onFocusChange: (f) {
-                  if (!f) _restoreDefault(_commissionValueController, '0');
-                },
-                child: TextFormField(
-                  controller: _commissionValueController,
-                  decoration: InputDecoration(
-                    labelText: 'Комиссия',
-                    border: const OutlineInputBorder(),
-                    suffixText: _commissionType == CommissionType.percentage
-                        ? '%'
-                        : _commissionCurrency,
-                    hintText: _commissionType == CommissionType.percentage
-                        ? '1.5'
-                        : '100',
-                    errorText: _commissionError,
-                  ),
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [DecimalInputFormatter()],
-                  onTap: () => _smartClear(_commissionValueController),
-                  onChanged: (_) => setState(() => _commissionError = null),
+              flex: 3,
+              child: TextFormField(
+                controller: _amountController,
+                decoration: InputDecoration(
+                  labelText: 'Сумма к списанию',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.payments_outlined),
+                  hintText: '0',
+                  errorText: _balanceError,
                 ),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [DecimalInputFormatter()],
+                onChanged: (_) => setState(() => _balanceError = null),
+                validator: (v) {
+                  if (v == null || v.isEmpty) return 'Введите сумму';
+                  final amount = double.tryParse(v);
+                  if (amount == null || amount <= 0) {
+                    return 'Сумма должна быть > 0';
+                  }
+                  return null;
+                },
               ),
             ),
             const SizedBox(width: AppSpacing.sm),
             Expanded(
-              child: DropdownButtonFormField<String>(
-                initialValue: _currencies.contains(_commissionCurrency) ? _commissionCurrency : _transferCurrency,
-                decoration: const InputDecoration(
-                  labelText: 'Валюта комиссии',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
-                items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                onChanged: (v) => setState(() => _commissionCurrency = v ?? _transferCurrency),
+              flex: 2,
+              child: _buildCurrencyDropdown(
+                label: 'Валюта',
+                value: _transferCurrency,
+                options: senderCurrencies,
+                onChanged: (v) {
+                  setState(() {
+                    _transferCurrency = v;
+                    if (_toCurrency == _transferCurrency ||
+                        !_availableCurrencies().contains(_toCurrency)) {
+                      _toCurrency = _transferCurrency;
+                    }
+                    if (!_availableCurrencies().contains(_commissionCurrency)) {
+                      _commissionCurrency = _transferCurrency;
+                    }
+                    _resetRateInput();
+                  });
+                },
               ),
             ),
-            if (_toCurrency != _transferCurrency) ...[
-              const SizedBox(width: AppSpacing.sm),
-              Expanded(
-                child: Focus(
-                  onFocusChange: (f) {
-                    if (!f) _restoreDefault(_exchangeRateController, '1.0');
-                  },
-                  child: TextFormField(
-                    controller: _exchangeRateController,
-                    decoration: InputDecoration(
-                      labelText: _rateLabel(_transferCurrency, _toCurrency),
-                      hintText: _rateHint(_transferCurrency, _toCurrency),
-                      border: const OutlineInputBorder(),
-                      errorText: _exchangeRateError,
-                      // Подсказка валюты «слабой» части курса справа в поле.
-                      suffixText:
-                          _quotePair(_transferCurrency, _toCurrency)?.$2,
-                    ),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [DecimalInputFormatter()],
-                    onTap: () => _smartClear(_exchangeRateController),
-                    onChanged: (_) => setState(() => _exchangeRateError = null),
-                  ),
-                ),
-              ),
-            ],
           ],
         ),
+        const SizedBox(height: AppSpacing.md),
+
+        // ── Валюта получателя ──
+        Builder(builder: (_) {
+          final receiverBranch = _allBranches
+              .where((b) => b.id == _toBranchId)
+              .cast<Branch?>()
+              .firstWhere((_) => true, orElse: () => null);
+          final receiverCurrencies =
+              _availableCurrencies(branch: receiverBranch);
+          final isSame = _toCurrency == _transferCurrency;
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: _buildCurrencyDropdown(
+                  label: 'Валюта получения',
+                  value: _toCurrency,
+                  options: receiverCurrencies,
+                  helperText: isSame
+                      ? 'Совпадает с валютой отправителя — конвертация не нужна'
+                      : null,
+                  onChanged: (v) {
+                    setState(() {
+                      _toCurrency = v;
+                      _resetRateInput();
+                    });
+                  },
+                ),
+              ),
+              if (!isSame) ...[
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  flex: 2,
+                  child: Focus(
+                    onFocusChange: (f) {
+                      if (!f) _restoreDefault(_exchangeRateController, '1.0');
+                    },
+                    child: TextFormField(
+                      controller: _exchangeRateController,
+                      decoration: InputDecoration(
+                        labelText: _rateLabel(_transferCurrency, _toCurrency),
+                        hintText: _rateHint(_transferCurrency, _toCurrency),
+                        border: const OutlineInputBorder(),
+                        errorText: _exchangeRateError,
+                        suffixText:
+                            _quotePair(_transferCurrency, _toCurrency)?.$2,
+                        prefixIcon: const Icon(Icons.swap_horiz_rounded),
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      inputFormatters: [DecimalInputFormatter()],
+                      onTap: () => _smartClear(_exchangeRateController),
+                      onChanged: (_) =>
+                          setState(() => _exchangeRateError = null),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          );
+        }),
+        const SizedBox(height: AppSpacing.lg),
+
+        // ── Комиссия (отдельный визуальный блок) ──
+        _CommissionBlock(
+          type: _commissionType,
+          onTypeChanged: (t) => setState(() => _commissionType = t),
+          valueController: _commissionValueController,
+          onValueTap: () => _smartClear(_commissionValueController),
+          onValueChange: () => setState(() => _commissionError = null),
+          onValueBlur: () => _restoreDefault(_commissionValueController, '0'),
+          currency: _commissionCurrency,
+          currencies: senderCurrencies,
+          onCurrencyChanged: (v) =>
+              setState(() => _commissionCurrency = v),
+          transferCurrency: _transferCurrency,
+          errorText: _commissionError,
+        ),
       ],
+    );
+  }
+
+  Widget _buildCurrencyDropdown({
+    required String label,
+    required String value,
+    required List<String> options,
+    required ValueChanged<String> onChanged,
+    String? helperText,
+  }) {
+    final opts = List<String>.from(options);
+    if (value.isNotEmpty && !opts.contains(value)) opts.insert(0, value);
+    final effectiveValue =
+        opts.contains(value) ? value : (opts.isNotEmpty ? opts.first : 'USD');
+    return DropdownButtonFormField<String>(
+      key: ValueKey('curr-dd-$label-$effectiveValue'),
+      initialValue: effectiveValue,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: helperText,
+        helperMaxLines: 2,
+        border: const OutlineInputBorder(),
+      ),
+      items: opts
+          .map(
+            (c) => DropdownMenuItem(
+              value: c,
+              child: Row(
+                children: [
+                  Text(CurrencyUtils.flag(c)),
+                  const SizedBox(width: 8),
+                  Text(c),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+      onChanged: (v) {
+        if (v != null) onChanged(v);
+      },
     );
   }
 
@@ -834,32 +1007,23 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     }
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
-        color: isDark
-            ? AppColors.primary.withValues(alpha: 0.05)
-            : AppColors.primary.withValues(alpha: 0.03),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withValues(alpha: isDark ? 0.10 : 0.06),
+            AppColors.primary.withValues(alpha: isDark ? 0.04 : 0.02),
+          ],
+        ),
         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
         border: Border.all(
-          color: AppColors.primary.withValues(alpha: 0.2),
-          width: 0.5,
+          color: AppColors.primary.withValues(alpha: 0.25),
+          width: 0.8,
         ),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Предварительный расчёт',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          previewContent,
-        ],
-      ),
+      child: previewContent,
     );
   }
 
@@ -872,39 +1036,133 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     required bool isDark,
     bool showCommissionRateNote = false,
   }) {
+    final secondary = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.lightTextSecondary;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Wrap(
-          spacing: AppSpacing.lg,
-          runSpacing: AppSpacing.sm,
+        // Заголовок + сумма к получению (главный показатель)
+        Row(
           children: [
-            _PreviewItem(label: 'Сумма', value: amount.formatCurrencyNoDecimals(), currency: _transferCurrency),
-            _PreviewItem(label: 'Комиссия', value: commission.formatCurrencyNoDecimals(), currency: _commissionCurrency),
-            if (_commissionCurrency != _transferCurrency)
-              _PreviewItem(
-                label: 'Комиссия в $_transferCurrency',
-                value: commissionInTransferCur.formatCurrencyNoDecimals(),
-                currency: _transferCurrency,
+            Icon(Icons.calculate_outlined,
+                size: 18, color: AppColors.primary),
+            const SizedBox(width: 6),
+            Text(
+              'Предварительный расчёт',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
+                color: secondary,
               ),
-            _PreviewItem(label: 'Списание с отправителя', value: totalDebit.formatCurrencyNoDecimals(), currency: _transferCurrency, bold: true),
-            _PreviewItem(label: 'Из них комиссия (у нас)', value: commission.formatCurrencyNoDecimals(), currency: _commissionCurrency),
-            _PreviewItem(label: 'Получатель получит', value: receiverGets.formatCurrencyNoDecimals(), currency: _toCurrency, bold: true),
+            ),
           ],
         ),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          'Получатель получит',
+          style: TextStyle(fontSize: 12, color: secondary),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Flexible(
+              child: Text(
+                receiverGets.formatCurrencyNoDecimals(),
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  fontFamily: 'JetBrains Mono',
+                  letterSpacing: -0.5,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _toCurrency,
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.primary,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: AppSpacing.md),
+        Divider(
+          height: 1,
+          color: AppColors.primary.withValues(alpha: 0.15),
+        ),
+        const SizedBox(height: AppSpacing.md),
+
+        // Разбивка
+        _BreakdownRow(
+          label: 'Списание с отправителя',
+          value: totalDebit,
+          currency: _transferCurrency,
+          icon: Icons.arrow_upward_rounded,
+          iconColor: Colors.red.shade400,
+        ),
+        const SizedBox(height: 6),
+        _BreakdownRow(
+          label: _commissionType == CommissionType.percentage
+              ? 'Комиссия (${_commissionValueController.text.isEmpty ? '0' : _commissionValueController.text}%)'
+              : 'Комиссия',
+          value: commission,
+          currency: _commissionCurrency,
+          icon: Icons.account_balance_outlined,
+          iconColor: Colors.orange.shade400,
+          extra: _commissionCurrency != _transferCurrency && commissionInTransferCur > 0
+              ? '≈ ${commissionInTransferCur.formatCurrencyNoDecimals()} $_transferCurrency'
+              : null,
+        ),
+        if (_toCurrency != _transferCurrency) ...[
+          const SizedBox(height: 6),
+          _BreakdownRow(
+            label: 'Курс конвертации',
+            value: null,
+            currency: '',
+            icon: Icons.swap_horiz_rounded,
+            iconColor: AppColors.primary,
+            customRight: _rateSummary(),
+          ),
+        ],
         if (showCommissionRateNote) ...[
           const SizedBox(height: AppSpacing.sm),
-          Text(
-            'Курс комиссии взят из настроек курсов валют',
-            style: TextStyle(
-              fontSize: 10,
-              fontStyle: FontStyle.italic,
-              color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-            ),
+          Row(
+            children: [
+              Icon(Icons.info_outline, size: 12, color: secondary),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  'Курс комиссии в $_transferCurrency взят из настроек',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontStyle: FontStyle.italic,
+                    color: secondary,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ],
     );
+  }
+
+  String _rateSummary() {
+    final input = double.tryParse(_exchangeRateController.text) ?? 0;
+    if (input <= 0) return '—';
+    final pair = _quotePair(_transferCurrency, _toCurrency);
+    if (pair != null) {
+      final (strong, weak) = pair;
+      return '1 $strong = ${input.formatCurrency()} $weak';
+    }
+    return '1 $_transferCurrency = ${input.formatCurrency()} $_toCurrency';
   }
 
   Widget _buildSubmitButton(BuildContext context, TransferBlocState state) {
@@ -927,7 +1185,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     );
   }
 
-  void _submit(BuildContext context) {
+  Future<void> _submit(BuildContext context) async {
     if (!_formKey.currentState!.validate()) return;
 
     final amount = double.parse(_amountController.text);
@@ -980,6 +1238,56 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         _transferCurrency.isNotEmpty ? _transferCurrency : 'USD';
     final toCur = _toCurrency.isNotEmpty ? _toCurrency : currency;
 
+    // Pre-flight: серверный private.fx_rate бросит исключение, если для пары
+    // commission_currency → transfer_currency нет курса (ни прямого, ни
+    // обратного).  Проверяем заранее и показываем понятную подсказку с
+    // переходом в раздел «Курсы валют», иначе пользователь видит RAISE
+    // EXCEPTION и думает, что что-то сломалось (см. жалобу: «курс в
+    // настройках не настроена»).  Процентная комиссия и совпадающая валюта
+    // в pre-flight не нуждаются — fx_rate их не запрашивает.
+    if (_commissionType == CommissionType.fixed &&
+        commission > 0 &&
+        _commissionCurrency.isNotEmpty &&
+        _commissionCurrency != currency) {
+      final direct = await sl<ExchangeRateRepository>()
+          .getLatestRate(_commissionCurrency, currency)
+          .then((r) => r.fold((_) => null, (v) => v));
+      final inverse = direct == null
+          ? await sl<ExchangeRateRepository>()
+              .getLatestRate(currency, _commissionCurrency)
+              .then((r) => r.fold((_) => null, (v) => v))
+          : null;
+      final hasRate =
+          (direct?.rate ?? 0) > 0 || (inverse?.rate ?? 0) > 0;
+      if (!hasRate) {
+        if (!mounted) return;
+        setState(() {
+          _commissionError = 'Курс $_commissionCurrency → $currency не задан. '
+              'Откройте «Курсы валют» и добавьте пару, либо установите валюту '
+              'комиссии равной валюте перевода ($currency).';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Не задан курс $_commissionCurrency → $currency для пересчёта комиссии. '
+              'Перейдите в «Курсы валют» и добавьте пару.',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 6),
+            action: SnackBarAction(
+              label: 'Открыть',
+              textColor: Colors.white,
+              onPressed: () => context.go('/exchange-rates'),
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    if (!mounted) return;
     context.read<TransferBloc>().add(TransferCreateRequested(
           fromBranchId: _fromBranchId!,
           toBranchId: _toBranchId!,
@@ -1041,43 +1349,226 @@ class _FormSection extends StatelessWidget {
   }
 }
 
-class _PreviewItem extends StatelessWidget {
-  const _PreviewItem({
+class _BreakdownRow extends StatelessWidget {
+  const _BreakdownRow({
     required this.label,
     required this.value,
-    this.currency = '',
-    this.bold = false,
+    required this.currency,
+    required this.icon,
+    required this.iconColor,
+    this.extra,
+    this.customRight,
   });
 
   final String label;
-  final String value;
+  final double? value;
   final String currency;
-  final bool bold;
+  final IconData icon;
+  final Color iconColor;
+  final String? extra;
+  final String? customRight;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final secondary = context.isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.lightTextSecondary;
+    return Row(
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            color: context.isDark
-                ? AppColors.darkTextSecondary
-                : AppColors.lightTextSecondary,
+        Icon(icon, size: 14, color: iconColor),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(fontSize: 12.5, color: secondary),
           ),
         ),
-        const SizedBox(height: 2),
-        Text(
-          '$value $currency',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
-            fontFamily: 'JetBrains Mono',
+        if (customRight != null)
+          Text(
+            customRight!,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'JetBrains Mono',
+            ),
+          )
+        else
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${value!.formatCurrencyNoDecimals()} $currency',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'JetBrains Mono',
+                ),
+              ),
+              if (extra != null)
+                Text(
+                  extra!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontStyle: FontStyle.italic,
+                    color: secondary,
+                  ),
+                ),
+            ],
           ),
-        ),
       ],
+    );
+  }
+}
+
+class _CommissionBlock extends StatelessWidget {
+  const _CommissionBlock({
+    required this.type,
+    required this.onTypeChanged,
+    required this.valueController,
+    required this.onValueTap,
+    required this.onValueChange,
+    required this.onValueBlur,
+    required this.currency,
+    required this.currencies,
+    required this.onCurrencyChanged,
+    required this.transferCurrency,
+    required this.errorText,
+  });
+
+  final CommissionType type;
+  final ValueChanged<CommissionType> onTypeChanged;
+  final TextEditingController valueController;
+  final VoidCallback onValueTap;
+  final VoidCallback onValueChange;
+  final VoidCallback onValueBlur;
+  final String currency;
+  final List<String> currencies;
+  final ValueChanged<String> onCurrencyChanged;
+  final String transferCurrency;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final isPercent = type == CommissionType.percentage;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.md),
+      decoration: BoxDecoration(
+        color: Theme.of(context)
+            .colorScheme
+            .surfaceContainerHighest
+            .withValues(alpha: isDark ? 0.4 : 0.6),
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.account_balance_outlined,
+                  size: 16, color: Theme.of(context).colorScheme.primary),
+              const SizedBox(width: 6),
+              Text(
+                'Комиссия',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const Spacer(),
+              SegmentedButton<CommissionType>(
+                segments: CommissionType.values
+                    .map((t) => ButtonSegment<CommissionType>(
+                          value: t,
+                          label: Text(
+                            t == CommissionType.percentage ? '%' : 'Фикс',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                        ))
+                    .toList(),
+                selected: {type},
+                onSelectionChanged: (v) => onTypeChanged(v.first),
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: Focus(
+                  onFocusChange: (f) {
+                    if (!f) onValueBlur();
+                  },
+                  child: TextFormField(
+                    controller: valueController,
+                    decoration: InputDecoration(
+                      labelText: isPercent ? 'Процент' : 'Сумма',
+                      border: const OutlineInputBorder(),
+                      suffixText: isPercent ? '%' : currency,
+                      hintText: isPercent ? '1.5' : '100',
+                      errorText: errorText,
+                      isDense: true,
+                    ),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [DecimalInputFormatter()],
+                    onTap: onValueTap,
+                    onChanged: (_) => onValueChange(),
+                  ),
+                ),
+              ),
+              if (!isPercent) ...[
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  flex: 2,
+                  child: DropdownButtonFormField<String>(
+                    initialValue: currencies.contains(currency)
+                        ? currency
+                        : transferCurrency,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Валюта',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    items: currencies
+                        .map((c) => DropdownMenuItem(
+                              value: c,
+                              child: Row(
+                                children: [
+                                  Text(CurrencyUtils.flag(c)),
+                                  const SizedBox(width: 6),
+                                  Text(c),
+                                ],
+                              ),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) onCurrencyChanged(v);
+                    },
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            CommissionMode.fromTransfer.description,
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1092,20 +1583,5 @@ String _formatInsufficientFundsError(String msg) {
     return 'Недостаточно средств на счёте';
   }
   return msg;
-}
-
-String _currFlag(String currency) {
-  const flags = {
-    'USD': '🇺🇸',
-    'RUB': '🇷🇺',
-    'UZS': '🇺🇿',
-    'TRY': '🇹🇷',
-    'AED': '🇦🇪',
-    'CNY': '🇨🇳',
-    'KZT': '🇰🇿',
-    'KGS': '🇰🇬',
-    'TJS': '🇹🇯',
-  };
-  return flags[currency] ?? '🏳️';
 }
 

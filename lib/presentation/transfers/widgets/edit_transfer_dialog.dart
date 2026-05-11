@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
+import 'package:ethnocount/presentation/approvals/approval_guards.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
 
 /// Диалог редактирования перевода. Для принятых/выданных — только имена, телефоны, карты.
@@ -58,9 +59,10 @@ class _EditTransferDialogState extends State<EditTransferDialog> {
     super.dispose();
   }
 
-  void _submit() {
+  Future<void> _submit() async {
+    double? amount;
     if (widget.allowAmountEdit) {
-      final amount = double.tryParse(_amountCtrl.text.replaceAll(',', '.'));
+      amount = double.tryParse(_amountCtrl.text.replaceAll(',', '.'));
       if (amount == null || amount <= 0) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Введите корректную сумму')),
@@ -68,9 +70,28 @@ class _EditTransferDialogState extends State<EditTransferDialog> {
         return;
       }
     }
+
+    // Если accountant правит сумму уже принятого/выданного перевода —
+    // нужно согласование директора (см. project_director_approval).
+    // Изменение чисто реквизитов (имена/телефоны) бухгалтер делает сам.
+    if (widget.allowAmountEdit &&
+        amount != null &&
+        (amount - widget.transfer.amount).abs() > 1e-9) {
+      final go = await context.guardAmendTransferAmount(
+        widget.transfer,
+        newAmount: amount,
+      );
+      if (!go) {
+        // Заявка отправлена; диалог можно закрывать.
+        widget.onSaved();
+        return;
+      }
+    }
+
+    if (!mounted) return;
     context.read<TransferBloc>().add(TransferUpdateRequested(
           transferId: widget.transfer.id,
-          amount: widget.allowAmountEdit ? double.tryParse(_amountCtrl.text.replaceAll(',', '.')) : null,
+          amount: amount,
           description: _descriptionCtrl.text.trim().isNotEmpty ? _descriptionCtrl.text.trim() : null,
           senderName: _senderNameCtrl.text.trim(),
           senderPhone: _senderPhoneCtrl.text.trim(),

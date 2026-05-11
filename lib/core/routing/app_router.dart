@@ -30,6 +30,7 @@ import 'package:ethnocount/presentation/purchases/pages/purchases_page.dart';
 import 'package:ethnocount/presentation/purchases/bloc/purchase_bloc.dart';
 import 'package:ethnocount/presentation/branches/pages/branches_page.dart';
 import 'package:ethnocount/presentation/admin/pages/admin_panel_page.dart';
+import 'package:ethnocount/presentation/approvals/pages/approvals_page.dart';
 import 'package:ethnocount/presentation/common/widgets/adaptive_scaffold.dart';
 
 /// Application router using go_router.
@@ -120,6 +121,9 @@ class AppRouter {
               return '/';
             }
             if (path.startsWith('/branches') && !p.canBranchesView) return '/';
+            // Согласования видны только creator/director (одобряют), но и
+            // accountant может зайти посмотреть свои отправленные. Здесь
+            // блокировать не нужно — фильтр сделает RLS.
           }
         } catch (_) {}
         return null;
@@ -249,6 +253,11 @@ class AppRouter {
               path: '/notifications',
               name: RouteNames.notifications,
               builder: (context, state) => const NotificationsPage(),
+            ),
+            GoRoute(
+              path: '/approvals',
+              name: RouteNames.approvals,
+              builder: (context, state) => const ApprovalsPage(),
             ),
             GoRoute(
               path: '/settings',

@@ -110,11 +110,11 @@ class CurrencyUtils {
   }
 
   /// Format amount: no decimals for UZS/KZT/KGS (large numbers), 2 decimals for others.
+  /// Thousands separator — space, decimal — dot. See NumberX for rationale.
   static String _formatAmount(double value, String currency) {
-    final noDecimals = ['UZS', 'KZT', 'KGS'];
-    final formatter = NumberFormat.decimalPattern()
-      ..minimumFractionDigits = noDecimals.contains(currency) ? 0 : 2
-      ..maximumFractionDigits = noDecimals.contains(currency) ? 0 : 2;
-    return formatter.format(value);
+    final noDecimals = const {'UZS', 'KZT', 'KGS'};
+    final decimals = noDecimals.contains(currency) ? 0 : 2;
+    final pattern = decimals > 0 ? '#,##0.${'0' * decimals}' : '#,##0';
+    return NumberFormat(pattern, 'en_US').format(value).replaceAll(',', ' ');
   }
 }

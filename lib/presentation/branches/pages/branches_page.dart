@@ -12,6 +12,7 @@ import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/user.dart';
 import 'package:ethnocount/domain/repositories/branch_repository.dart';
 import 'package:ethnocount/data/datasources/remote/ledger_remote_ds.dart';
+import 'package:ethnocount/presentation/approvals/approval_guards.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 
 class BranchesPage extends StatefulWidget {
@@ -271,14 +272,27 @@ class _BranchDetailScreenState extends State<_BranchDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _accSub = _repo.watchBranchAccounts(widget.branch.id).listen((accs) {
-      if (mounted) setState(() {
-        _accounts = accs;
-        _loading = false;
-      });
-    });
+    _accSub = _repo.watchBranchAccounts(widget.branch.id).listen(
+      (accs) {
+        if (mounted) setState(() {
+          _accounts = accs;
+          _loading = false;
+        });
+      },
+      onError: (_) {
+        // Если стрим упал (RLS/сеть) — не зависаем на вечном спиннере.
+        if (mounted) setState(() => _loading = false);
+      },
+    );
     _balSub = _ledgerDs.watchBranchBalances(widget.branch.id).listen((bals) {
       if (mounted) setState(() => _balances = bals);
+    });
+    // Страховка: если стрим за 5 секунд не отдал ни одного события (плохой
+    // канал realtime / медленный ответ), снимаем спиннер и показываем
+    // «Нет счетов».  Иначе мобильный пользователь видит бесконечную
+    // загрузку и не понимает, почему «не вижу счета данные».
+    Future.delayed(const Duration(seconds: 5), () {
+      if (mounted && _loading) setState(() => _loading = false);
     });
   }
 
@@ -887,7 +901,7 @@ Future<void> _confirmArchiveAccount(
   final isArchived = account.archivedAt != null;
   final confirmed = await showDialog<bool>(
     context: context,
-    builder: (_) => AlertDialog(
+    builder: (dialogCtx) => AlertDialog(
       title: Row(
         children: [
           Icon(
@@ -905,14 +919,14 @@ Future<void> _confirmArchiveAccount(
           : '${account.name} будет архивирован. Историю операций это не затронет, но новые проводки в этот счёт будут невозможны.'),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
+          onPressed: () => Navigator.of(dialogCtx).pop(false),
           child: const Text('Отмена'),
         ),
         FilledButton.icon(
           style: FilledButton.styleFrom(
             backgroundColor: isArchived ? Colors.teal : Colors.red,
           ),
-          onPressed: () => Navigator.of(context).pop(true),
+          onPressed: () => Navigator.of(dialogCtx).pop(true),
           icon: Icon(isArchived
               ? Icons.unarchive_outlined
               : Icons.delete_forever_rounded),
@@ -922,6 +936,16 @@ Future<void> _confirmArchiveAccount(
     ),
   );
   if (confirmed != true || !context.mounted) return;
+
+  // Архивация — деструктивная операция; accountant отправляет заявку
+  // директору, creator/director делает напрямую. Восстановление из
+  // архива (isArchived=true → archive=false) проходит без согласования —
+  // это безопасное действие, и держать его в очереди излишне.
+  if (!isArchived) {
+    final go = await context.guardArchiveBranchAccount(account);
+    if (!go || !context.mounted) return;
+  }
+
   final messenger = ScaffoldMessenger.of(context);
   final result = await sl<BranchRepository>().archiveBranchAccount(
     accountId: account.id,
@@ -1036,8 +1060,10 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
   final _codeCtrl = TextEditingController();
   String _currency = 'USD';
   bool _loading = false;
+  // null означает «без ограничений» (=все валюты).
+  Set<String>? _supportedCurrencies;
 
-  static const _currencies = ['USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'TJS'];
+  static const _currencies = ['USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'KGS', 'TJS', 'TRY'];
 
   @override
   void dispose() {
@@ -1097,7 +1123,19 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                 items: _currencies
                     .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                     .toList(),
-                onChanged: (v) => setState(() => _currency = v ?? 'USD'),
+                onChanged: (v) {
+                  setState(() {
+                    _currency = v ?? 'USD';
+                    _supportedCurrencies?.add(_currency);
+                  });
+                },
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _SupportedCurrenciesPicker(
+                allCurrencies: _currencies,
+                baseCurrency: _currency,
+                value: _supportedCurrencies,
+                onChanged: (v) => setState(() => _supportedCurrencies = v),
               ),
             ],
           ),
@@ -1128,10 +1166,14 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
     final repo = sl<BranchRepository>();
+    final selected = _supportedCurrencies;
     final result = await repo.createBranch(
       name: _nameCtrl.text.trim(),
       code: _codeCtrl.text.trim().toUpperCase(),
       baseCurrency: _currency,
+      supportedCurrencies: selected == null
+          ? null
+          : (selected.toList()..sort()),
     );
     if (!mounted) return;
     setState(() => _loading = false);
@@ -1179,10 +1221,12 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
   late final TextEditingController _reasonCtrl;
   late String _currency;
   late final String _originalCode;
+  late Set<String>? _supportedCurrencies;
+  late final List<String>? _originalSupported;
   bool _loading = false;
 
   static const _currencies = [
-    'USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'TJS',
+    'USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'KGS', 'TJS', 'TRY',
   ];
 
   @override
@@ -1193,6 +1237,9 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
     _reasonCtrl = TextEditingController();
     _currency = widget.branch.baseCurrency;
     _originalCode = widget.branch.code;
+    final s = widget.branch.supportedCurrencies;
+    _supportedCurrencies = s == null ? null : Set<String>.from(s);
+    _originalSupported = s == null ? null : (List<String>.from(s)..sort());
   }
 
   @override
@@ -1279,7 +1326,17 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                   items: _currencies
                       .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                       .toList(),
-                  onChanged: (v) => setState(() => _currency = v ?? _currency),
+                  onChanged: (v) => setState(() {
+                    _currency = v ?? _currency;
+                    _supportedCurrencies?.add(_currency);
+                  }),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _SupportedCurrenciesPicker(
+                  allCurrencies: _currencies,
+                  baseCurrency: _currency,
+                  value: _supportedCurrencies,
+                  onChanged: (v) => setState(() => _supportedCurrencies = v),
                 ),
               ],
             ),
@@ -1315,12 +1372,20 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
     final newCode = _codeCtrl.text.trim().toUpperCase();
     final newName = _nameCtrl.text.trim();
 
+    final newSupported = _supportedCurrencies == null
+        ? null
+        : (_supportedCurrencies!.toList()..sort());
+    final supportedChanged = !_listsEqual(newSupported, _originalSupported);
+
     final result = await repo.updateBranch(
       branchId: widget.branch.id,
       name: newName != widget.branch.name ? newName : null,
       code: newCode != widget.branch.code ? newCode : null,
       baseCurrency:
           _currency != widget.branch.baseCurrency ? _currency : null,
+      // supportedCurrencies: null = не трогать; пустой [] = сбросить;
+      // непустой массив = заменить полностью.
+      supportedCurrencies: supportedChanged ? (newSupported ?? const <String>[]) : null,
       codeChangeReason: _codeChanged ? _reasonCtrl.text.trim() : null,
     );
 
@@ -1627,6 +1692,102 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
           ),
         );
       },
+    );
+  }
+}
+
+bool _listsEqual(List<String>? a, List<String>? b) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Чипы выбора валют, поддерживаемых филиалом. `value == null` — «все валюты»
+/// (галка снята). Базовая валюта всегда включена и не может быть отключена.
+class _SupportedCurrenciesPicker extends StatelessWidget {
+  const _SupportedCurrenciesPicker({
+    required this.allCurrencies,
+    required this.baseCurrency,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final List<String> allCurrencies;
+  final String baseCurrency;
+  final Set<String>? value;
+  final ValueChanged<Set<String>?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final isLimited = value != null;
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SwitchListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Ограничить валюты филиала'),
+          subtitle: Text(
+            isLimited
+                ? 'Видны только выбранные валюты в переводах и счетах'
+                : 'Все валюты системы доступны филиалу',
+            style: const TextStyle(fontSize: 11),
+          ),
+          value: isLimited,
+          onChanged: (v) {
+            if (v) {
+              onChanged({baseCurrency});
+            } else {
+              onChanged(null);
+            }
+          },
+        ),
+        if (isLimited) ...[
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: allCurrencies.map((c) {
+              final selected = value!.contains(c);
+              final isBase = c == baseCurrency;
+              return FilterChip(
+                label: Text(c),
+                selected: selected,
+                showCheckmark: false,
+                avatar: isBase
+                    ? Icon(Icons.star_rounded,
+                        size: 14, color: theme.colorScheme.primary)
+                    : null,
+                onSelected: isBase
+                    ? null
+                    : (v) {
+                        final next = Set<String>.from(value!);
+                        if (v) {
+                          next.add(c);
+                        } else {
+                          next.remove(c);
+                        }
+                        onChanged(next);
+                      },
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Базовая валюта (★) обязательна — её нельзя снять',
+            style: TextStyle(
+              fontSize: 11,
+              fontStyle: FontStyle.italic,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

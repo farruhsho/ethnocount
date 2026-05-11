@@ -6,6 +6,12 @@ class Branch extends Equatable {
   final String name;
   final String code;
   final String baseCurrency;
+
+  /// Валюты, которые филиал реально принимает/выдаёт. Если null/пусто,
+  /// клиент использует общий список. Хранится в `branches.supported_currencies`
+  /// (jsonb) — отдельно от `base_currency`, чтобы не ломать существующие записи.
+  final List<String>? supportedCurrencies;
+
   final bool isActive;
   final String? address;
   final String? phone;
@@ -19,6 +25,7 @@ class Branch extends Equatable {
     required this.name,
     required this.code,
     required this.baseCurrency,
+    this.supportedCurrencies,
     this.isActive = true,
     this.address,
     this.phone,
@@ -34,6 +41,7 @@ class Branch extends Equatable {
         name,
         code,
         baseCurrency,
+        supportedCurrencies,
         isActive,
         address,
         phone,

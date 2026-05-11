@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
@@ -37,6 +38,7 @@ class _RegisterPageState extends State<RegisterPage> {
   void _onSetup() {
     if (!_formKey.currentState!.validate()) return;
 
+    TextInput.finishAutofillContext();
     context.read<AuthBloc>().add(
           AuthSignUpRequested(
             _emailCtrl.text.trim(),
@@ -111,7 +113,8 @@ class _RegisterPageState extends State<RegisterPage> {
                     child: FadeSlideTransition(
                       child: Form(
                         key: _formKey,
-                        child: Column(
+                        child: AutofillGroup(
+                          child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
@@ -172,6 +175,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                     controller: _nameCtrl,
                                     label: 'Полное имя',
                                     icon: Icons.person_outline_rounded,
+                                    autofillHints: const [AutofillHints.name],
                                     validator: (v) => v != null && v.trim().length >= 2
                                         ? null
                                         : 'Введите имя (мин. 2 символа)',
@@ -182,6 +186,11 @@ class _RegisterPageState extends State<RegisterPage> {
                                     label: 'Email',
                                     icon: Icons.email_outlined,
                                     keyboardType: TextInputType.emailAddress,
+                                    autofillHints: const [
+                                      AutofillHints.username,
+                                      AutofillHints.email,
+                                      AutofillHints.newUsername,
+                                    ],
                                     validator: (v) => v != null && v.contains('@')
                                         ? null
                                         : 'Введите корректный email',
@@ -192,6 +201,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                     label: 'Пароль',
                                     icon: Icons.lock_outline_rounded,
                                     isPassword: true,
+                                    autofillHints: const [AutofillHints.newPassword],
                                     validator: (v) => v != null && v.length >= 6
                                         ? null
                                         : 'Минимум 6 символов',
@@ -203,6 +213,8 @@ class _RegisterPageState extends State<RegisterPage> {
                                     icon: Icons.lock_outline_rounded,
                                     isPassword: true,
                                     textInputAction: TextInputAction.done,
+                                    autofillHints: const [AutofillHints.newPassword],
+                                    onFieldSubmitted: (_) => _onSetup(),
                                     validator: (v) =>
                                         v == _passwordCtrl.text
                                             ? null
@@ -241,6 +253,7 @@ class _RegisterPageState extends State<RegisterPage> {
                               child: const Text('Уже есть аккаунт? Войти'),
                             ),
                           ],
+                        ),
                         ),
                       ),
                     ),

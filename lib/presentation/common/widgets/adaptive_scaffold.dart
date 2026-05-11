@@ -10,6 +10,7 @@ import 'package:ethnocount/domain/entities/user.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart';
 import 'package:ethnocount/presentation/common/widgets/offline_banner.dart';
+import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 
 class NavigationIntent extends Intent {
   final int index;
@@ -181,6 +182,10 @@ class _DesktopShellState extends State<_DesktopShell> {
           icon: Icon(Icons.admin_panel_settings_outlined),
           selectedIcon: Icon(Icons.admin_panel_settings_rounded),
           label: Text('Управление'))),
+      ('/approvals', const NavigationRailDestination(
+          icon: Icon(Icons.fact_check_outlined),
+          selectedIcon: Icon(Icons.fact_check_rounded),
+          label: Text('Согласования'))),
       ('/notifications', const NavigationRailDestination(
           icon: Icon(Icons.notifications_outlined),
           selectedIcon: Icon(Icons.notifications_rounded),
@@ -207,6 +212,8 @@ class _DesktopShellState extends State<_DesktopShell> {
       if (route == '/reports' && !perms.canReports && !isCreator) continue;
       if (route == '/branches' && !perms.canBranchesView && !isCreator) continue;
       if (route == '/users' && !canManageUsers) continue;
+      // Согласования видны всем — accountant видит свои заявки,
+      // creator/director видят все и одобряют.
       filtered.add(e);
     }
     return (
@@ -250,53 +257,256 @@ class _MobileShellState extends State<_MobileShell> {
         final roleLabel = user?.role.displayNameRu ?? '';
 
         return Scaffold(
+          extendBody: true,
           body: SafeArea(
             top: true,
             bottom: false,
             child: widget.child,
           ),
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _mobileIndex(context),
-            onDestinationSelected: (index) => _onMobileTap(
-              context,
-              index,
-              perms,
-              isCreator,
-              canManageUsers: canManageUsers,
-              userEmail: userEmail,
-              userName: userName,
-              roleLabel: roleLabel,
+          bottomNavigationBar: BlocBuilder<DashboardBloc, DashboardState>(
+            buildWhen: (a, b) => a.pendingCount != b.pendingCount,
+            builder: (context, dash) => _MobileBottomBar(
+              currentIndex: _mobileIndex(context),
+              pendingCount: dash.pendingCount,
+              onSelect: (index) => _onMobileTap(
+                context,
+                index,
+                perms,
+                isCreator,
+                canManageUsers: canManageUsers,
+                userEmail: userEmail,
+                userName: userName,
+                roleLabel: roleLabel,
+              ),
             ),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.dashboard_outlined),
-                selectedIcon: Icon(Icons.dashboard_rounded),
-                label: 'Обзор',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.swap_horiz_outlined),
-                selectedIcon: Icon(Icons.swap_horiz_rounded),
-                label: 'Переводы',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.receipt_long_outlined),
-                selectedIcon: Icon(Icons.receipt_long_rounded),
-                label: 'Журнал',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.people_outline_rounded),
-                selectedIcon: Icon(Icons.people_rounded),
-                label: 'Клиенты',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.apps_rounded),
-                selectedIcon: Icon(Icons.apps_rounded),
-                label: 'Ещё',
-              ),
-            ],
           ),
         );
       },
+    );
+  }
+}
+
+/// Кастомный bottom-nav с пятью слотами: Главная / Переводы / [FAB] / Журнал / Ещё.
+/// FAB по центру выпирает вверх и ведёт сразу на «Новый перевод».
+class _MobileBottomBar extends StatelessWidget {
+  const _MobileBottomBar({
+    required this.currentIndex,
+    required this.pendingCount,
+    required this.onSelect,
+  });
+
+  /// 0=главная, 1=переводы, 2=FAB (виртуальный), 3=журнал, 4=ещё.
+  final int currentIndex;
+  final int pendingCount;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: scheme.surface.withValues(alpha: isDark ? 0.95 : 0.98),
+        border: Border(
+          top: BorderSide(
+            color: scheme.outline.withValues(alpha: 0.18),
+            width: 0.5,
+          ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black
+                .withValues(alpha: isDark ? 0.30 : 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 64,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              Expanded(
+                child: _NavSlot(
+                  icon: Icons.dashboard_outlined,
+                  selectedIcon: Icons.dashboard_rounded,
+                  label: 'Главная',
+                  selected: currentIndex == 0,
+                  onTap: () => onSelect(0),
+                ),
+              ),
+              Expanded(
+                child: _NavSlot(
+                  icon: Icons.swap_horiz_outlined,
+                  selectedIcon: Icons.swap_horiz_rounded,
+                  label: 'Переводы',
+                  selected: currentIndex == 1,
+                  onTap: () => onSelect(1),
+                  badgeCount: pendingCount > 0 ? pendingCount : null,
+                ),
+              ),
+              SizedBox(
+                width: 70,
+                child: Center(child: _CenterFab(onTap: () => onSelect(2))),
+              ),
+              Expanded(
+                child: _NavSlot(
+                  icon: Icons.receipt_long_outlined,
+                  selectedIcon: Icons.receipt_long_rounded,
+                  label: 'Журнал',
+                  selected: currentIndex == 3,
+                  onTap: () => onSelect(3),
+                ),
+              ),
+              Expanded(
+                child: _NavSlot(
+                  icon: Icons.menu_rounded,
+                  selectedIcon: Icons.menu_rounded,
+                  label: 'Ещё',
+                  selected: currentIndex == 4,
+                  onTap: () => onSelect(4),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _NavSlot extends StatelessWidget {
+  const _NavSlot({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+    this.badgeCount,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  final int? badgeCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = selected ? scheme.primary : scheme.onSurfaceVariant;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(selected ? selectedIcon : icon, size: 22, color: color),
+                if (badgeCount != null)
+                  Positioned(
+                    right: -8,
+                    top: -4,
+                    child: Container(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: scheme.error,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: scheme.surface,
+                          width: 1.5,
+                        ),
+                      ),
+                      constraints: const BoxConstraints(minWidth: 16),
+                      child: Text(
+                        badgeCount! > 99 ? '99+' : '$badgeCount',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: scheme.onError,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          height: 1.0,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: color,
+                height: 1.0,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CenterFab extends StatelessWidget {
+  const _CenterFab({required this.onTap});
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Transform.translate(
+      offset: const Offset(0, -14),
+      child: Material(
+        elevation: 6,
+        shadowColor: scheme.primary.withValues(alpha: 0.4),
+        shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                scheme.primary,
+                scheme.primary.withValues(alpha: 0.75),
+              ],
+            ),
+            border: Border.all(
+              color: scheme.surface,
+              width: 4,
+            ),
+          ),
+          child: InkWell(
+            onTap: onTap,
+            customBorder: const CircleBorder(),
+            child: SizedBox(
+              width: 56,
+              height: 56,
+              child: Icon(
+                Icons.add_rounded,
+                color: scheme.onPrimary,
+                size: 30,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -567,14 +777,12 @@ void _onTap(BuildContext context, int index) {
 int _mobileIndex(BuildContext context) {
   final location = GoRouterState.of(context).uri.path;
   if (location == '/') return 0;
+  if (location.startsWith('/transfers/new')) return 2;
   if (location.startsWith('/transfers')) return 1;
-  if (location.startsWith('/ledger')) return 2;
-  if (location.startsWith('/clients')) return 3;
+  if (location.startsWith('/ledger')) return 3;
   // Any non-main route is shown as part of "Ещё".
   return 4;
 }
-
-const _mobileRoutes = ['/', '/transfers', '/ledger', '/clients'];
 
 void _onMobileTap(
   BuildContext context,
@@ -586,19 +794,30 @@ void _onMobileTap(
   String userName = '',
   String roleLabel = '',
 }) {
-  if (index == 4) {
-    unawaited(_showMoreSheet(
-      context,
-      perms: perms,
-      isCreator: isCreator,
-      canManageUsers: canManageUsers,
-      userEmail: userEmail,
-      userName: userName,
-      roleLabel: roleLabel,
-    ));
-    return;
-  }
-  if (index >= 0 && index < _mobileRoutes.length) {
-    context.go(_mobileRoutes[index]);
+  switch (index) {
+    case 0:
+      context.go('/');
+      break;
+    case 1:
+      context.go('/transfers');
+      break;
+    case 2:
+      // Center FAB — сразу открывает форму нового перевода.
+      context.go('/transfers/new');
+      break;
+    case 3:
+      context.go('/ledger');
+      break;
+    case 4:
+      unawaited(_showMoreSheet(
+        context,
+        perms: perms,
+        isCreator: isCreator,
+        canManageUsers: canManageUsers,
+        userEmail: userEmail,
+        userName: userName,
+        roleLabel: roleLabel,
+      ));
+      break;
   }
 }

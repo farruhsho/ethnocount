@@ -127,6 +127,39 @@ class TransferRemoteDataSource {
     return _mapTransfer(data);
   }
 
+  /// Lookup the most recent transfer with a matching phone for either the
+  /// sender or receiver side. Used by `CreateTransferPage` to autofill name
+  /// and currency hints when the operator types a phone number that has
+  /// already been used. Returns `null` if nothing matches or [phone] is too
+  /// short to be meaningful.
+  ///
+  /// [side] = 'sender' looks at `sender_phone`; 'receiver' at `receiver_phone`.
+  Future<TransferContactSnapshot?> findContactByPhone({
+    required String phone,
+    required String side,
+  }) async {
+    final cleaned = phone.trim();
+    if (cleaned.length < 4) return null; // too short to be a real number
+    final col = side == 'sender' ? 'sender_phone' : 'receiver_phone';
+    final nameCol = side == 'sender' ? 'sender_name' : 'receiver_name';
+    final infoCol = side == 'sender' ? 'sender_info' : 'receiver_info';
+
+    final data = await _client
+        .from('transfers')
+        .select('$col, $nameCol, $infoCol, currency')
+        .eq(col, cleaned)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+    if (data == null) return null;
+    return TransferContactSnapshot(
+      phone: cleaned,
+      name: data[nameCol] as String?,
+      info: data[infoCol] as String?,
+      currency: data['currency'] as String?,
+    );
+  }
+
   /// Create transfer via PostgreSQL RPC (atomic).
   Future<Map<String, dynamic>> createTransfer({
     required String fromBranchId,
@@ -405,4 +438,21 @@ class TransferRemoteDataSource {
         .map((e) => TransferPart.fromMap(Map<String, dynamic>.from(e as Map)))
         .toList();
   }
+}
+
+/// Lightweight snapshot returned by [TransferRemoteDataSource.findContactByPhone].
+/// Used to prefill name + currency on the transfer form when an operator types
+/// a previously-seen phone number.
+class TransferContactSnapshot {
+  const TransferContactSnapshot({
+    required this.phone,
+    this.name,
+    this.info,
+    this.currency,
+  });
+
+  final String phone;
+  final String? name;
+  final String? info;
+  final String? currency;
 }

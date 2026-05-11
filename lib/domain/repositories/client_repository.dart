@@ -40,6 +40,18 @@ abstract class ClientRepository {
     String? currency,
   });
 
+  /// Конвертация валют внутри кошелька клиента.
+  /// Атомарно списывает [amount] [fromCurrency] и зачисляет [amount] × [rate]
+  /// в [toCurrency]. Обе проводки получают одинаковый conversionId.
+  Future<Either<Failure, ClientConversionResult>> convertClientCurrency({
+    required String clientId,
+    required String fromCurrency,
+    required String toCurrency,
+    required double amount,
+    required double rate,
+    String? description,
+  });
+
   /// Задать или удалить (передать null/пусто) Telegram chat ID клиента.
   Future<Either<Failure, void>> setTelegramChatId({
     required String clientId,

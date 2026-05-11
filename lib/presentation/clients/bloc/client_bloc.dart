@@ -69,6 +69,28 @@ class ClientDebitRequested extends ClientEvent {
   List<Object?> get props => [clientId, amount, currency];
 }
 
+class ClientConvertRequested extends ClientEvent {
+  final String clientId;
+  final String fromCurrency;
+  final String toCurrency;
+  final double amount;
+  final double rate;
+  final String? description;
+
+  const ClientConvertRequested({
+    required this.clientId,
+    required this.fromCurrency,
+    required this.toCurrency,
+    required this.amount,
+    required this.rate,
+    this.description,
+  });
+
+  @override
+  List<Object?> get props =>
+      [clientId, fromCurrency, toCurrency, amount, rate, description];
+}
+
 class ClientDetailRequested extends ClientEvent {
   final String clientId;
   const ClientDetailRequested(this.clientId);
@@ -180,6 +202,7 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
     on<ClientCreateRequested>(_onCreate);
     on<ClientDepositRequested>(_onDeposit);
     on<ClientDebitRequested>(_onDebit);
+    on<ClientConvertRequested>(_onConvert);
     on<ClientDetailRequested>(_onDetail);
     on<ClientTelegramChatIdUpdated>(_onTelegramChatIdUpdated);
     on<ClientTelegramTestRequested>(_onTelegramTestRequested);
@@ -347,6 +370,32 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
       )),
       (_) async => _emitWithRefreshedBalance(
         emit, event.clientId, 'Списание выполнено',
+      ),
+    );
+  }
+
+  Future<void> _onConvert(
+    ClientConvertRequested event,
+    Emitter<ClientBlocState> emit,
+  ) async {
+    emit(state.copyWith(status: ClientBlocStatus.operating));
+    final result = await _repository.convertClientCurrency(
+      clientId: event.clientId,
+      fromCurrency: event.fromCurrency,
+      toCurrency: event.toCurrency,
+      amount: event.amount,
+      rate: event.rate,
+      description: event.description,
+    );
+    await result.fold(
+      (f) async => emit(state.copyWith(
+        status: ClientBlocStatus.error,
+        errorMessage: f.message,
+      )),
+      (r) async => _emitWithRefreshedBalance(
+        emit,
+        event.clientId,
+        'Конвертация ${r.fromCurrency} → ${r.toCurrency} выполнена',
       ),
     );
   }

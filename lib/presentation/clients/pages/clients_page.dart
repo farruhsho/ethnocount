@@ -10,6 +10,8 @@ import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/client.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/clients/bloc/client_bloc.dart';
+import 'package:ethnocount/presentation/clients/widgets/client_detail_screen.dart';
+import 'package:ethnocount/presentation/clients/widgets/convert_currency_dialog.dart';
 import 'package:ethnocount/presentation/common/widgets/empty_state.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/core/utils/branch_access.dart';
@@ -98,36 +100,6 @@ String _branchLabel(String? branchId, List<Branch> branches) {
     if (b.id == branchId) return b.name;
   }
   return '—';
-}
-
-List<Widget> _clientBalanceLines(BuildContext context, ClientBalance balance) {
-  final keys = balance.balancesByCurrency.keys.toList()..sort();
-  if (keys.isEmpty) {
-    return [
-      Text(
-        '${balance.balance.toStringAsFixed(2)} ${balance.currency}',
-        style: context.textTheme.titleMedium?.copyWith(
-          fontFamily: 'JetBrains Mono',
-          fontWeight: FontWeight.w700,
-          color: AppColors.primary,
-        ),
-      ),
-    ];
-  }
-  return keys.map((cur) {
-    final amt = balance.balancesByCurrency[cur] ?? 0.0;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Text(
-        '${amt.toStringAsFixed(2)} $cur',
-        style: context.textTheme.titleMedium?.copyWith(
-          fontFamily: 'JetBrains Mono',
-          fontWeight: FontWeight.w600,
-          color: AppColors.primary,
-        ),
-      ),
-    );
-  }).toList();
 }
 
 /// Compact one- or two-line balance summary for use in list rows.
@@ -345,27 +317,13 @@ class _MobileLayout extends StatelessWidget {
   }
 
   void _showDetailSheet(BuildContext context, Client client) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => BlocProvider.value(
-        value: context.read<ClientBloc>(),
-        child: DraggableScrollableSheet(
-          initialChildSize: 0.7,
-          maxChildSize: 0.95,
-          minChildSize: 0.4,
-          expand: false,
-          builder: (_, ctrl) => SingleChildScrollView(
-            controller: ctrl,
-            padding: const EdgeInsets.all(AppSpacing.lg),
-            child: Column(
-              children: [
-                _ClientActions(client: client),
-                const SizedBox(height: AppSpacing.md),
-                _TelegramSettingsBlock(client: client),
-              ],
-            ),
-          ),
+    final bloc = context.read<ClientBloc>();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: false,
+        builder: (_) => BlocProvider.value(
+          value: bloc,
+          child: ClientDetailScreen(clientId: client.id),
         ),
       ),
     );
@@ -534,6 +492,7 @@ class _ClientTable extends StatelessWidget {
                 ),
                 DataCell(
                   Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       CircleAvatar(
                         radius: 14,
@@ -548,7 +507,13 @@ class _ClientTable extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Text(client.name),
+                      Flexible(
+                        child: Text(
+                          client.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -688,52 +653,16 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
             ),
             const SizedBox(height: AppSpacing.md),
 
-            // Balance card
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    AppColors.primary.withValues(alpha: 0.1),
-                    AppColors.primary.withValues(alpha: 0.05),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.2),
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Балансы',
-                    style: context.textTheme.labelSmall?.copyWith(
-                      color: context.isDark
-                          ? AppColors.darkTextSecondary
-                          : AppColors.lightTextSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if (balance == null)
-                    Text(
-                      '—',
-                      style: context.textTheme.headlineSmall?.copyWith(
-                        fontFamily: 'JetBrains Mono',
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.primary,
-                      ),
-                    )
-                  else
-                    ..._clientBalanceLines(context, balance),
-                ],
-              ),
+            // Wallets — каждая валюта = отдельная кликабельная строка с
+            // кнопкой конвертации.
+            _DesktopWalletsBlock(
+              client: widget.client,
+              balance: balance,
             ),
             const SizedBox(height: AppSpacing.md),
 
             // Actions
-            _ClientActions(client: widget.client),
+            _ClientActions(client: widget.client, balance: balance),
 
             const SizedBox(height: AppSpacing.md),
             _TelegramSettingsBlock(client: widget.client),
@@ -804,32 +733,86 @@ class _EmptyDetailPanel extends StatelessWidget {
 // ─── Client Actions (Deposit / Debit) ───
 
 class _ClientActions extends StatelessWidget {
-  const _ClientActions({required this.client});
+  const _ClientActions({required this.client, this.balance});
   final Client client;
+  final ClientBalance? balance;
 
   @override
   Widget build(BuildContext context) {
+    final hasBalance = balance != null &&
+        balance!.balancesByCurrency.values.any((v) => v > 0.0049);
+    const compactPadding = EdgeInsets.symmetric(horizontal: 10, vertical: 8);
+    const compactTextStyle =
+        TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600);
     return Row(
       children: [
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () => _showOperationDialog(context, isDeposit: true),
-            icon: const Icon(Icons.add_circle_outline_rounded, size: 18),
+            icon: const Icon(Icons.add_circle_outline_rounded, size: 16),
             label: const Text('Пополнить'),
-            style: OutlinedButton.styleFrom(foregroundColor: Colors.green),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.green,
+              padding: compactPadding,
+              minimumSize: const Size(0, 36),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: compactTextStyle,
+            ),
           ),
         ),
-        const SizedBox(width: AppSpacing.sm),
+        const SizedBox(width: 6),
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () => _showOperationDialog(context, isDeposit: false),
-            icon: const Icon(Icons.remove_circle_outline_rounded, size: 18),
+            icon: const Icon(Icons.remove_circle_outline_rounded, size: 16),
             label: const Text('Списать'),
-            style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.red,
+              padding: compactPadding,
+              minimumSize: const Size(0, 36),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: compactTextStyle,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: OutlinedButton.icon(
+            onPressed: hasBalance
+                ? () => showConvertCurrencyDialog(
+                      context: context,
+                      client: client,
+                      balance: balance,
+                      initialFrom: _initialFrom(),
+                    )
+                : null,
+            icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+            label: const Text('Обмен'),
+            style: OutlinedButton.styleFrom(
+              padding: compactPadding,
+              minimumSize: const Size(0, 36),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              textStyle: compactTextStyle,
+            ),
           ),
         ),
       ],
     );
+  }
+
+  /// Берём кошелёк с самым большим положительным балансом, иначе основной.
+  String _initialFrom() {
+    final b = balance;
+    if (b == null) return client.currency;
+    String? best;
+    double bestAmt = 0;
+    for (final e in b.balancesByCurrency.entries) {
+      if (e.value > bestAmt) {
+        bestAmt = e.value;
+        best = e.key;
+      }
+    }
+    return best ?? client.currency;
   }
 
   void _showOperationDialog(BuildContext context, {required bool isDeposit}) {
@@ -838,6 +821,225 @@ class _ClientActions extends StatelessWidget {
       builder: (_) => BlocProvider.value(
         value: context.read<ClientBloc>(),
         child: _TransactionDialog(client: client, isDeposit: isDeposit),
+      ),
+    );
+  }
+}
+
+/// Список кошельков клиента в desktop-карточке.  Каждый кошелёк = строка с
+/// кодом валюты, остатком и кнопкой конвертации (через [_DotMenu] чтобы не
+/// перегружать UI). Тап по строке открывает диалог конвертации с этой валюты.
+class _DesktopWalletsBlock extends StatelessWidget {
+  const _DesktopWalletsBlock({required this.client, required this.balance});
+  final Client client;
+  final ClientBalance? balance;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isDark = context.isDark;
+    final secondary = isDark
+        ? AppColors.darkTextSecondary
+        : AppColors.lightTextSecondary;
+
+    final wallets = <_DesktopWallet>[];
+    final seen = <String>{};
+    void add(String c, double amt, {bool primary = false}) {
+      if (!seen.add(c)) return;
+      wallets.add(_DesktopWallet(c, amt, primary));
+    }
+    add(client.currency,
+        balance?.balancesByCurrency[client.currency] ?? balance?.balance ?? 0,
+        primary: true);
+    for (final c in client.walletCurrencies) {
+      add(c, balance?.balancesByCurrency[c] ?? 0);
+    }
+    if (balance != null) {
+      for (final e in balance!.balancesByCurrency.entries) {
+        add(e.key, e.value);
+      }
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withValues(alpha: 0.10),
+            AppColors.secondary.withValues(alpha: 0.04),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        border: Border.all(
+          color: AppColors.primary.withValues(alpha: 0.22),
+          width: 0.6,
+        ),
+      ),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                'Кошельки',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                  color: secondary,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${wallets.length} ${wallets.length == 1 ? 'валюта' : (wallets.length < 5 ? 'валюты' : 'валют')}',
+                style: TextStyle(fontSize: 11, color: scheme.outline),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (var i = 0; i < wallets.length; i++) ...[
+            _DesktopWalletRow(
+              client: client,
+              balance: balance,
+              wallet: wallets[i],
+            ),
+            if (i < wallets.length - 1)
+              Divider(
+                height: 14,
+                color: scheme.outline.withValues(alpha: 0.15),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopWallet {
+  final String currency;
+  final double amount;
+  final bool isPrimary;
+  const _DesktopWallet(this.currency, this.amount, this.isPrimary);
+}
+
+class _DesktopWalletRow extends StatelessWidget {
+  const _DesktopWalletRow({
+    required this.client,
+    required this.balance,
+    required this.wallet,
+  });
+  final Client client;
+  final ClientBalance? balance;
+  final _DesktopWallet wallet;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isNeg = wallet.amount < -0.0049;
+    final color = isNeg ? AppColors.error : AppColors.primary;
+    final canConvert = wallet.amount > 0.0049;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: canConvert
+            ? () => showConvertCurrencyDialog(
+                  context: context,
+                  client: client,
+                  balance: balance,
+                  initialFrom: wallet.currency,
+                )
+            : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  wallet.currency,
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Row(
+                  children: [
+                    Text(
+                      'Кошелёк ${wallet.currency}',
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    if (wallet.isPrimary) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(100),
+                        ),
+                        child: Text(
+                          'ОСН',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.4,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Text(
+                '${wallet.amount.toStringAsFixed(2)} ${wallet.currency}',
+                style: TextStyle(
+                  fontFamily: 'JetBrains Mono',
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: isNeg ? AppColors.error : scheme.onSurface,
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+                tooltip: canConvert
+                    ? 'Конвертировать ${wallet.currency} в другую валюту'
+                    : 'Нет средств для конвертации',
+                onPressed: canConvert
+                    ? () => showConvertCurrencyDialog(
+                          context: context,
+                          client: client,
+                          balance: balance,
+                          initialFrom: wallet.currency,
+                        )
+                    : null,
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints(minWidth: 28, minHeight: 28),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1098,12 +1300,15 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
                   const Icon(Icons.send_rounded, size: 18,
                       color: Color(0xFF2AABEE)),
                   const SizedBox(width: 6),
-                  Text(
-                    'Telegram-уведомления',
-                    style: context.textTheme.labelLarge
-                        ?.copyWith(fontWeight: FontWeight.w600),
+                  Expanded(
+                    child: Text(
+                      'Telegram-уведомления',
+                      style: context.textTheme.labelLarge
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  const Spacer(),
                   if (hasChatId && !_editing)
                     _StatusPill(
                       icon: Icons.check_circle_rounded,
@@ -1284,7 +1489,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
   Future<void> _confirmAndUnlink(BuildContext context, Client client) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (dialogCtx) => AlertDialog(
         title: const Text('Отвязать Telegram-группу?'),
         content: Text(
           'Уведомления о пополнении/снятии/выкупе клиента «${client.name}» '
@@ -1292,12 +1497,12 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(dialogCtx).pop(false),
             child: const Text('Отмена'),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(dialogCtx).pop(true),
             child: const Text('Отвязать'),
           ),
         ],
@@ -1367,11 +1572,18 @@ class _TransactionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDeposit = tx.isDeposit;
-    final color = isDeposit ? Colors.green : Colors.red;
+    final isConv = tx.isConversion;
+    final color = isConv
+        ? AppColors.primary
+        : (isDeposit ? Colors.green : Colors.red);
     final scheme = Theme.of(context).colorScheme;
     final secondary = context.isDark
         ? AppColors.darkTextSecondary
         : AppColors.lightTextSecondary;
+
+    final convMeta = tx.conversionMeta;
+    final convFrom = convMeta?['from']?.toString();
+    final convTo = convMeta?['to']?.toString();
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -1386,15 +1598,21 @@ class _TransactionTile extends StatelessWidget {
           Row(
             children: [
               Icon(
-                isDeposit
-                    ? Icons.arrow_downward_rounded
-                    : Icons.arrow_upward_rounded,
+                isConv
+                    ? Icons.swap_horiz_rounded
+                    : (isDeposit
+                        ? Icons.arrow_downward_rounded
+                        : Icons.arrow_upward_rounded),
                 color: color,
                 size: 18,
               ),
               const SizedBox(width: 6),
               Text(
-                isDeposit ? 'Пополнение' : 'Снятие',
+                isConv && convFrom != null && convTo != null
+                    ? (isDeposit
+                        ? 'Конвертация $convFrom → $convTo'
+                        : 'Конвертация $convFrom → $convTo')
+                    : (isDeposit ? 'Пополнение' : 'Снятие'),
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:trina_grid/trina_grid.dart';
@@ -17,6 +18,7 @@ import 'package:ethnocount/domain/entities/transfer_issuance.dart';
 import 'package:ethnocount/domain/repositories/transfer_repository.dart';
 import 'package:ethnocount/domain/services/server_export_service.dart';
 import 'package:ethnocount/domain/services/transfer_invoice_service.dart';
+import 'package:ethnocount/presentation/approvals/approval_guards.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
@@ -506,9 +508,16 @@ class _TransfersPageState extends State<TransfersPage> {
                 ? () => _handleConfirmTransfer(context, t)
                 : null,
             onReject: t.isPending
-                ? () => context
-                    .read<TransferBloc>()
-                    .add(TransferRejectRequested(t.id, 'Отклонён'))
+                ? () async {
+                    final go = await context.guardRejectTransfer(
+                      t,
+                      reason: 'Отклонён',
+                    );
+                    if (!go || !context.mounted) return;
+                    context
+                        .read<TransferBloc>()
+                        .add(TransferRejectRequested(t.id, 'Отклонён'));
+                  }
                 : null,
             onDetails: () => _showTransferDetailSheet(
               context,
@@ -621,15 +630,39 @@ class _TransfersPageState extends State<TransfersPage> {
                   Navigator.of(innerCtx).pop();
                   _handleConfirmTransfer(context, t);
                 },
-                onReject: () {
+                onReject: () async {
                   Navigator.of(innerCtx).pop();
+                  if (!context.mounted) return;
+                  final go = await context.guardRejectTransfer(
+                    t,
+                    reason: 'Отклонён',
+                  );
+                  if (!go || !context.mounted) return;
                   context
                       .read<TransferBloc>()
                       .add(TransferRejectRequested(t.id, 'Отклонён'));
                 },
-                onIssueAll: () {
-                  Navigator.of(innerCtx).pop();
-                  context.read<TransferBloc>().add(TransferIssueRequested(t.id));
+                onIssueAll: () async {
+                  // Полная выдача теперь идёт через тот же диалог, что и
+                  // частичная — иначе оператор не выбирает счёт, и RPC
+                  // выдачи списывает с дефолтного to_account_id (карта/
+                  // касса не различимы). Сумма автоподставляется = весь
+                  // остаток, оператор может поправить или выбрать счёт.
+                  final result = await _showPartialIssueDialog(
+                    innerCtx,
+                    t,
+                    payoutAccounts: branchAccounts[t.toBranchId] ?? const [],
+                    presetFullRemaining: true,
+                  );
+                  if (result != null && context.mounted) {
+                    Navigator.of(innerCtx).pop();
+                    context.read<TransferBloc>().add(TransferIssuePartialRequested(
+                          transferId: t.id,
+                          amount: result.amount,
+                          note: result.note,
+                          fromAccountId: result.fromAccountId,
+                        ));
+                  }
                 },
                 onIssuePartial: () async {
                   final result = await _showPartialIssueDialog(
@@ -690,15 +723,37 @@ class _TransfersPageState extends State<TransfersPage> {
             Navigator.of(ctx).pop();
             _handleConfirmTransfer(context, t);
           },
-          onReject: () {
+          onReject: () async {
             Navigator.of(ctx).pop();
+            if (!context.mounted) return;
+            final go = await context.guardRejectTransfer(
+              t,
+              reason: 'Отклонён',
+            );
+            if (!go || !context.mounted) return;
             context
                 .read<TransferBloc>()
                 .add(TransferRejectRequested(t.id, 'Отклонён'));
           },
-          onIssueAll: () {
-            Navigator.of(ctx).pop();
-            context.read<TransferBloc>().add(TransferIssueRequested(t.id));
+          onIssueAll: () async {
+            // см. комментарий выше — теперь все «выдать всё/остаток» идут
+            // через тот же диалог, чтобы кассир обязательно выбрал счёт
+            // (карта или наличные), и RPC корректно списал баланс.
+            final result = await _showPartialIssueDialog(
+              ctx,
+              t,
+              payoutAccounts: branchAccounts[t.toBranchId] ?? const [],
+              presetFullRemaining: true,
+            );
+            if (result != null && context.mounted) {
+              Navigator.of(ctx).pop();
+              context.read<TransferBloc>().add(TransferIssuePartialRequested(
+                    transferId: t.id,
+                    amount: result.amount,
+                    note: result.note,
+                    fromAccountId: result.fromAccountId,
+                  ));
+            }
           },
           onIssuePartial: () async {
             final result = await _showPartialIssueDialog(
@@ -737,6 +792,7 @@ class _TransfersPageState extends State<TransfersPage> {
     BuildContext sheetContext,
     Transfer t, {
     List<BranchAccount> payoutAccounts = const [],
+    bool presetFullRemaining = false,
   }) async {
     final repo = sl<TransferRepository>();
     // Refresh transfer just before showing the dialog so the remaining
@@ -754,6 +810,9 @@ class _TransfersPageState extends State<TransfersPage> {
       );
       return null;
     }
+    // Берём актуальные балансы из дашборд-стрима — они синхронны с realtime
+    // обновлениями `account_balances` (см. DashboardBloc).
+    final balances = context.read<DashboardBloc>().state.accountBalances;
     return showDialog<_PartialIssueResult>(
       context: sheetContext,
       barrierDismissible: false,
@@ -764,6 +823,8 @@ class _TransfersPageState extends State<TransfersPage> {
         alreadyIssued: actual.issuedAmount,
         totalAmount: actual.convertedAmount,
         payoutAccounts: payoutAccounts,
+        balances: balances,
+        presetFullRemaining: presetFullRemaining,
       ),
     );
   }
@@ -1594,6 +1655,9 @@ class _PartiesBlock extends StatelessWidget {
       info: t.receiverInfo,
       icon: Icons.south_west_rounded,
       accentColor: const Color(0xFF43A047),
+      // Кнопка копирования телефона нужна выдающему бухгалтеру —
+      // показывается, когда перевод подтверждён, но ещё не выдан.
+      copyablePhone: t.status == TransferStatus.confirmed,
     );
 
     if (isMobile) {
@@ -1606,13 +1670,15 @@ class _PartiesBlock extends StatelessWidget {
         ],
       );
     }
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(child: from),
-        const SizedBox(width: AppSpacing.sm),
-        Expanded(child: to),
-      ],
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: from),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(child: to),
+        ],
+      ),
     );
   }
 }
@@ -1627,6 +1693,7 @@ class _PartyCard extends StatelessWidget {
     this.info,
     required this.icon,
     required this.accentColor,
+    this.copyablePhone = false,
   });
 
   final String title;
@@ -1637,6 +1704,7 @@ class _PartyCard extends StatelessWidget {
   final String? info;
   final IconData icon;
   final Color accentColor;
+  final bool copyablePhone;
 
   @override
   Widget build(BuildContext context) {
@@ -1712,8 +1780,85 @@ class _PartyCard extends StatelessWidget {
           ),
           kv('Счёт', account),
           kv('Имя', name),
-          kv('Телефон', phone),
+          _phoneRow(context, phone),
           kv('Реквизиты', info),
+        ],
+      ),
+    );
+  }
+
+  Widget _phoneRow(BuildContext context, String? value) {
+    final v = (value ?? '').trim();
+    if (v.isEmpty) return const SizedBox.shrink();
+    if (!copyablePhone) {
+      // Стандартное отображение, как у остальных kv-полей.
+      final isDark = context.isDark;
+      final secondary =
+          isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
+      return Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: RichText(
+          text: TextSpan(
+            style: const TextStyle(fontSize: 12, height: 1.35),
+            children: [
+              TextSpan(text: 'Телефон: ', style: TextStyle(color: secondary)),
+              TextSpan(
+                text: v,
+                style: TextStyle(
+                  color: isDark
+                      ? AppColors.darkTextPrimary
+                      : AppColors.lightTextPrimary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // Версия с кнопкой копирования — для confirmed-перевода, чтобы
+    // бухгалтер мог быстро забрать номер при выдаче.
+    final isDark = context.isDark;
+    final secondary =
+        isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
+    final primary = isDark
+        ? AppColors.darkTextPrimary
+        : AppColors.lightTextPrimary;
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: RichText(
+              text: TextSpan(
+                style: const TextStyle(fontSize: 12, height: 1.35),
+                children: [
+                  TextSpan(
+                    text: 'Телефон: ',
+                    style: TextStyle(color: secondary),
+                  ),
+                  TextSpan(text: v, style: TextStyle(color: primary)),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: () async {
+              await Clipboard.setData(ClipboardData(text: v));
+              if (!context.mounted) return;
+              context.showSuccessSnackBar('Телефон $v скопирован');
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Icon(
+                Icons.copy_rounded,
+                size: 14,
+                color: accentColor,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -2464,6 +2609,8 @@ class _PartialIssueDialog extends StatefulWidget {
     required this.alreadyIssued,
     required this.totalAmount,
     this.payoutAccounts = const [],
+    this.balances = const {},
+    this.presetFullRemaining = false,
   });
 
   final String transactionCode;
@@ -2474,6 +2621,16 @@ class _PartialIssueDialog extends StatefulWidget {
 
   /// Счета получающего филиала, из которых можно выдать (карта/наличные).
   final List<BranchAccount> payoutAccounts;
+
+  /// Балансы по `account_id` для подсказки оператору, хватит ли денег
+  /// в кассе/на карте на выдачу. Передаётся из `DashboardBloc.state.
+  /// accountBalances`. Если карта пуста — баланс просто не показывается.
+  final Map<String, double> balances;
+
+  /// Если true — поле «сумма выдачи» автозаполняется остатком (для кейса
+  /// «Выдать всё/остаток» из карточки перевода). Оператор всё ещё может
+  /// поправить значение или выбрать другой счёт.
+  final bool presetFullRemaining;
 
   @override
   State<_PartialIssueDialog> createState() => _PartialIssueDialogState();
@@ -2489,11 +2646,27 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
   @override
   void initState() {
     super.initState();
-    // Преселект: первый счёт нужной валюты, иначе первый из списка.
+    // Преселект: первый счёт нужной валюты с положительным балансом,
+    // иначе первый счёт нужной валюты, иначе первый из списка.
     final list = widget.payoutAccounts;
     if (list.isNotEmpty) {
-      final match = list.where((a) => a.currency == widget.currency);
-      _accountId = (match.isNotEmpty ? match.first : list.first).id;
+      final match = list.where((a) => a.currency == widget.currency).toList();
+      BranchAccount picked;
+      if (match.isNotEmpty) {
+        // Среди подходящих по валюте — отдаём предпочтение тому, на котором
+        // достаточно денег (баланс ≥ суммы к выдаче), иначе первому.
+        final solvent = match.firstWhere(
+          (a) => (widget.balances[a.id] ?? 0) >= widget.remaining,
+          orElse: () => match.first,
+        );
+        picked = solvent;
+      } else {
+        picked = list.first;
+      }
+      _accountId = picked.id;
+    }
+    if (widget.presetFullRemaining) {
+      _amountCtrl.text = widget.remaining.toStringAsFixed(2);
     }
   }
 
@@ -2564,6 +2737,7 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
                   border: const OutlineInputBorder(),
                   suffixText: cur,
                 ),
+                onChanged: (_) => setState(() {}),
                 validator: (v) {
                   if (v == null || v.trim().isEmpty) return 'Введите сумму';
                   final parsed = double.tryParse(v.replaceAll(',', '.').trim());
@@ -2601,29 +2775,17 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
               ),
               const SizedBox(height: AppSpacing.sm),
               if (widget.payoutAccounts.isNotEmpty) ...[
-                DropdownButtonFormField<String>(
-                  initialValue: _accountId,
-                  decoration: const InputDecoration(
-                    labelText: 'Счёт выдачи (карта/касса) *',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.credit_card_outlined),
-                  ),
-                  items: [
-                    for (final a in widget.payoutAccounts)
-                      DropdownMenuItem(
-                        value: a.id,
-                        child: Text(
-                          '${a.name} • ${a.currency}'
-                          '${a.cardLast4 != null && a.cardLast4!.isNotEmpty ? ' • •••${a.cardLast4}' : ''}',
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
+                _PayoutAccountPicker(
+                  accounts: widget.payoutAccounts,
+                  balances: widget.balances,
+                  expectedCurrency: widget.currency,
+                  amount: double.tryParse(
+                          _amountCtrl.text.replaceAll(',', '.').trim()) ??
+                      0,
+                  selectedId: _accountId,
                   onChanged: _submitting
                       ? null
                       : (v) => setState(() => _accountId = v),
-                  validator: (v) =>
-                      (v == null || v.isEmpty) ? 'Выберите счёт' : null,
                 ),
                 const SizedBox(height: AppSpacing.sm),
               ],
@@ -2651,6 +2813,21 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
               ? null
               : () {
                   if (!_formKey.currentState!.validate()) return;
+                  // Account picker не FormField — валидируем явно. Если
+                  // в payoutAccounts вообще ничего нет, RPC сам ругнётся,
+                  // но для UX это редкий кейс (значит у филиала вообще нет
+                  // счетов в нужной валюте — нужно сначала их создать).
+                  if (widget.payoutAccounts.isNotEmpty &&
+                      (_accountId == null || _accountId!.isEmpty)) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                            'Выберите счёт, с которого выдаёте (карта или касса)'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
+                    );
+                    return;
+                  }
                   setState(() => _submitting = true);
                   final amount = double.parse(
                       _amountCtrl.text.replaceAll(',', '.').trim());
@@ -2666,6 +2843,322 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
           label: const Text('Выдать'),
         ),
       ],
+    );
+  }
+}
+
+/// Профессиональный picker счёта-источника при выдаче перевода.
+///
+/// Зачем не Dropdown: оператор-кассир должен с одного взгляда видеть тип
+/// счёта (наличные/карта/резерв), его валюту и текущий баланс — иначе
+/// он легко выберет, например, валютную карту вместо рублёвой кассы и
+/// получит ошибку валюты, или попробует выдать там, где денег нет.
+///
+/// Поведение:
+///  * Подсвечивает выбранный счёт.
+///  * Метит красным «недостаточно средств», если введённая сумма больше
+///    баланса (если баланс известен — Map<accountId, balance>).
+///  * Метит серым счета не той валюты — их трогать нельзя, RPC отклонит.
+///  * Полностью клавиатурно-доступен (RadioListTile внутри).
+class _PayoutAccountPicker extends StatelessWidget {
+  const _PayoutAccountPicker({
+    required this.accounts,
+    required this.balances,
+    required this.expectedCurrency,
+    required this.amount,
+    required this.selectedId,
+    required this.onChanged,
+  });
+
+  final List<BranchAccount> accounts;
+  final Map<String, double> balances;
+  final String expectedCurrency;
+  final double amount;
+  final String? selectedId;
+  final ValueChanged<String?>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    // Сортируем: сначала своя валюта, потом наличные/карта/резерв/транзит,
+    // чтобы кассир сразу увидел подходящие варианты.
+    final sorted = [...accounts]..sort((a, b) {
+        int curRank(BranchAccount x) => x.currency == expectedCurrency ? 0 : 1;
+        int typeRank(BranchAccount x) {
+          switch (x.type) {
+            case AccountType.cash:
+              return 0;
+            case AccountType.card:
+              return 1;
+            case AccountType.reserve:
+              return 2;
+            case AccountType.transit:
+              return 3;
+          }
+        }
+        final byCur = curRank(a).compareTo(curRank(b));
+        if (byCur != 0) return byCur;
+        final byType = typeRank(a).compareTo(typeRank(b));
+        if (byType != 0) return byType;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 4),
+          child: Text(
+            'Откуда выдаём *',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 260),
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                for (final a in sorted)
+                  _PayoutAccountTile(
+                    account: a,
+                    balance: balances[a.id],
+                    expectedCurrency: expectedCurrency,
+                    amount: amount,
+                    selected: a.id == selectedId,
+                    onTap: onChanged == null
+                        ? null
+                        : () => onChanged!(a.id),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        if (selectedId == null || selectedId!.isEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4, left: 4),
+            child: Text(
+              'Выберите счёт',
+              style: TextStyle(fontSize: 11, color: scheme.error),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _PayoutAccountTile extends StatelessWidget {
+  const _PayoutAccountTile({
+    required this.account,
+    required this.balance,
+    required this.expectedCurrency,
+    required this.amount,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final BranchAccount account;
+  final double? balance;
+  final String expectedCurrency;
+  final double amount;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  IconData get _typeIcon {
+    switch (account.type) {
+      case AccountType.cash:
+        return Icons.payments_rounded;
+      case AccountType.card:
+        return Icons.credit_card_rounded;
+      case AccountType.reserve:
+        return Icons.lock_outline_rounded;
+      case AccountType.transit:
+        return Icons.local_shipping_outlined;
+    }
+  }
+
+  Color _typeColor(BuildContext context) {
+    switch (account.type) {
+      case AccountType.cash:
+        return Colors.green;
+      case AccountType.card:
+        return Colors.blue;
+      case AccountType.reserve:
+        return Colors.orange;
+      case AccountType.transit:
+        return Colors.purple;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final wrongCurrency = account.currency != expectedCurrency;
+    final lowBalance = balance != null && amount > 0 && balance! < amount;
+    final disabled = wrongCurrency || onTap == null;
+    final tint = _typeColor(context);
+
+    final cardLabel = account.cardLast4 != null && account.cardLast4!.isNotEmpty
+        ? '•••${account.cardLast4}'
+        : null;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Material(
+        color: selected
+            ? tint.withValues(alpha: 0.10)
+            : (disabled
+                ? scheme.surfaceContainerHighest.withValues(alpha: 0.4)
+                : scheme.surfaceContainerHighest.withValues(alpha: 0.2)),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: disabled ? null : onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected
+                    ? tint
+                    : scheme.outline.withValues(alpha: 0.20),
+                width: selected ? 1.4 : 0.6,
+              ),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: tint.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(_typeIcon, size: 18, color: tint),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              account.name,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w700,
+                                color: disabled
+                                    ? scheme.onSurfaceVariant
+                                    : scheme.onSurface,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: tint.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              account.type.displayName,
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.4,
+                                color: tint,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 2,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            account.currency,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontFamily: 'JetBrains Mono',
+                              fontWeight: FontWeight.w700,
+                              color: wrongCurrency
+                                  ? scheme.error
+                                  : scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          if (cardLabel != null)
+                            Text(
+                              cardLabel,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'JetBrains Mono',
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          if (balance != null)
+                            Text(
+                              'Баланс: ${balance!.formatCurrencyNoDecimals()}',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'JetBrains Mono',
+                                color: lowBalance
+                                    ? scheme.error
+                                    : scheme.onSurfaceVariant,
+                                fontWeight: lowBalance
+                                    ? FontWeight.w700
+                                    : FontWeight.w500,
+                              ),
+                            ),
+                          if (wrongCurrency)
+                            Text(
+                              'не та валюта',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: scheme.error,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          if (lowBalance && !wrongCurrency)
+                            Text(
+                              'недостаточно',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: scheme.error,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Radio<bool>(
+                  value: true,
+                  groupValue: selected ? true : null,
+                  onChanged: disabled
+                      ? null
+                      : (_) => onTap?.call(),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
