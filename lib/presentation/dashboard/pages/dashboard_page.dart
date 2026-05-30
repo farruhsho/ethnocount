@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ethnocount/core/constants/app_branding.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
@@ -11,6 +12,7 @@ import 'package:ethnocount/core/utils/balance_utils.dart';
 import 'package:ethnocount/core/utils/branch_access.dart';
 import 'package:ethnocount/core/utils/currency_utils.dart';
 import 'package:ethnocount/domain/entities/branch.dart';
+import 'package:ethnocount/domain/entities/branch_account.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/widgets/activity_feed_card.dart';
@@ -23,6 +25,7 @@ import 'package:ethnocount/presentation/dashboard/widgets/pending_transfers_card
 import 'package:ethnocount/presentation/common/widgets/shimmer_loading.dart';
 import 'package:ethnocount/presentation/common/animations/fade_slide.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class DashboardPage extends StatelessWidget {
   const DashboardPage({super.key});
 
@@ -43,7 +46,13 @@ class DashboardPage extends StatelessWidget {
         }
 
         final visibleBranches = filterBranchesByAccess(state.branches, user);
-        final filtered = state.copyWith(branches: visibleBranches);
+        final allowed = accessibleBranchIds(user); // null = creator/director
+        // Жёсткий клиентский фильтр: бухгалтер не должен видеть данные чужих
+        // филиалов в обзоре (KPI, графики, балансы, ожидающие переводы).
+        // RLS на сервере — первый эшелон, это второй на клиенте.
+        final filtered = allowed == null
+            ? state.copyWith(branches: visibleBranches)
+            : _restrictStateToBranches(state, visibleBranches, allowed);
         final hasAllBranchesAccess = user?.role.isAdminOrCreator ?? false;
 
         return context.isDesktop
@@ -61,6 +70,39 @@ class DashboardPage extends StatelessWidget {
 }
 
 // ─── Helpers ───
+
+/// Возвращает копию state, где все списки/мапы обрезаны до [allowed] филиалов.
+/// Используется как клиентский фильтр поверх RLS — бухгалтер не должен видеть
+/// данные чужих филиалов даже теоретически.
+DashboardState _restrictStateToBranches(
+  DashboardState s,
+  List<Branch> visibleBranches,
+  Set<String> allowed,
+) {
+  final accIds = <String>{};
+  final accounts = <String, List<BranchAccount>>{};
+  s.branchAccounts.forEach((bId, list) {
+    if (!allowed.contains(bId)) return;
+    accounts[bId] = list;
+    for (final a in list) {
+      accIds.add(a.id);
+    }
+  });
+  final balances = {
+    for (final e in s.accountBalances.entries)
+      if (accIds.contains(e.key)) e.key: e.value
+  };
+  final pending = s.pendingTransfers
+      .where((t) =>
+          allowed.contains(t.fromBranchId) || allowed.contains(t.toBranchId))
+      .toList();
+  return s.copyWith(
+    branches: visibleBranches,
+    branchAccounts: accounts,
+    accountBalances: balances,
+    pendingTransfers: pending,
+  );
+}
 
 Map<String, double> _balancesByCurrency(DashboardState s) {
   final allAccounts = s.branchAccounts.values.expand((l) => l).toList();
@@ -143,14 +185,14 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
                         .map((e) => '${_compact(e.value)} ${e.key}')
                         .join(' · ')
                     : null,
-                icon: Icons.account_balance_wallet_rounded,
+                icon: AppIcons.account_balance_wallet,
                 iconColor: AppColors.primary,
               ),
               KpiCard(
                 label: 'Активных филиалов',
                 primary: '${state.branches.where((b) => b.isActive).length}',
                 secondary: '${state.branches.length} всего',
-                icon: Icons.business_rounded,
+                icon: AppIcons.business,
                 iconColor: AppColors.secondary,
               ),
               KpiCard(
@@ -159,14 +201,14 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
                 secondary: state.pendingCount > 0
                     ? 'требуют действия'
                     : 'нет ожидающих',
-                icon: Icons.pending_actions_rounded,
+                icon: AppIcons.pending_actions,
                 iconColor: AppColors.warning,
               ),
               KpiCard(
                 label: 'Активных счетов',
                 primary: '${_accountCount(state)}',
                 secondary: 'по всем филиалам',
-                icon: Icons.credit_card_rounded,
+                icon: AppIcons.credit_card,
                 iconColor: AppColors.info,
               ),
             ],
@@ -266,7 +308,7 @@ class _Header extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Ethno Logistics Treasury',
+                'Казначейство · $kAppDisplayName',
                 style: context.textTheme.headlineLarge?.copyWith(
                   fontWeight: FontWeight.w800,
                 ),
@@ -281,19 +323,19 @@ class _Header extends StatelessWidget {
         ),
         OutlinedButton.icon(
           onPressed: () {},
-          icon: const Icon(Icons.file_download_outlined, size: 18),
+          icon: const Icon(AppIcons.file_download, size: 18),
           label: const Text('Экспорт'),
         ),
         const SizedBox(width: 8),
         OutlinedButton.icon(
           onPressed: () {},
-          icon: const Icon(Icons.tune_rounded, size: 18),
+          icon: const Icon(AppIcons.tune, size: 18),
           label: const Text('Фильтры'),
         ),
         const SizedBox(width: 8),
         FilledButton.icon(
           onPressed: () => context.goNamed(RouteNames.createTransfer),
-          icon: const Icon(Icons.add_rounded, size: 18),
+          icon: const Icon(AppIcons.add, size: 18),
           label: const Text('Новый перевод'),
         ),
       ],
@@ -350,21 +392,25 @@ class _BranchesSection extends StatelessWidget {
                 ),
               ),
               const Spacer(),
-              Wrap(
-                spacing: 4,
-                children: [
-                  for (final f in filters)
-                    ChoiceChip(
-                      label: Text(f, style: const TextStyle(fontSize: 11)),
-                      selected: f == filter,
-                      onSelected: (_) => onFilter(f),
-                      visualDensity: VisualDensity.compact,
-                      side: BorderSide(
-                        color: secondary.withValues(alpha: 0.2),
+              // Чипы UZ/RU/KZ нужны только когда у пользователя реально есть
+              // несколько филиалов на разные страны. Бухгалтеру одного филиала
+              // показывать пустые опции — шум.
+              if (state.branches.length > 1)
+                Wrap(
+                  spacing: 4,
+                  children: [
+                    for (final f in filters)
+                      ChoiceChip(
+                        label: Text(f, style: const TextStyle(fontSize: 11)),
+                        selected: f == filter,
+                        onSelected: (_) => onFilter(f),
+                        visualDensity: VisualDensity.compact,
+                        side: BorderSide(
+                          color: secondary.withValues(alpha: 0.2),
+                        ),
                       ),
-                    ),
-                ],
-              ),
+                  ],
+                ),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
@@ -505,7 +551,7 @@ class _MobileDashboardState extends State<_MobileDashboard> {
                         label: 'Филиалы',
                         value: '${state.branches.length}',
                         sub: '${state.branches.where((b) => b.isActive).length} активных',
-                        icon: Icons.business_rounded,
+                        icon: AppIcons.business,
                         color: AppColors.secondary,
                       ),
                       _MobileKpiTile(
@@ -514,7 +560,7 @@ class _MobileDashboardState extends State<_MobileDashboard> {
                         sub: state.pendingCount > 0
                             ? 'требуют действия'
                             : 'нет ожидающих',
-                        icon: Icons.pending_actions_rounded,
+                        icon: AppIcons.pending_actions,
                         color: AppColors.warning,
                         emphasizeValue: state.pendingCount > 0,
                       ),
@@ -522,14 +568,14 @@ class _MobileDashboardState extends State<_MobileDashboard> {
                         label: 'Счетов',
                         value: '${_accountCount(state)}',
                         sub: '${totals.length} валют${totals.length == 1 ? 'а' : (totals.length < 5 ? 'ы' : '')}',
-                        icon: Icons.credit_card_rounded,
+                        icon: AppIcons.credit_card,
                         color: AppColors.primary,
                       ),
                       _MobileKpiTile(
                         label: 'Валюты',
                         value: '${totals.length}',
                         sub: 'на балансах',
-                        icon: Icons.currency_exchange_rounded,
+                        icon: AppIcons.currency_exchange,
                         color: AppColors.info,
                       ),
                     ],
@@ -551,23 +597,27 @@ class _MobileDashboardState extends State<_MobileDashboard> {
                     onAction: () => context.go('/branches'),
                   ),
                   const SizedBox(height: AppSpacing.sm),
-                  SizedBox(
-                    height: 32,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _branchFilters.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 6),
-                      itemBuilder: (_, i) {
-                        final f = _branchFilters[i];
-                        return _FilterChip(
-                          label: f,
-                          selected: f == _branchFilter,
-                          onTap: () => setState(() => _branchFilter = f),
-                        );
-                      },
+                  // Бухгалтеру с одним филиалом фильтр-чипы не показываем —
+                  // фильтровать нечего.
+                  if (state.branches.length > 1) ...[
+                    SizedBox(
+                      height: 32,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _branchFilters.length,
+                        separatorBuilder: (_, _) => const SizedBox(width: 6),
+                        itemBuilder: (_, i) {
+                          final f = _branchFilters[i];
+                          return _FilterChip(
+                            label: f,
+                            selected: f == _branchFilter,
+                            onTap: () => setState(() => _branchFilter = f),
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
+                    const SizedBox(height: AppSpacing.sm),
+                  ],
 
                   if (filteredBranches.isEmpty)
                     Padding(
@@ -685,12 +735,12 @@ class _MobileHeader extends StatelessWidget {
           ),
         ),
         _HeaderIconButton(
-          icon: Icons.search_rounded,
+          icon: AppIcons.search,
           onTap: () {},
         ),
         const SizedBox(width: 8),
         _HeaderIconButton(
-          icon: Icons.notifications_outlined,
+          icon: AppIcons.notifications,
           onTap: () => context.go('/notifications'),
           badge: pendingCount > 0,
           badgeColor: scheme.tertiary == scheme.primary
@@ -963,33 +1013,33 @@ class _MobileQuickActions extends StatelessWidget {
         context.read<AuthBloc>().state.user?.canBranchTopUp ?? false;
     final actions = <_QuickAct>[
       _QuickAct(
-        icon: Icons.send_rounded,
+        icon: AppIcons.send,
         label: 'Перевод',
         color: AppColors.primary,
         onTap: () => context.goNamed(RouteNames.createTransfer),
       ),
       if (canBranchTopUp)
         _QuickAct(
-          icon: Icons.add_business_rounded,
+          icon: AppIcons.add_business,
           label: 'Внести',
           color: AppColors.secondary,
           onTap: () => context.go('/transfers/topup'),
         )
       else
         _QuickAct(
-          icon: Icons.receipt_long_rounded,
+          icon: AppIcons.receipt_long,
           label: 'Журнал',
           color: AppColors.secondary,
           onTap: () => context.go('/ledger'),
         ),
       _QuickAct(
-        icon: Icons.currency_exchange_rounded,
+        icon: AppIcons.currency_exchange,
         label: 'Курсы',
         color: AppColors.warning,
         onTap: () => context.go('/exchange-rates'),
       ),
       _QuickAct(
-        icon: Icons.file_download_rounded,
+        icon: AppIcons.file_download,
         label: 'Отчёты',
         color: AppColors.info,
         onTap: () => context.go('/reports'),
@@ -1214,7 +1264,7 @@ class _MobileSectionHeader extends StatelessWidget {
                     ),
                     const SizedBox(width: 2),
                     Icon(
-                      Icons.chevron_right_rounded,
+                      AppIcons.chevron_right,
                       size: 16,
                       color: AppColors.primary,
                     ),
@@ -1420,7 +1470,7 @@ class _MobileBranchTile extends StatelessWidget {
               ),
               const SizedBox(width: 4),
               Icon(
-                Icons.chevron_right_rounded,
+                AppIcons.chevron_right,
                 size: 18,
                 color: secondary,
               ),
@@ -1474,7 +1524,7 @@ class _ErrorView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.error_outline_rounded, size: 48, color: AppColors.error),
+          Icon(AppIcons.error_outline, size: 48, color: AppColors.error),
           const SizedBox(height: AppSpacing.md),
           Text(message, textAlign: TextAlign.center),
           const SizedBox(height: AppSpacing.md),
@@ -1482,7 +1532,7 @@ class _ErrorView extends StatelessWidget {
             onPressed: () => context
                 .read<DashboardBloc>()
                 .add(const DashboardRefreshRequested()),
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(AppIcons.refresh),
             label: const Text('Повторить'),
           ),
         ],

@@ -3,6 +3,7 @@ import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Unified error state: icon + message + retry button.
 class ErrorStateView extends StatelessWidget {
   const ErrorStateView({
@@ -29,7 +30,7 @@ class ErrorStateView extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              Icons.error_outline_rounded,
+              AppIcons.error_outline,
               size: 72,
               color: AppColors.error.withValues(alpha: 0.75),
             ),
@@ -51,7 +52,7 @@ class ErrorStateView extends StatelessWidget {
               const SizedBox(height: AppSpacing.lg),
               OutlinedButton.icon(
                 onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded, size: 20),
+                icon: const Icon(AppIcons.refresh, size: 20),
                 label: const Text('Повторить'),
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size(0, 48),

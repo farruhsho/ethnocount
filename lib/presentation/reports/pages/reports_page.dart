@@ -5,6 +5,7 @@ import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/domain/services/server_export_service.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class ReportsPage extends StatefulWidget {
   const ReportsPage({super.key});
 
@@ -67,7 +68,7 @@ class _ReportsPageState extends State<ReportsPage> {
                       decoration: const InputDecoration(
                         labelText: 'Период',
                         border: OutlineInputBorder(),
-                        suffixIcon: Icon(Icons.date_range),
+                        suffixIcon: Icon(AppIcons.date_range),
                       ),
                       child: Text(
                         _dateRange != null
@@ -79,7 +80,7 @@ class _ReportsPageState extends State<ReportsPage> {
                 ),
                 if (_dateRange != null)
                   IconButton(
-                    icon: const Icon(Icons.clear),
+                    icon: const Icon(AppIcons.clear),
                     tooltip: 'Сбросить период',
                     onPressed: () => setState(() => _dateRange = null),
                   ),
@@ -102,7 +103,7 @@ class _ReportsPageState extends State<ReportsPage> {
             Text('Доступные отчёты', style: theme.textTheme.titleMedium),
             const SizedBox(height: AppSpacing.md),
             _ReportCard(
-              icon: Icons.receipt_long,
+              icon: AppIcons.receipt_long,
               title: 'Журнал операций (Ledger)',
               description: 'Полный журнал дебетовых и кредитовых записей по филиалу',
               requiresBranch: true,
@@ -110,7 +111,7 @@ class _ReportsPageState extends State<ReportsPage> {
               onExport: () => _export('ledger'),
             ),
             _ReportCard(
-              icon: Icons.swap_horiz,
+              icon: AppIcons.swap_horiz,
               title: 'История переводов',
               description: 'Все переводы с деталями: суммы, курсы, комиссии, статусы',
               requiresBranch: false,
@@ -118,7 +119,7 @@ class _ReportsPageState extends State<ReportsPage> {
               onExport: () => _export('transfers'),
             ),
             _ReportCard(
-              icon: Icons.payments,
+              icon: AppIcons.payments,
               title: 'Отчёт по комиссиям',
               description: 'Все комиссии с привязкой к переводам',
               requiresBranch: false,
@@ -126,7 +127,7 @@ class _ReportsPageState extends State<ReportsPage> {
               onExport: () => _export('commissions'),
             ),
             _ReportCard(
-              icon: Icons.summarize,
+              icon: AppIcons.summarize,
               title: 'Ежемесячный финансовый отчёт',
               description: 'Итоги по счетам: дебет, кредит, нетто, количество операций',
               requiresBranch: true,
@@ -249,7 +250,7 @@ class _ReportCard extends StatelessWidget {
         ),
         trailing: FilledButton.tonalIcon(
           onPressed: isEnabled ? onExport : null,
-          icon: const Icon(Icons.download),
+          icon: const Icon(AppIcons.download),
           label: const Text('Excel'),
         ),
       ),

@@ -5,6 +5,30 @@ import 'package:ethnocount/domain/entities/commission.dart';
 import 'package:ethnocount/domain/entities/ledger_entry.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 
+/// Строка таблицы баланс-аудита: сравнение `account_balances.balance`
+/// (cached) с пересчитанным итогом по `ledger_entries` (computed).
+/// `diff = cached − computed`; ненулевая разница = расхождение.
+class BalanceAuditRow {
+  const BalanceAuditRow({
+    required this.accountId,
+    required this.branchId,
+    required this.accountName,
+    required this.currency,
+    required this.cached,
+    required this.computed,
+    required this.diff,
+    required this.ledgerRows,
+  });
+  final String accountId;
+  final String branchId;
+  final String accountName;
+  final String currency;
+  final double cached;
+  final double computed;
+  final double diff;
+  final int ledgerRows;
+}
+
 /// Supabase data source for ledger entries.
 class LedgerRemoteDataSource {
   final SupabaseClient _client;
@@ -343,6 +367,35 @@ class LedgerRemoteDataSource {
     });
     final m = Map<String, dynamic>.from(result as Map);
     return (m['count'] as num?)?.toInt() ?? transactions.length;
+  }
+
+  /// Снимок аудита баланса одного счёта: что в кэше (account_balances)
+  /// и что насчитано из ledger_entries.
+  Future<List<BalanceAuditRow>> auditBalances() async {
+    final data = await _client.rpc('admin_audit_balances');
+    return (data as List).map((row) {
+      final m = Map<String, dynamic>.from(row as Map);
+      return BalanceAuditRow(
+        accountId: m['account_id'] as String,
+        branchId: m['branch_id'] as String? ?? '',
+        accountName: m['account_name'] as String? ?? '—',
+        currency: m['currency'] as String? ?? '',
+        cached: (m['cached'] as num?)?.toDouble() ?? 0,
+        computed: (m['computed'] as num?)?.toDouble() ?? 0,
+        diff: (m['diff'] as num?)?.toDouble() ?? 0,
+        ledgerRows: (m['ledger_rows'] as num?)?.toInt() ?? 0,
+      );
+    }).toList();
+  }
+
+  /// Пересчёт account_balances из ledger_entries. Если accountId = null —
+  /// пересчитываются все счета сразу.
+  Future<int> recomputeBalances({String? accountId}) async {
+    final result = await _client.rpc('admin_recompute_balances', params: {
+      'p_account_id': accountId,
+    });
+    final m = Map<String, dynamic>.from(result as Map);
+    return (m['updated'] as num?)?.toInt() ?? 0;
   }
 
   LedgerEntry _mapLedgerEntry(Map<String, dynamic> data) {

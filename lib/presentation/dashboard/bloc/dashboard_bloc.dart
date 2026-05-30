@@ -175,7 +175,7 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
 
     _pendingTransfersSub?.cancel();
     _pendingTransfersSub = _transferRepository
-        .watchTransfers(statusFilter: TransferStatus.pending)
+        .watchTransfers(statusFilter: TransferStatus.created)
         .listen(
       (transfers) => add(_PendingTransfersUpdated(transfers)),
     );

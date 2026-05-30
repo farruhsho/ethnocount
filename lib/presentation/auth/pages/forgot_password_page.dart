@@ -6,8 +6,9 @@ import 'package:ethnocount/core/theme/glassmorphism.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/auth/widgets/auth_text_field.dart';
 import 'package:ethnocount/presentation/common/animations/fade_slide.dart';
-import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart';
+import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart' show BrandWordmark;
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
 
@@ -72,7 +73,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const EthnoLogo(height: 72),
+                        const BrandWordmark(height: 56),
                         const SizedBox(height: AppSpacing.lg),
                         Text(
                           'Reset Password',
@@ -101,7 +102,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
                               AuthTextField(
                                 controller: _emailController,
                                 label: 'Email',
-                                icon: Icons.email_outlined,
+                                icon: AppIcons.email,
                                 keyboardType: TextInputType.emailAddress,
                                 validator: (val) => val != null && val.contains('@')
                                     ? null
@@ -141,7 +142,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
             top: MediaQuery.of(context).padding.top + AppSpacing.md,
             left: AppSpacing.md,
             child: IconButton(
-              icon: const Icon(Icons.arrow_back),
+              icon: const Icon(AppIcons.arrow_back),
               onPressed: () => context.go('/login'),
             ),
           ),

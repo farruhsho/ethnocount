@@ -1,6 +1,6 @@
 import 'package:equatable/equatable.dart';
 
-/// A physical branch office of Ethno Logistics.
+/// A physical branch office.
 class Branch extends Equatable {
   final String id;
   final String name;

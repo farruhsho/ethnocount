@@ -14,6 +14,7 @@ import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Пополнение филиала с нескольких счетов других филиалов.
 /// Создаёт несколько переводов в один целевой филиал.
 class BranchTopUpPage extends StatefulWidget {
@@ -90,7 +91,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
           ],
         ),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(AppIcons.arrow_back),
           onPressed: () => context.go('/transfers'),
         ),
       ),
@@ -139,11 +140,11 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                           tabAlignment: isMobile ? TabAlignment.start : TabAlignment.fill,
                           tabs: [
                             Tab(
-                              icon: Icon(Icons.swap_horiz_rounded, size: isMobile ? 18 : 20),
+                              icon: Icon(AppIcons.swap_horiz, size: isMobile ? 18 : 20),
                               text: isMobile ? 'С источника' : 'За счёт источника',
                             ),
                             Tab(
-                              icon: Icon(Icons.account_balance_wallet_rounded, size: isMobile ? 18 : 20),
+                              icon: Icon(AppIcons.account_balance_wallet, size: isMobile ? 18 : 20),
                               text: isMobile ? 'Без источника' : 'Без источника',
                             ),
                           ],
@@ -205,7 +206,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                           ),
                           SizedBox(height: isMobile ? AppSpacing.sm : AppSpacing.md),
                           DropdownButtonFormField<String>(
-                            value: _toBranchId ?? '',
+                            initialValue: _toBranchId ?? '',
                             isExpanded: true,
                             decoration: const InputDecoration(
                               labelText: 'Филиал',
@@ -257,7 +258,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                               ),
                               TextButton.icon(
                                 onPressed: () => setState(() => _sources.add(_SourceRow())),
-                                icon: const Icon(Icons.add, size: 18),
+                                icon: const Icon(AppIcons.add, size: 18),
                                 label: const Text('Добавить'),
                               ),
                             ],
@@ -285,7 +286,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                                           children: [
                                             Expanded(
                                               child: DropdownButtonFormField<String>(
-                                                value: sourceBranchValue,
+                                                initialValue: sourceBranchValue,
                                                 isExpanded: true,
                                                 decoration: const InputDecoration(
                                                   labelText: 'Филиал-источник',
@@ -307,7 +308,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                                             ),
                                             if (_sources.length > 1)
                                               IconButton(
-                                                icon: const Icon(Icons.remove_circle_outline),
+                                                icon: const Icon(AppIcons.remove_circle_outline),
                                                 onPressed: () => setState(() => _sources.removeAt(i)),
                                               ),
                                           ],
@@ -371,7 +372,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                                       Expanded(
                                         flex: 2,
                                         child: DropdownButtonFormField<String>(
-                                          value: sourceBranchValue,
+                                          initialValue: sourceBranchValue,
                                           isExpanded: true,
                                           decoration: const InputDecoration(
                                             labelText: 'Филиал-источник',
@@ -443,7 +444,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                                       ],
                                       if (_sources.length > 1)
                                         IconButton(
-                                          icon: const Icon(Icons.remove_circle_outline),
+                                          icon: const Icon(AppIcons.remove_circle_outline),
                                           onPressed: () => setState(() => _sources.removeAt(i)),
                                         ),
                                     ],
@@ -556,7 +557,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                           ? 'Сумма ($_directToAccountCurrency)'
                           : 'Сумма',
                       border: const OutlineInputBorder(),
-                      prefixIcon: const Icon(Icons.add_rounded),
+                      prefixIcon: const Icon(AppIcons.add),
                     ),
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     validator: (v) {
@@ -572,7 +573,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                     decoration: const InputDecoration(
                       labelText: 'Описание (необязательно)',
                       border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.notes_rounded),
+                      prefixIcon: Icon(AppIcons.notes),
                     ),
                     maxLines: 1,
                   ),
@@ -589,7 +590,7 @@ class _BranchTopUpPageState extends State<BranchTopUpPage> {
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                           )
-                        : const Icon(Icons.add_rounded),
+                        : const Icon(AppIcons.add),
                     label: const Text('Пополнить'),
                   ),
                 ],

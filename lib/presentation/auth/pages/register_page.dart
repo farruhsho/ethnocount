@@ -8,8 +8,9 @@ import 'package:ethnocount/core/theme/glassmorphism.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/auth/widgets/auth_text_field.dart';
 import 'package:ethnocount/presentation/common/animations/fade_slide.dart';
-import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart';
+import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart' show BrandWordmark;
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Initial system setup page — creates the first Creator account.
 /// Only accessible when no users exist in Firestore.
 class RegisterPage extends StatefulWidget {
@@ -118,7 +119,7 @@ class _RegisterPageState extends State<RegisterPage> {
                           mainAxisAlignment: MainAxisAlignment.center,
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            const EthnoLogo(height: 64),
+                            const BrandWordmark(height: 56),
                             const SizedBox(height: AppSpacing.lg),
                             Text(
                               'Настройка системы',
@@ -155,7 +156,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                       mainAxisSize: MainAxisSize.min,
                                       mainAxisAlignment: MainAxisAlignment.center,
                                       children: [
-                                        Icon(Icons.shield_rounded,
+                                        Icon(AppIcons.shield,
                                             size: 16, color: AppColors.primary),
                                         SizedBox(width: 6),
                                         Text(
@@ -174,7 +175,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                   AuthTextField(
                                     controller: _nameCtrl,
                                     label: 'Полное имя',
-                                    icon: Icons.person_outline_rounded,
+                                    icon: AppIcons.person_outline,
                                     autofillHints: const [AutofillHints.name],
                                     validator: (v) => v != null && v.trim().length >= 2
                                         ? null
@@ -184,7 +185,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                   AuthTextField(
                                     controller: _emailCtrl,
                                     label: 'Email',
-                                    icon: Icons.email_outlined,
+                                    icon: AppIcons.email,
                                     keyboardType: TextInputType.emailAddress,
                                     autofillHints: const [
                                       AutofillHints.username,
@@ -199,7 +200,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                   AuthTextField(
                                     controller: _passwordCtrl,
                                     label: 'Пароль',
-                                    icon: Icons.lock_outline_rounded,
+                                    icon: AppIcons.lock_outline,
                                     isPassword: true,
                                     autofillHints: const [AutofillHints.newPassword],
                                     validator: (v) => v != null && v.length >= 6
@@ -210,7 +211,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                   AuthTextField(
                                     controller: _confirmCtrl,
                                     label: 'Подтверждение пароля',
-                                    icon: Icons.lock_outline_rounded,
+                                    icon: AppIcons.lock_outline,
                                     isPassword: true,
                                     textInputAction: TextInputAction.done,
                                     autofillHints: const [AutofillHints.newPassword],
@@ -233,7 +234,7 @@ class _RegisterPageState extends State<RegisterPage> {
                                               color: Colors.white,
                                             ),
                                           )
-                                        : const Icon(Icons.check_rounded),
+                                        : const Icon(AppIcons.check),
                                     label: const Text(
                                       'Создать аккаунт Creator',
                                       style: TextStyle(fontSize: 16),

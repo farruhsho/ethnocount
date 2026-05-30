@@ -22,6 +22,7 @@ class CreateTransferUseCase {
     required double commissionValue,
     required String commissionCurrency,
     String commissionMode = 'fromSender',
+    String? commissionAccountId,
     required String idempotencyKey,
     String? description,
     String? clientId,
@@ -31,6 +32,10 @@ class CreateTransferUseCase {
     String? receiverName,
     String? receiverPhone,
     String? receiverInfo,
+    // Dealer mode (опционально): если указаны — RPC посчитает spread_profit.
+    double? buyRate,
+    double? sellRate,
+    String? baseCurrency,
   }) {
     return _repository.createTransfer(
       fromBranchId: fromBranchId,
@@ -45,6 +50,7 @@ class CreateTransferUseCase {
       commissionValue: commissionValue,
       commissionCurrency: commissionCurrency,
       commissionMode: commissionMode,
+      commissionAccountId: commissionAccountId,
       idempotencyKey: idempotencyKey,
       description: description,
       clientId: clientId,
@@ -54,6 +60,9 @@ class CreateTransferUseCase {
       receiverName: receiverName,
       receiverPhone: receiverPhone,
       receiverInfo: receiverInfo,
+      buyRate: buyRate,
+      sellRate: sellRate,
+      baseCurrency: baseCurrency,
     );
   }
 }

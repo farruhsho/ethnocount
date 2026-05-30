@@ -45,6 +45,17 @@ class NotificationRepoImpl implements NotificationRepository {
   }
 
   @override
+  Future<Either<Failure, void>> deleteNotification(
+      String notificationId) async {
+    try {
+      await _remoteDs.deleteNotification(notificationId);
+      return const Right(null);
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  @override
   Stream<int> watchUnreadCount(String branchId) =>
       _remoteDs.watchUnreadCount(branchId);
 }

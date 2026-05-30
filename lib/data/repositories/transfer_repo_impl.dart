@@ -19,6 +19,7 @@ class TransferRepoImpl implements TransferRepository {
     TransferStatus? statusFilter,
     DateTime? startDate,
     DateTime? endDate,
+    String? query,
     int limit = 50,
     Object? startAfter,
   }) {
@@ -27,6 +28,7 @@ class TransferRepoImpl implements TransferRepository {
       statusFilter: statusFilter,
       startDate: startDate,
       endDate: endDate,
+      query: query,
       limit: limit,
     );
   }
@@ -55,6 +57,7 @@ class TransferRepoImpl implements TransferRepository {
     required double commissionValue,
     required String commissionCurrency,
     String commissionMode = 'fromSender',
+    String? commissionAccountId,
     required String idempotencyKey,
     String? description,
     String? clientId,
@@ -64,6 +67,9 @@ class TransferRepoImpl implements TransferRepository {
     String? receiverName,
     String? receiverPhone,
     String? receiverInfo,
+    double? buyRate,
+    double? sellRate,
+    String? baseCurrency,
   }) async {
     try {
       if (!await _connectivity.isConnected) {
@@ -83,6 +89,7 @@ class TransferRepoImpl implements TransferRepository {
         commissionValue: commissionValue,
         commissionCurrency: commissionCurrency,
         commissionMode: commissionMode,
+        commissionAccountId: commissionAccountId,
         idempotencyKey: idempotencyKey,
         description: description,
         clientId: clientId,
@@ -92,6 +99,9 @@ class TransferRepoImpl implements TransferRepository {
         receiverName: receiverName,
         receiverPhone: receiverPhone,
         receiverInfo: receiverInfo,
+        buyRate: buyRate,
+        sellRate: sellRate,
+        baseCurrency: baseCurrency,
       );
 
       if (result['success'] == true) {
@@ -195,46 +205,95 @@ class TransferRepoImpl implements TransferRepository {
   }
 
   @override
-  Future<Either<Failure, void>> rejectTransfer({
+  Future<Either<Failure, void>> dispatchToCourier({
     required String transferId,
-    required String reason,
+    String? courierName,
+    String? courierPhone,
   }) async {
     try {
       if (!await _connectivity.isConnected) {
         return const Left(OfflineFailure());
       }
 
-      final result = await _remoteDs.rejectTransfer(transferId, reason);
-      if (result['success'] == true) {
+      final result = await _remoteDs.dispatchToCourier(
+        transferId,
+        courierName: courierName,
+        courierPhone: courierPhone,
+      );
+      if (result['ok'] == true || result['success'] == true) {
         return const Right(null);
       }
-      return Left(
-          ServerFailure(result['error']?.toString() ?? 'Rejection failed'));
+      return Left(ServerFailure(
+          result['error']?.toString() ?? 'Не удалось передать перевод курьеру'));
     } catch (e) {
       return Left(UnexpectedFailure(e.toString()));
     }
   }
 
   @override
-  Future<Either<Failure, void>> cancelTransfer({
+  Future<Either<Failure, void>> replacePendingTransfer({
     required String transferId,
-    String reason = '',
+    String? fromAccountId,
+    double? amount,
+    String? currency,
+    String? toCurrency,
+    double? exchangeRate,
+    String? commissionType,
+    double? commissionValue,
+    String? commissionCurrency,
+    String? commissionMode,
+    String? toAccountId,
+    String? description,
+    String? clientId,
+    String? senderName,
+    String? senderPhone,
+    String? senderInfo,
+    String? receiverName,
+    String? receiverPhone,
+    String? receiverInfo,
+    String? amendmentNote,
+    String? commissionAccountId,
+    double? buyRate,
+    double? sellRate,
+    String? baseCurrency,
   }) async {
     try {
       if (!await _connectivity.isConnected) {
         return const Left(OfflineFailure());
       }
-
-      final result = await _remoteDs.cancelTransfer(transferId, reason: reason);
-      if (result['success'] == true) {
-        return const Right(null);
-      }
+      final result = await _remoteDs.replacePendingTransfer(
+        transferId: transferId,
+        fromAccountId: fromAccountId,
+        amount: amount,
+        currency: currency,
+        toCurrency: toCurrency,
+        exchangeRate: exchangeRate,
+        commissionType: commissionType,
+        commissionValue: commissionValue,
+        commissionCurrency: commissionCurrency,
+        commissionMode: commissionMode,
+        toAccountId: toAccountId,
+        description: description,
+        clientId: clientId,
+        senderName: senderName,
+        senderPhone: senderPhone,
+        senderInfo: senderInfo,
+        receiverName: receiverName,
+        receiverPhone: receiverPhone,
+        receiverInfo: receiverInfo,
+        amendmentNote: amendmentNote,
+        commissionAccountId: commissionAccountId,
+        buyRate: buyRate,
+        sellRate: sellRate,
+        baseCurrency: baseCurrency,
+      );
+      if (result['success'] == true) return const Right(null);
       return Left(ServerFailure(
-          result['error']?.toString() ?? 'Cancellation failed'));
+          result['error']?.toString() ?? 'Не удалось обновить перевод'));
     } catch (e) {
       final msg = e.toString();
-      if (msg.contains('Only pending') || msg.contains('not in pending')) {
-        return const Left(TransferAlreadyConfirmedFailure());
+      if (msg.contains('Недостаточно средств')) {
+        return Left(InsufficientFundsFailure(msg));
       }
       return Left(UnexpectedFailure(msg));
     }

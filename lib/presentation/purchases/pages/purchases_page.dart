@@ -16,6 +16,7 @@ import 'package:ethnocount/domain/repositories/client_repository.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/purchases/bloc/purchase_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class PurchasesPage extends StatefulWidget {
   const PurchasesPage({super.key});
 
@@ -161,7 +162,7 @@ class _DesktopLayout extends StatelessWidget {
           if (canManage)
             FilledButton.icon(
               onPressed: () => _showCreateDialog(context),
-              icon: const Icon(Icons.add, size: 18),
+              icon: const Icon(AppIcons.add, size: 18),
               label: const Text('Новая покупка'),
             ),
           if (canManage) const SizedBox(width: AppSpacing.md),
@@ -259,7 +260,7 @@ class _MobileLayout extends StatelessWidget {
             child: TextField(
               decoration: InputDecoration(
                 hintText: 'Поиск по описанию, коду...',
-                prefixIcon: const Icon(Icons.search),
+                prefixIcon: const Icon(AppIcons.search),
                 filled: true,
                 fillColor: Theme.of(context).colorScheme.surface,
                 border: OutlineInputBorder(
@@ -286,7 +287,7 @@ class _MobileLayout extends StatelessWidget {
                   ),
                 ),
               ),
-              icon: const Icon(Icons.add),
+              icon: const Icon(AppIcons.add),
               label: const Text('Покупка'),
             )
           : null,
@@ -402,7 +403,7 @@ class _FilterBar extends StatelessWidget {
             child: TextField(
               decoration: InputDecoration(
                 hintText: 'Поиск по описанию, коду, клиенту...',
-                prefixIcon: const Icon(Icons.search, size: 20),
+                prefixIcon: const Icon(AppIcons.search, size: 20),
                 filled: true,
                 isDense: true,
                 fillColor: Theme.of(context)
@@ -639,12 +640,12 @@ class _DetailPanel extends StatelessWidget {
         actions: [
           if (canManage) ...[
             IconButton(
-              icon: const Icon(Icons.edit_rounded),
+              icon: const Icon(AppIcons.edit),
               onPressed: () => _showEditDialog(context),
               tooltip: 'Изменить',
             ),
             IconButton(
-              icon: const Icon(Icons.delete_outline_rounded),
+              icon: const Icon(AppIcons.delete_outline),
               onPressed: () => _showDeleteDialog(context),
               tooltip: 'Удалить',
             ),
@@ -827,7 +828,7 @@ class _EditPurchaseDialogState extends State<_EditPurchaseDialog> {
       child: AlertDialog(
       title: const Row(
         children: [
-          Icon(Icons.edit_rounded, color: AppColors.secondary),
+          Icon(AppIcons.edit, color: AppColors.secondary),
           SizedBox(width: 10),
           Text('Изменить покупку'),
         ],
@@ -844,7 +845,7 @@ class _EditPurchaseDialogState extends State<_EditPurchaseDialog> {
               decoration: const InputDecoration(
                 labelText: 'Описание *',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.description_outlined),
+                prefixIcon: Icon(AppIcons.description),
               ),
             ),
             const SizedBox(height: AppSpacing.md),
@@ -853,7 +854,7 @@ class _EditPurchaseDialogState extends State<_EditPurchaseDialog> {
               decoration: const InputDecoration(
                 labelText: 'Категория',
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.category_outlined),
+                prefixIcon: Icon(AppIcons.category),
               ),
             ),
             const SizedBox(height: AppSpacing.md),
@@ -863,7 +864,7 @@ class _EditPurchaseDialogState extends State<_EditPurchaseDialog> {
               decoration: InputDecoration(
                 labelText: 'Сумма (${widget.purchase.currency})',
                 border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.attach_money_outlined),
+                prefixIcon: const Icon(AppIcons.attach_money),
               ),
             ),
           ],
@@ -875,7 +876,7 @@ class _EditPurchaseDialogState extends State<_EditPurchaseDialog> {
           onPressed: _loading ? null : _submit,
           icon: _loading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.save_rounded),
+              : const Icon(AppIcons.save),
           label: const Text('Сохранить'),
         ),
       ],
@@ -981,7 +982,7 @@ class _DeletePurchaseDialogState extends State<_DeletePurchaseDialog> {
       child: AlertDialog(
         title: const Row(
           children: [
-            Icon(Icons.delete_outline_rounded, color: AppColors.error),
+            Icon(AppIcons.delete_outline, color: AppColors.error),
             SizedBox(width: 10),
             Text('Удалить покупку'),
           ],
@@ -1018,7 +1019,7 @@ class _DeletePurchaseDialogState extends State<_DeletePurchaseDialog> {
             onPressed: _loading ? null : _submit,
             icon: _loading
                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.delete_rounded),
+                : const Icon(AppIcons.delete),
             label: const Text('Удалить'),
             style: FilledButton.styleFrom(backgroundColor: AppColors.error),
           ),
@@ -1095,7 +1096,7 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.shopping_cart_outlined,
+          Icon(AppIcons.shopping_cart,
               size: 64,
               color: Theme.of(context).colorScheme.outlineVariant),
           const SizedBox(height: AppSpacing.md),
@@ -1109,7 +1110,7 @@ class _EmptyState extends StatelessWidget {
             const SizedBox(height: AppSpacing.lg),
             FilledButton.icon(
               onPressed: onCreate,
-              icon: const Icon(Icons.add),
+              icon: const Icon(AppIcons.add),
               label: const Text('Новая покупка'),
             ),
           ],
@@ -1175,13 +1176,13 @@ class _ClientPickerSheetState extends State<_ClientPickerSheet> {
               autofocus: true,
               decoration: const InputDecoration(
                 hintText: 'Поиск по имени, телефону, коду...',
-                prefixIcon: Icon(Icons.search),
+                prefixIcon: Icon(AppIcons.search),
                 border: OutlineInputBorder(),
               ),
             ),
           ),
           ListTile(
-            leading: const Icon(Icons.person_off_outlined),
+            leading: const Icon(AppIcons.person_off),
             title: const Text('— Без клиента'),
             onTap: () => Navigator.of(context).pop<Client?>(null),
           ),
@@ -1193,7 +1194,7 @@ class _ClientPickerSheetState extends State<_ClientPickerSheet> {
               itemBuilder: (_, i) {
                 final c = filtered[i];
                 return ListTile(
-                  leading: const Icon(Icons.person_outline),
+                  leading: const Icon(AppIcons.person_outline),
                   title: Text(c.name),
                   subtitle: Text('${c.phone} • ${c.clientCode}'),
                   onTap: () => Navigator.of(context).pop<Client?>(c),
@@ -1296,20 +1297,20 @@ class _ClientSearchFieldState extends State<_ClientSearchField> {
       decoration: InputDecoration(
         labelText: 'Клиент / Контрагент',
         hintText: 'Поиск по имени, телефону, коду...',
-        prefixIcon: const Icon(Icons.person_outline_rounded),
+        prefixIcon: const Icon(AppIcons.person_outline),
         suffixIcon: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (widget.selectedId != null)
               IconButton(
-                icon: const Icon(Icons.clear, size: 18),
+                icon: const Icon(AppIcons.clear, size: 18),
                 onPressed: () {
                   widget.onSelected(null, null);
                   _controller.clear();
                 },
               ),
             IconButton(
-              icon: const Icon(Icons.arrow_drop_down),
+              icon: const Icon(AppIcons.arrow_drop_down),
               onPressed: _showPicker,
             ),
           ],
@@ -1499,7 +1500,7 @@ class _CreatePurchaseDialogState
             automaticallyImplyLeading: false,
             actions: [
               IconButton(
-                icon: const Icon(Icons.close),
+                icon: const Icon(AppIcons.close),
                 onPressed: () => Navigator.pop(context),
               ),
             ],
@@ -1515,7 +1516,7 @@ class _CreatePurchaseDialogState
                   initialValue: _branchId.isEmpty ? null : _branchId,
                   decoration: const InputDecoration(
                     labelText: 'Филиал *',
-                    prefixIcon: Icon(Icons.business_outlined),
+                    prefixIcon: Icon(AppIcons.business),
                   ),
                   items: widget.branches
                       .map((b) => DropdownMenuItem(
@@ -1556,7 +1557,7 @@ class _CreatePurchaseDialogState
                   controller: _descCtrl,
                   decoration: const InputDecoration(
                     labelText: 'Описание покупки *',
-                    prefixIcon: Icon(Icons.description_outlined),
+                    prefixIcon: Icon(AppIcons.description),
                   ),
                   validator: (v) => (v == null || v.trim().isEmpty)
                       ? 'Введите описание'
@@ -1569,7 +1570,7 @@ class _CreatePurchaseDialogState
                   controller: _categoryCtrl,
                   decoration: const InputDecoration(
                     labelText: 'Категория (необязательно)',
-                    prefixIcon: Icon(Icons.category_outlined),
+                    prefixIcon: Icon(AppIcons.category),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -1580,7 +1581,7 @@ class _CreatePurchaseDialogState
                   initialValue: _currency,
                   decoration: const InputDecoration(
                     labelText: 'Валюта расчёта',
-                    prefixIcon: Icon(Icons.currency_exchange),
+                    prefixIcon: Icon(AppIcons.currency_exchange),
                   ),
                   items: CurrencyUtils.supported
                       .map((c) => DropdownMenuItem(
@@ -1602,7 +1603,7 @@ class _CreatePurchaseDialogState
                     const Spacer(),
                     TextButton.icon(
                       onPressed: _addPaymentRow,
-                      icon: const Icon(Icons.add, size: 16),
+                      icon: const Icon(AppIcons.add, size: 16),
                       label: const Text('Добавить счёт'),
                     ),
                   ],
@@ -1820,7 +1821,7 @@ class _PaymentRowWidget extends StatelessWidget {
             if (canRemove) ...[
               const SizedBox(width: 4),
               IconButton(
-                icon: const Icon(Icons.remove_circle_outline,
+                icon: const Icon(AppIcons.remove_circle_outline,
                     size: 20),
                 onPressed: onRemove,
                 color: Theme.of(context).colorScheme.error,

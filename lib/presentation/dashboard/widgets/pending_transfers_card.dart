@@ -7,6 +7,7 @@ import 'package:ethnocount/core/extensions/date_x.dart';
 import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Список ожидающих переводов с компактными строками: код, статус-чип,
 /// маршрут "from → to", имя клиента, время, сумма справа моно-шрифтом.
 class PendingTransfersCard extends StatelessWidget {
@@ -82,7 +83,7 @@ class PendingTransfersCard extends StatelessWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.check_circle_outline_rounded,
+                    Icon(AppIcons.check_circle_outline,
                         size: 28, color: secondary),
                     const SizedBox(height: 6),
                     Text(

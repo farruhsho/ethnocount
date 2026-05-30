@@ -1,18 +1,18 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/core/extensions/number_x.dart';
 import 'package:ethnocount/core/utils/branch_access.dart';
+import 'package:ethnocount/core/utils/currency_tier.dart';
 import 'package:ethnocount/core/utils/currency_utils.dart';
-import 'package:flutter/services.dart';
 import 'package:ethnocount/core/utils/decimal_input_formatter.dart';
-import 'package:ethnocount/core/utils/phone_input_formatter.dart';
-import 'package:ethnocount/data/datasources/remote/transfer_remote_ds.dart';
 import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/branch_account.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
@@ -20,9 +20,21 @@ import 'package:ethnocount/domain/repositories/branch_repository.dart';
 import 'package:ethnocount/domain/repositories/exchange_rate_repository.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
+import 'package:ethnocount/presentation/settings/bloc/user_prefs_cubit.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
+import 'package:ethnocount/presentation/transfers/widgets/account_picker_grid.dart';
+import 'package:ethnocount/presentation/transfers/widgets/contact_autocomplete_field.dart';
+import 'package:ethnocount/presentation/transfers/widgets/hero_amount_section.dart';
+import 'package:ethnocount/presentation/transfers/widgets/live_receipt_preview.dart';
+import 'package:ethnocount/presentation/transfers/widgets/mobile_hero_amount.dart';
+import 'package:ethnocount/presentation/transfers/widgets/mobile_route_picker.dart';
+import 'package:ethnocount/presentation/transfers/widgets/mobile_step_indicator.dart';
+import 'package:ethnocount/presentation/transfers/widgets/route_map_header.dart';
+import 'package:ethnocount/presentation/transfers/widgets/transfer_top_chrome.dart';
 import 'package:uuid/uuid.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class CreateTransferPage extends StatefulWidget {
   const CreateTransferPage({super.key});
 
@@ -43,19 +55,6 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
   final _receiverInfoCtrl = TextEditingController();
   final _descriptionCtrl = TextEditingController();
 
-  // ── Phone-based contact lookup ──
-  // Когда оператор вводит номер, который уже встречался в истории,
-  // подтягиваем имя/доп.инфо/валюту из самого свежего перевода. Поля
-  // остаются редактируемыми. Чтобы не клабить уже введённые оператором
-  // данные, перезаписываем только пустые поля. После автозаполнения
-  // показываем хинт под полем, чтобы было видно «откуда взялось».
-  Timer? _senderLookupDebounce;
-  Timer? _receiverLookupDebounce;
-  String? _senderAutofillHint;
-  String? _receiverAutofillHint;
-  String _lastSenderLookup = '';
-  String _lastReceiverLookup = '';
-
   /// Clears "0" / "0.0" placeholder when field receives focus.
   void _smartClear(TextEditingController ctrl) {
     final t = ctrl.text.trim();
@@ -68,48 +67,48 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     if (ctrl.text.trim().isEmpty) ctrl.text = def;
   }
 
-  /// «Сильные» валюты — те, у которых обычно мало единиц на 1 USD.
-  /// Курс между «сильной» и «слабой» котируется как «1 [сильная] = X [слабая]».
-  static const _strongCurrencies = {'USD', 'USDT', 'EUR', 'GBP'};
+  /// Tier-based котировки вынесены в [CurrencyTier]. Локальные обёртки
+  /// сохранены для краткости вызовов внутри этого файла.
+  (String, String)? _quotePair(String from, String to) =>
+      CurrencyTier.quotePair(from, to);
 
-  /// Возвращает (strong, weak) если в паре есть «сильная»; иначе null.
-  (String, String)? _quotePair(String from, String to) {
-    final fromStrong = _strongCurrencies.contains(from);
-    final toStrong = _strongCurrencies.contains(to);
-    if (fromStrong && !toStrong) return (from, to);
-    if (!fromStrong && toStrong) return (to, from);
-    return null; // обе сильные или обе слабые — котируем напрямую multiplier'ом
-  }
+  double _multiplierFromInput(double input, String from, String to) =>
+      CurrencyTier.multiplierFromInput(input, from, to);
 
-  /// Конвертирует значение из поля курса в multiplier from→to.
-  /// Если пара котируется как «1 strong = X weak», то:
-  ///   - strong → weak: multiplier = X
-  ///   - weak → strong: multiplier = 1 / X
-  /// Иначе значение в поле — это уже multiplier from→to.
-  double _multiplierFromInput(double input, String from, String to) {
-    final pair = _quotePair(from, to);
-    if (pair == null) return input;
-    final (strong, _) = pair;
-    return from == strong ? input : (input == 0 ? 0 : 1 / input);
-  }
-
-  String _rateLabel(String from, String to) {
-    final pair = _quotePair(from, to);
-    if (pair == null) return 'Курс $from → $to';
-    final (strong, weak) = pair;
-    return '1 $strong = ? $weak';
-  }
+  String _rateLabel(String from, String to) =>
+      CurrencyTier.rateLabel(from, to);
 
   String _rateHint(String from, String to) {
-    final pair = _quotePair(from, to);
+    final pair = CurrencyTier.quotePair(from, to);
     if (pair == null) return '1.0';
     final (strong, weak) = pair;
-    // Пара-подсказка по типичной валюте.
-    if (strong == 'USD' && weak == 'UZS') return '12780';
-    if (strong == 'USD' && weak == 'RUB') return '92';
-    if (strong == 'USD' && weak == 'KZT') return '522';
-    if (strong == 'EUR' && weak == 'USD') return '1.085';
-    return '1.0';
+    // Подсказки по типичным актуальным курсам (обновлять не критично —
+    // оператор вводит фактический).
+    final key = '$strong/$weak';
+    return const {
+      'USD/UZS': '12780',
+      'USD/RUB': '92',
+      'USD/KZT': '522',
+      'USD/KGS': '88',
+      'USD/TJS': '11',
+      'USD/TRY': '34',
+      'USD/CNY': '7.2',
+      'USD/AED': '3.67',
+      'EUR/USD': '1.085',
+      'EUR/UZS': '13800',
+      'EUR/RUB': '100',
+      'GBP/USD': '1.27',
+      'CNY/UZS': '1770',
+      'CNY/RUB': '12.7',
+      'RUB/UZS': '138',      // «1 RUB = 138 UZS» — частая пара
+      'RUB/KGS': '0.96',
+      'RUB/KZT': '5.7',
+      'KZT/UZS': '25.5',
+      'KZT/KGS': '0.17',
+      'KGS/UZS': '143',
+      'TRY/UZS': '375',
+    }[key] ??
+        '1.0';
   }
 
   /// Сбрасывает поле курса при смене валюты, чтобы пользователь не оставил
@@ -123,6 +122,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     _exchangeRateError = null;
   }
   CommissionType _commissionType = CommissionType.fixed;
+  CommissionMode _commissionMode = CommissionMode.fromTransfer;
   String _transferCurrency = 'USD';
   String _toCurrency = 'USD';
   String _commissionCurrency = 'USD';
@@ -130,6 +130,18 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
   String? _fromBranchId;
   String? _toBranchId;
   String? _fromAccountId;
+  String? _commissionAccountId;
+
+  // Dealer mode (опц.): buy/sell rate для расчёта spread profit.
+  bool _dealerMode = false;
+  String _baseCurrency = 'USD';
+  final _buyRateCtrl = TextEditingController();
+  final _sellRateCtrl = TextEditingController();
+
+  /// Step index for the mobile+dark stepped flow (0 = amount, 1 = parties,
+  /// 2 = review). Ignored in legacy / desktop layouts.
+  int _mobileStep = 0;
+  static const _mobileStepNames = ['Сумма и маршрут', 'Стороны', 'Проверка'];
 
   /// Ошибка недостатка средств — подсвечиваем поле суммы красным.
   String? _balanceError;
@@ -160,6 +172,15 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         setState(() {
           _allBranches = branches;
           _branches = filterBranchesByAccess(branches, user);
+          // Бухгалтер всегда закреплён за своим филиалом —
+          // автоматически выставляем первый из его assigned.
+          if (user != null &&
+              !user.role.isAdminOrCreator &&
+              _branches.isNotEmpty &&
+              _fromBranchId == null) {
+            _fromBranchId = _branches.first.id;
+            _loadAccountsFor(_fromBranchId!);
+          }
         });
       });
     });
@@ -199,113 +220,28 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     _receiverPhoneCtrl.dispose();
     _receiverInfoCtrl.dispose();
     _descriptionCtrl.dispose();
-    _senderLookupDebounce?.cancel();
-    _receiverLookupDebounce?.cancel();
+    _buyRateCtrl.dispose();
+    _sellRateCtrl.dispose();
     super.dispose();
   }
 
-  /// Дебаунс-обёртка над `findContactByPhone` для одной из сторон ('sender'
-  /// либо 'receiver'). Срабатывает через 600 мс после последней правки поля.
-  /// Не запрашивает повторно один и тот же номер. Заполняет только пустые
-  /// поля, чтобы не перезатереть введённое оператором.
-  void _scheduleContactLookup({required String side}) {
-    final isSender = side == 'sender';
-    final phoneCtrl = isSender ? _senderPhoneCtrl : _receiverPhoneCtrl;
-    if (isSender) {
-      _senderLookupDebounce?.cancel();
-    } else {
-      _receiverLookupDebounce?.cancel();
-    }
-    final phone = phoneCtrl.text.trim();
-    if (phone.length < 4) {
-      // Слишком короткий номер — снимаем подсказку, если была.
-      if (mounted) {
-        setState(() {
-          if (isSender) {
-            _senderAutofillHint = null;
-          } else {
-            _receiverAutofillHint = null;
-          }
-        });
-      }
-      return;
-    }
-    final timer = Timer(const Duration(milliseconds: 600), () async {
-      // Проверяем, что значение не изменилось пока мы спали.
-      if (phoneCtrl.text.trim() != phone) return;
-      // И что мы не дёргали тот же номер только что.
-      if (isSender && _lastSenderLookup == phone) return;
-      if (!isSender && _lastReceiverLookup == phone) return;
-      try {
-        final snap = await sl<TransferRemoteDataSource>()
-            .findContactByPhone(phone: phone, side: side);
-        if (!mounted) return;
-        if (isSender) {
-          _lastSenderLookup = phone;
-        } else {
-          _lastReceiverLookup = phone;
-        }
-        if (snap == null) {
-          setState(() {
-            if (isSender) {
-              _senderAutofillHint = null;
-            } else {
-              _receiverAutofillHint = null;
-            }
-          });
-          return;
-        }
-        final nameCtrl = isSender ? _senderNameCtrl : _receiverNameCtrl;
-        final infoCtrl = isSender ? _senderInfoCtrl : _receiverInfoCtrl;
-        final filled = <String>[];
-        if ((snap.name ?? '').trim().isNotEmpty &&
-            nameCtrl.text.trim().isEmpty) {
-          nameCtrl.text = snap.name!.trim();
-          filled.add('имя');
-        }
-        if ((snap.info ?? '').trim().isNotEmpty &&
-            infoCtrl.text.trim().isEmpty) {
-          infoCtrl.text = snap.info!.trim();
-          filled.add('доп. инфо');
-        }
-        // Валюту трогаем только для «отправителя» (валюта перевода логически
-        // привязана к источнику). И только если оператор не успел поменять
-        // её вручную — иначе оставляем как есть.
-        if (isSender &&
-            (snap.currency ?? '').isNotEmpty &&
-            snap.currency != _transferCurrency &&
-            _availableCurrencies().contains(snap.currency)) {
-          setState(() => _transferCurrency = snap.currency!);
-          filled.add('валюту ${snap.currency}');
-        }
-        setState(() {
-          final hint = filled.isEmpty
-              ? 'Найдено в истории — данные совпадают'
-              : 'Подставлено из истории: ${filled.join(', ')} (можно изменить)';
-          if (isSender) {
-            _senderAutofillHint = hint;
-          } else {
-            _receiverAutofillHint = hint;
-          }
-        });
-      } catch (_) {
-        // Ошибки поиска не должны мешать оператору. Просто молча скрываем хинт.
-        if (mounted) {
-          setState(() {
-            if (isSender) {
-              _senderAutofillHint = null;
-            } else {
-              _receiverAutofillHint = null;
-            }
-          });
-        }
+  /// Подставляет валюту, выбранную из найденного контакта.
+  ///
+  /// Защиты:
+  ///  • если уже выбран from-account — НЕ трогаем _transferCurrency
+  ///    (валюта счёта авторитетнее, иначе создадим перевод в валюте, не
+  ///    совпадающей со счётом — сервер откажет либо появится несоответствие).
+  ///  • если валюта не в списке доступных — молча игнорируем.
+  void _applyContactCurrency(String currency) {
+    if (!_availableCurrencies().contains(currency)) return;
+    if (_fromAccountId != null) return; // счёт уже авторитетен
+    setState(() {
+      _transferCurrency = currency;
+      _toCurrency = currency;
+      if (_commissionMode != CommissionMode.fromAccount) {
+        _commissionCurrency = currency;
       }
     });
-    if (isSender) {
-      _senderLookupDebounce = timer;
-    } else {
-      _receiverLookupDebounce = timer;
-    }
   }
 
   @override
@@ -345,11 +281,56 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
       builder: (context, state) {
         final isCreating = state.status == TransferBlocStatus.creating;
         final isMobile = !context.isDesktop;
+        // Desktop hero is temporarily disabled on Flutter web: the
+        // Row(Expanded+SCSV) layout combined with multiple BlocBuilders
+        // listening to DashboardBloc causes `_debugDuringDeviceUpdate`
+        // mouse_tracker races during hover, which prevents layout from
+        // completing and leaves the page blank / un-hit-testable.
+        // Legacy `_buildDesktopForm` works fine until we redesign the
+        // hero with a single tight BlocBuilder + no nested SCSV+Row.
+        // Mobile hero stays on — it's single-column and stable.
+        final useHero =
+            context.isDesktop && context.isDark && !kIsWeb;
+        final useMobileHero = isMobile && context.isDark;
+        if (useHero) {
+          final user = context.read<AuthBloc>().state.user;
+          final fromBranch = _allBranches
+              .where((b) => b.id == _fromBranchId)
+              .cast<Branch?>()
+              .firstWhere((_) => true, orElse: () => null);
+          return Scaffold(
+            backgroundColor: AppColors.darkBg,
+            appBar: TransferTopChrome(
+              operatorName: user?.displayName ?? '',
+              operatorBranchCode: fromBranch?.code ?? '',
+              onCancel: () => context.go('/transfers'),
+            ),
+            // SizedBox.expand + Material force a fully-bounded constraint
+            // chain. Without it the Form>Row was occasionally laying out
+            // to zero height on full-screen Flutter web (the page rendered
+            // blank until the window was resized). Material(transparency)
+            // makes nested InkWells find their parent and avoids the
+            // `_debugDuringDeviceUpdate` mouse_tracker assertion that fires
+            // when InkWells inside a Form get re-parented mid-hover.
+            body: SizedBox.expand(
+              child: Material(
+                type: MaterialType.transparency,
+                child: Form(
+                  key: _formKey,
+                  child: _buildHeroDesktopBody(context, state),
+                ),
+              ),
+            ),
+          );
+        }
+        if (useMobileHero) {
+          return _buildMobileHeroScaffold(context, state, isCreating);
+        }
         return Scaffold(
           appBar: AppBar(
             title: const Text('Новый перевод'),
             leading: IconButton(
-              icon: const Icon(Icons.arrow_back),
+              icon: const Icon(AppIcons.arrow_back),
               onPressed: () => context.go('/transfers'),
             ),
             actions: [
@@ -363,7 +344,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                           height: 18,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.check_rounded),
+                      : const Icon(AppIcons.check),
                 ),
             ],
           ),
@@ -411,7 +392,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                                 child: CircularProgressIndicator(
                                     strokeWidth: 2, color: Colors.white),
                               )
-                            : const Icon(Icons.send_rounded),
+                            : const Icon(AppIcons.send),
                         label: Text(
                             isCreating ? 'Обработка…' : 'Создать перевод'),
                       ),
@@ -464,6 +445,931 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  // Hero desktop layout (design-spec from transfer-create-desktop.jsx)
+  // ═══════════════════════════════════════════════════════════════
+
+  Widget _buildHeroDesktopBody(
+      BuildContext context, TransferBlocState state) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          flex: 5,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(28, 22, 28, 28),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildHeroRouteMap(),
+                const SizedBox(height: 22),
+                _buildHeroAmount(),
+                const SizedBox(height: 28),
+                _HeroSectionHeading(
+                  title: 'Счёт списания',
+                  subtitle: _fromBranchId == null
+                      ? 'Сначала выберите филиал отправителя'
+                      : 'Какая касса платит',
+                  icon: AppIcons.account_balance_wallet,
+                ),
+                const SizedBox(height: 12),
+                _buildHeroAccountGrid(),
+                const SizedBox(height: 28),
+                _HeroSectionHeading(
+                  title: 'Параметры перевода',
+                  subtitle: 'Курс, комиссия и режим списания',
+                  icon: AppIcons.tune,
+                ),
+                const SizedBox(height: 12),
+                _buildHeroCommissionAndDealer(),
+                const SizedBox(height: 28),
+                _HeroSectionHeading(
+                  title: 'Стороны',
+                  subtitle:
+                      'Для квитанции, аудита и поиска по истории операций',
+                  icon: AppIcons.person_outline,
+                ),
+                const SizedBox(height: 12),
+                _buildHeroPartiesGrid(),
+                const SizedBox(height: 14),
+                _buildHeroDescription(),
+                const SizedBox(height: 40),
+              ],
+            ),
+          ),
+        ),
+        Container(
+          width: 480,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.20),
+            border: const Border(
+              left: BorderSide(color: AppColors.darkBorder, width: 0.5),
+            ),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 22, 24, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildPreview(),
+                const SizedBox(height: 16),
+                _buildHeroSubmitStack(context, state),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeroRouteMap() {
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      buildWhen: (a, b) => a.branches != b.branches,
+      builder: (context, dash) {
+        final user = context.read<AuthBloc>().state.user;
+        final allFrom = _branches.isNotEmpty
+            ? _branches
+            : filterBranchesByAccess(dash.branches, user);
+        final allTo = _allBranches.isNotEmpty ? _allBranches : dash.branches;
+        final isAccountant = user != null && !user.role.isAdminOrCreator;
+        return RouteMapHeader(
+          fromBranches: allFrom,
+          toBranches: allTo,
+          selectedFromId: _fromBranchId,
+          selectedToId: _toBranchId,
+          fromLocked: isAccountant,
+          onFromChanged: (id) {
+            setState(() {
+              _fromBranchId = id;
+              _fromAccountId = null;
+              _fromAccounts = [];
+            });
+            _loadAccountsFor(id);
+          },
+          onToChanged: (id) => setState(() => _toBranchId = id),
+        );
+      },
+    );
+  }
+
+  Widget _buildHeroAmount() {
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      builder: (context, dash) {
+        final balance = dash.accountBalances[_fromAccountId] ?? 0;
+        final fromBranch = _allBranches
+            .where((b) => b.id == _fromBranchId)
+            .cast<Branch?>()
+            .firstWhere((_) => true, orElse: () => null);
+        final toBranch = _allBranches
+            .where((b) => b.id == _toBranchId)
+            .cast<Branch?>()
+            .firstWhere((_) => true, orElse: () => null);
+        final amount = double.tryParse(_amountController.text) ?? 0;
+        final commissionValue =
+            double.tryParse(_commissionValueController.text) ?? 0;
+        final commission = _commissionType == CommissionType.percentage
+            ? amount * commissionValue / 100
+            : commissionValue;
+        final rate = _toCurrency == _transferCurrency
+            ? 1.0
+            : _multiplierFromInput(
+                double.tryParse(_exchangeRateController.text) ?? 1.0,
+                _transferCurrency,
+                _toCurrency,
+              );
+        final received = (amount - commission).clamp(0, double.infinity) * rate;
+        final totalDebit = _commissionMode == CommissionMode.fromSender
+            ? amount + commission
+            : amount;
+        final insufficient =
+            _fromAccountId != null && amount > 0 && totalDebit > balance;
+        final receiverBranch = toBranch;
+        final receiverCurrencies = receiverBranch?.supportedCurrencies != null &&
+                receiverBranch!.supportedCurrencies!.isNotEmpty
+            ? List<String>.from(receiverBranch.supportedCurrencies!)
+            : CurrencyUtils.supported;
+        if (!receiverCurrencies.contains(_toCurrency) &&
+            _toCurrency.isNotEmpty) {
+          receiverCurrencies.insert(0, _toCurrency);
+        }
+
+        final commLabel = _commissionType == CommissionType.percentage
+            ? 'Комиссия (${_commissionValueController.text.isEmpty ? '0' : _commissionValueController.text}%)'
+            : 'Комиссия';
+
+        return HeroAmountSection(
+          amountController: _amountController,
+          fromCurrency:
+              _transferCurrency.isEmpty ? 'USD' : _transferCurrency,
+          toCurrency: _toCurrency.isEmpty ? _transferCurrency : _toCurrency,
+          fromBranchCode: fromBranch?.code ?? '',
+          toBranchCode: toBranch?.code ?? '',
+          received: received.toDouble(),
+          balance: balance.toDouble(),
+          insufficient: insufficient,
+          rate: rate,
+          commissionLabel: commLabel,
+          commission: commission,
+          commissionCurrency:
+              _commissionCurrency.isEmpty ? _transferCurrency : _commissionCurrency,
+          totalDebit: totalDebit,
+          onAmountChanged: (_) => setState(() => _balanceError = null),
+          onChangeToCurrency: (v) => setState(() {
+            _toCurrency = v;
+            _resetRateInput();
+          }),
+          toCurrencyOptions: receiverCurrencies,
+        );
+      },
+    );
+  }
+
+  Widget _buildHeroAccountGrid() {
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      builder: (context, dash) {
+        return AccountPickerGrid(
+          accounts: _fromAccounts,
+          selectedId: _fromAccountId,
+          onSelected: (id) {
+            setState(() {
+              _fromAccountId = id;
+              _balanceError = null;
+              final m = _fromAccounts.where((a) => a.id == id);
+              if (m.isNotEmpty) {
+                _transferCurrency = m.first.currency;
+                _toCurrency = m.first.currency;
+                if (_commissionMode != CommissionMode.fromAccount) {
+                  _commissionCurrency = m.first.currency;
+                }
+                _resetRateInput();
+              }
+            });
+          },
+          balanceLookup: (id) =>
+              (dash.accountBalances[id] ?? 0).toDouble(),
+        );
+      },
+    );
+  }
+
+  Widget _buildHeroCommissionAndDealer() {
+    final fromBranch = _allBranches
+        .where((b) => b.id == _fromBranchId)
+        .cast<Branch?>()
+        .firstWhere((_) => true, orElse: () => null);
+    final senderCurrencies = _availableCurrencies(branch: fromBranch);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _CommissionBlock(
+          type: _commissionType,
+          onTypeChanged: (t) => setState(() => _commissionType = t),
+          valueController: _commissionValueController,
+          onValueTap: () => _smartClear(_commissionValueController),
+          onValueChange: () => setState(() => _commissionError = null),
+          onValueBlur: () => _restoreDefault(_commissionValueController, '0'),
+          currency: _commissionCurrency,
+          currencies: senderCurrencies,
+          onCurrencyChanged: (v) =>
+              setState(() => _commissionCurrency = v),
+          transferCurrency: _transferCurrency,
+          errorText: _commissionError,
+          isFromAccountMode: _commissionMode == CommissionMode.fromAccount,
+        ),
+        const SizedBox(height: 10),
+        _CommissionModePicker(
+          mode: _commissionMode,
+          onChanged: (m) {
+            setState(() {
+              _commissionMode = m;
+              if (m != CommissionMode.fromAccount) {
+                _commissionAccountId = null;
+              }
+            });
+          },
+        ),
+        const SizedBox(height: 12),
+        _DealerModeBlock(
+          enabled: _dealerMode,
+          onToggle: (v) => setState(() {
+            _dealerMode = v;
+            if (!v) {
+              _buyRateCtrl.clear();
+              _sellRateCtrl.clear();
+            }
+          }),
+          baseCurrency: _baseCurrency,
+          sourceCurrency: _transferCurrency,
+          onBaseChanged: (v) => setState(() => _baseCurrency = v),
+          buyCtrl: _buyRateCtrl,
+          sellCtrl: _sellRateCtrl,
+          onRateChanged: () => setState(() {}),
+          spreadPreview: _dealerSpreadPreview,
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeroPartiesGrid() {
+    // LayoutBuilder removed (web mouse_tracker compatibility). Mobile path
+    // routes through `_buildMobileHeroScaffold` and stacks parties one per
+    // step, so this method only runs on desktop hero where the column is
+    // always > 620 px → always two-column.
+    final sender = _PartyCard(
+      role: 'Отправитель',
+      accent: AppColors.warning,
+      isSender: true,
+      nameCtrl: _senderNameCtrl,
+      phoneCtrl: _senderPhoneCtrl,
+      infoCtrl: _senderInfoCtrl,
+      onCurrencyPicked: _applyContactCurrency,
+    );
+    final receiver = _PartyCard(
+      role: 'Получатель',
+      accent: AppColors.primary,
+      isSender: false,
+      nameCtrl: _receiverNameCtrl,
+      phoneCtrl: _receiverPhoneCtrl,
+      infoCtrl: _receiverInfoCtrl,
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(child: sender),
+        const SizedBox(width: 14),
+        Expanded(child: receiver),
+      ],
+    );
+  }
+
+  Widget _buildHeroDescription() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: AppColors.darkCard,
+        border: Border.all(color: AppColors.darkBorder),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'НАЗНАЧЕНИЕ / КОММЕНТАРИЙ',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+              color: AppColors.darkTextTertiary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          TextField(
+            controller: _descriptionCtrl,
+            maxLines: 2,
+            style: const TextStyle(
+              fontSize: 13,
+              color: AppColors.darkTextPrimary,
+            ),
+            decoration: const InputDecoration(
+              isCollapsed: true,
+              border: InputBorder.none,
+              hintText: 'Контракт, инвойс, причина перевода…',
+              hintStyle: TextStyle(color: AppColors.darkTextDisabled),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeroSubmitStack(BuildContext context, TransferBlocState state) {
+    final isCreating = state.status == TransferBlocStatus.creating;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _GradientPrimaryButton(
+          label: isCreating ? 'Обработка…' : 'Создать перевод',
+          icon: AppIcons.send,
+          enabled: !isCreating,
+          loading: isCreating,
+          onPressed: () => _submit(context),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed:
+                    isCreating ? null : () => context.go('/transfers'),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: AppColors.darkBorder),
+                  foregroundColor: AppColors.darkTextSecondary,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                ),
+                child: const Text(
+                  'Отменить',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  // Mobile hero layout (design-spec from transfer-create-mobile.jsx)
+  // ═══════════════════════════════════════════════════════════════
+
+  Widget _buildMobileHeroScaffold(
+      BuildContext context, TransferBlocState state, bool isCreating) {
+    final stepName = _mobileStepNames[_mobileStep];
+    return Scaffold(
+      backgroundColor: AppColors.darkBg,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        leading: IconButton(
+          icon: const Icon(AppIcons.arrow_back, size: 20),
+          color: AppColors.darkTextPrimary,
+          onPressed: () {
+            if (_mobileStep == 0) {
+              context.go('/transfers');
+            } else {
+              setState(() => _mobileStep -= 1);
+            }
+          },
+        ),
+        centerTitle: true,
+        title: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'НОВЫЙ ПЕРЕВОД',
+              style: GoogleFonts.inter(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+                color: AppColors.darkTextTertiary,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              stepName,
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: AppColors.darkTextPrimary,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(AppIcons.close, size: 18),
+            color: AppColors.darkTextSecondary,
+            onPressed: () => context.go('/transfers'),
+          ),
+        ],
+      ),
+      body: Form(
+        key: _formKey,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+              child: MobileStepIndicator(
+                current: _mobileStep,
+                total: 3,
+                showLabel: false,
+              ),
+            ),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
+                child: _buildMobileHeroStepBody(context, state),
+              ),
+            ),
+          ],
+        ),
+      ),
+      bottomNavigationBar: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
+          child: _buildMobileStepCta(context, state, isCreating),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMobileHeroStepBody(
+      BuildContext context, TransferBlocState state) {
+    switch (_mobileStep) {
+      case 0:
+        return _buildMobileStepAmount(context);
+      case 1:
+        return _buildMobileStepParties(context);
+      case 2:
+      default:
+        return _buildMobileStepReview(context);
+    }
+  }
+
+  Widget _buildMobileStepAmount(BuildContext context) {
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      builder: (context, dash) {
+        final user = context.read<AuthBloc>().state.user;
+        final allFrom = _branches.isNotEmpty
+            ? _branches
+            : filterBranchesByAccess(dash.branches, user);
+        final allTo = _allBranches.isNotEmpty ? _allBranches : dash.branches;
+        final isAccountant =
+            user != null && !user.role.isAdminOrCreator;
+        final balance = dash.accountBalances[_fromAccountId] ?? 0;
+        final amount = double.tryParse(_amountController.text) ?? 0;
+        final commissionValue =
+            double.tryParse(_commissionValueController.text) ?? 0;
+        final commission = _commissionType == CommissionType.percentage
+            ? amount * commissionValue / 100
+            : commissionValue;
+        final rate = _toCurrency == _transferCurrency
+            ? 1.0
+            : _multiplierFromInput(
+                double.tryParse(_exchangeRateController.text) ?? 1.0,
+                _transferCurrency,
+                _toCurrency,
+              );
+        final received =
+            (amount - commission).clamp(0, double.infinity) * rate;
+        final totalDebit = _commissionMode == CommissionMode.fromSender
+            ? amount + commission
+            : amount;
+        final insufficient =
+            _fromAccountId != null && amount > 0 && totalDebit > balance;
+        final fromBranch = _allBranches
+            .where((b) => b.id == _fromBranchId)
+            .cast<Branch?>()
+            .firstWhere((_) => true, orElse: () => null);
+        final receiverCurrencies = _availableCurrencies(
+                branch: _allBranches
+                    .where((b) => b.id == _toBranchId)
+                    .cast<Branch?>()
+                    .firstWhere((_) => true, orElse: () => null))
+            .toList();
+        if (!receiverCurrencies.contains(_toCurrency) &&
+            _toCurrency.isNotEmpty) {
+          receiverCurrencies.insert(0, _toCurrency);
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MobileRoutePicker(
+              fromBranches: allFrom,
+              toBranches: allTo,
+              selectedFromId: _fromBranchId,
+              selectedToId: _toBranchId,
+              fromLocked: isAccountant,
+              onFromChanged: (id) {
+                setState(() {
+                  _fromBranchId = id;
+                  _fromAccountId = null;
+                  _fromAccounts = [];
+                });
+                _loadAccountsFor(id);
+              },
+              onToChanged: (id) => setState(() => _toBranchId = id),
+            ),
+            const SizedBox(height: 14),
+            MobileHeroAmount(
+              amountController: _amountController,
+              fromCurrency: _transferCurrency.isEmpty ? 'USD' : _transferCurrency,
+              toCurrency: _toCurrency.isEmpty ? _transferCurrency : _toCurrency,
+              balance: balance.toDouble(),
+              received: received.toDouble(),
+              insufficient: insufficient,
+              rate: rate,
+              accountSelected: _fromAccountId != null,
+              onAmountChanged: (_) => setState(() => _balanceError = null),
+              onAccountTap: () => _openMobileAccountSheet(context, fromBranch),
+              onCurrencyTap: () =>
+                  _openMobileCurrencySheet(context, receiverCurrencies),
+              onQuickPick: (v) {
+                setState(() {
+                  _amountController.text = v.toStringAsFixed(0);
+                  _balanceError = null;
+                });
+              },
+              onMaxPick: () {
+                setState(() {
+                  _amountController.text = balance.toStringAsFixed(0);
+                  _balanceError = null;
+                });
+              },
+            ),
+            const SizedBox(height: 18),
+            _HeroSectionHeading(
+              title: 'Комиссия',
+              subtitle: 'Тип, размер и кто платит',
+              icon: AppIcons.tune,
+            ),
+            const SizedBox(height: 10),
+            _buildHeroCommissionAndDealer(),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildMobileStepParties(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _PartyCard(
+          role: 'Отправитель',
+          accent: AppColors.warning,
+          isSender: true,
+          nameCtrl: _senderNameCtrl,
+          phoneCtrl: _senderPhoneCtrl,
+          infoCtrl: _senderInfoCtrl,
+          onCurrencyPicked: _applyContactCurrency,
+        ),
+        const SizedBox(height: 14),
+        _PartyCard(
+          role: 'Получатель',
+          accent: AppColors.primary,
+          isSender: false,
+          nameCtrl: _receiverNameCtrl,
+          phoneCtrl: _receiverPhoneCtrl,
+          infoCtrl: _receiverInfoCtrl,
+        ),
+        const SizedBox(height: 14),
+        _buildHeroDescription(),
+      ],
+    );
+  }
+
+  Widget _buildMobileStepReview(BuildContext context) {
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      builder: (context, dash) {
+        final user = context.read<AuthBloc>().state.user;
+        final fromBranch = _allBranches
+            .where((b) => b.id == _fromBranchId)
+            .cast<Branch?>()
+            .firstWhere((_) => true, orElse: () => null);
+        final toBranch = _allBranches
+            .where((b) => b.id == _toBranchId)
+            .cast<Branch?>()
+            .firstWhere((_) => true, orElse: () => null);
+        final balance = dash.accountBalances[_fromAccountId] ?? 0;
+        final amount = double.tryParse(_amountController.text) ?? 0;
+        final commissionValue =
+            double.tryParse(_commissionValueController.text) ?? 0;
+        final commission = _commissionType == CommissionType.percentage
+            ? amount * commissionValue / 100
+            : commissionValue;
+        final rate = _toCurrency == _transferCurrency
+            ? 1.0
+            : _multiplierFromInput(
+                double.tryParse(_exchangeRateController.text) ?? 1.0,
+                _transferCurrency,
+                _toCurrency,
+              );
+        final received =
+            (amount - commission).clamp(0, double.infinity) * rate;
+        final totalDebit = _commissionMode == CommissionMode.fromSender
+            ? amount + commission
+            : amount;
+        final insufficient =
+            _fromAccountId != null && amount > 0 && totalDebit > balance;
+        final commLabel = _commissionType == CommissionType.percentage
+            ? 'Комиссия (${_commissionValueController.text.isEmpty ? '0' : _commissionValueController.text}%)'
+            : 'Комиссия';
+        final commPayer = _commissionMode == CommissionMode.fromTransfer
+            ? 'удерживается из перевода'
+            : (_commissionMode == CommissionMode.fromAccount
+                ? 'на отдельный счёт'
+                : (_commissionMode == CommissionMode.fromSender
+                    ? 'отправитель'
+                    : 'получатель'));
+        return LiveReceiptPreview(
+          fromBranchName: fromBranch?.name ?? '—',
+          fromBranchCode: fromBranch != null
+              ? shortBranchCode(fromBranch.name, explicitCode: fromBranch.code)
+              : '—',
+          fromCountryFlag: flagForBranchCountry(fromBranch?.address),
+          toBranchName: toBranch?.name ?? '—',
+          toBranchCode: toBranch != null
+              ? shortBranchCode(toBranch.name, explicitCode: toBranch.code)
+              : '—',
+          toCountryFlag: flagForBranchCountry(toBranch?.address),
+          fromCurrency: _transferCurrency,
+          toCurrency: _toCurrency,
+          amount: amount,
+          received: received.toDouble(),
+          rate: rate,
+          commissionLabel: commLabel,
+          commission: commission,
+          commissionCurrency: _commissionCurrency,
+          commissionPayer: commPayer,
+          totalDebit: totalDebit,
+          senderName: _senderNameCtrl.text.trim(),
+          senderPhone: _senderPhoneCtrl.text.trim(),
+          receiverName: _receiverNameCtrl.text.trim(),
+          receiverPhone: _receiverPhoneCtrl.text.trim(),
+          description: _descriptionCtrl.text.trim(),
+          operatorName: user?.displayName ?? '—',
+          operatorBranchCode: fromBranch?.code ?? '',
+          draftId:
+              'TR-DRAFT-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
+          insufficient: insufficient,
+          compact: true,
+        );
+      },
+    );
+  }
+
+  Widget _buildMobileStepCta(
+      BuildContext context, TransferBlocState state, bool isCreating) {
+    bool step0Ready() {
+      final amount = double.tryParse(_amountController.text) ?? 0;
+      final balance = context
+              .read<DashboardBloc>()
+              .state
+              .accountBalances[_fromAccountId] ??
+          0;
+      final commissionValue =
+          double.tryParse(_commissionValueController.text) ?? 0;
+      final commission = _commissionType == CommissionType.percentage
+          ? amount * commissionValue / 100
+          : commissionValue;
+      final totalDebit = _commissionMode == CommissionMode.fromSender
+          ? amount + commission
+          : amount;
+      return _fromBranchId != null &&
+          _toBranchId != null &&
+          _fromBranchId != _toBranchId &&
+          _fromAccountId != null &&
+          amount > 0 &&
+          totalDebit <= balance;
+    }
+
+    bool step1Ready() =>
+        _senderNameCtrl.text.trim().isNotEmpty &&
+        _receiverNameCtrl.text.trim().isNotEmpty;
+
+    final label = switch (_mobileStep) {
+      0 => 'Далее · стороны',
+      1 => 'Далее · проверка',
+      _ => isCreating ? 'Обработка…' : 'Создать перевод',
+    };
+    final icon = _mobileStep == 2 ? AppIcons.send : AppIcons.arrow_forward;
+    final ready = switch (_mobileStep) {
+      0 => step0Ready(),
+      1 => step1Ready(),
+      _ => !isCreating,
+    };
+    return _GradientPrimaryButton(
+      label: label,
+      icon: icon,
+      enabled: ready,
+      loading: _mobileStep == 2 && isCreating,
+      onPressed: () {
+        if (_mobileStep < 2) {
+          setState(() => _mobileStep += 1);
+        } else {
+          _submit(context);
+        }
+      },
+    );
+  }
+
+  /// Bottom sheet with cash accounts of the active sender branch.
+  Future<void> _openMobileAccountSheet(
+      BuildContext context, Branch? branch) async {
+    if (_fromBranchId == null || _fromAccounts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Сначала выберите филиал отправителя'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final dash = context.read<DashboardBloc>().state;
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.darkCard,
+      barrierColor: Colors.black.withValues(alpha: 0.6),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        final viewInsets = MediaQuery.viewInsetsOf(ctx);
+        return Padding(
+          padding: EdgeInsets.only(bottom: viewInsets.bottom),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.darkBorder,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    'Касса · ${branch?.name ?? '—'}',
+                    style: GoogleFonts.inter(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.darkTextPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  AccountPickerGrid(
+                    accounts: _fromAccounts,
+                    selectedId: _fromAccountId,
+                    onSelected: (id) => Navigator.of(ctx).pop(id),
+                    balanceLookup: (id) =>
+                        (dash.accountBalances[id] ?? 0).toDouble(),
+                    columns: 1,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _fromAccountId = picked;
+        _balanceError = null;
+        final m = _fromAccounts.where((a) => a.id == picked);
+        if (m.isNotEmpty) {
+          _transferCurrency = m.first.currency;
+          _toCurrency = m.first.currency;
+          if (_commissionMode != CommissionMode.fromAccount) {
+            _commissionCurrency = m.first.currency;
+          }
+          _resetRateInput();
+        }
+      });
+    }
+  }
+
+  /// Bottom sheet with a 3-column grid of `toCurrency` options.
+  Future<void> _openMobileCurrencySheet(
+      BuildContext context, List<String> options) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.darkCard,
+      barrierColor: Colors.black.withValues(alpha: 0.6),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 12, 18, 22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.darkBorder,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  'Валюта получателя',
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.darkTextPrimary,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                GridView.count(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisCount: 3,
+                  mainAxisSpacing: 8,
+                  crossAxisSpacing: 8,
+                  childAspectRatio: 1.6,
+                  children: [
+                    for (final c in options)
+                      Material(
+                        color: c == _toCurrency
+                            ? AppColors.primarySurface
+                            : AppColors.darkSurface,
+                        borderRadius: BorderRadius.circular(12),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () => Navigator.of(ctx).pop(c),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: c == _toCurrency
+                                    ? AppColors.primary
+                                    : AppColors.darkBorder,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              c,
+                              style: GoogleFonts.jetBrainsMono(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800,
+                                color: c == _toCurrency
+                                    ? AppColors.primary
+                                    : AppColors.darkTextPrimary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+    if (picked != null) {
+      setState(() {
+        _toCurrency = picked;
+        _resetRateInput();
+      });
+    }
+  }
+
   Widget _buildSenderSection() {
     return BlocBuilder<DashboardBloc, DashboardState>(
       buildWhen: (prev, curr) => prev.branches != curr.branches,
@@ -473,41 +1379,66 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
             ? _branches
             : filterBranchesByAccess(dash.branches, user);
 
+        // Бухгалтер ВСЕГДА закреплён за своим филиалом — никакого
+        // dropdown'а, даже если он по какой-то причине видит несколько
+        // (миграция 025 это запрещает на БД-уровне, тут страховка).
+        // Берём первый из его assigned — RPC всё равно отобьёт чужой.
+        final isAccountant =
+            user != null && !user.role.isAdminOrCreator;
+        final pinnedBranch = (isAccountant && senderBranches.isNotEmpty)
+            ? senderBranches.first
+            : null;
+
         return _FormSection(
           title: 'Отправитель',
-          icon: Icons.arrow_upward_rounded,
+          icon: AppIcons.arrow_upward,
           children: [
-            DropdownButtonFormField<String>(
-              key: ValueKey(
-                'from-branch-${senderBranches.length}-$_fromBranchId',
+            if (pinnedBranch != null)
+              InputDecorator(
+                decoration: const InputDecoration(
+                  labelText: 'Филиал отправителя',
+                  helperText: 'привязан к вашему профилю',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(AppIcons.lock_outline, size: 18),
+                ),
+                child: Text(
+                  pinnedBranch.name,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              )
+            else
+              DropdownButtonFormField<String>(
+                key: ValueKey(
+                  'from-branch-${senderBranches.length}-$_fromBranchId',
+                ),
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Филиал отправителя',
+                  border: OutlineInputBorder(),
+                ),
+                initialValue: _fromBranchId != null &&
+                        senderBranches.any((b) => b.id == _fromBranchId)
+                    ? _fromBranchId
+                    : null,
+                hint: senderBranches.isEmpty
+                    ? const Text('Нет доступных филиалов')
+                    : const Text('Выберите филиал'),
+                items: senderBranches
+                    .map((b) =>
+                        DropdownMenuItem(value: b.id, child: Text(b.name)))
+                    .toList(),
+                onChanged: senderBranches.isEmpty
+                    ? null
+                    : (v) {
+                        setState(() {
+                          _fromBranchId = v;
+                          _fromAccountId = null;
+                          _fromAccounts = [];
+                        });
+                        if (v != null) _loadAccountsFor(v);
+                      },
+                validator: (v) => v == null ? 'Выберите филиал' : null,
               ),
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Филиал отправителя',
-                border: OutlineInputBorder(),
-              ),
-              initialValue: _fromBranchId != null &&
-                      senderBranches.any((b) => b.id == _fromBranchId)
-                  ? _fromBranchId
-                  : null,
-              hint: senderBranches.isEmpty
-                  ? const Text('Нет доступных филиалов')
-                  : const Text('Выберите филиал'),
-              items: senderBranches
-                  .map((b) => DropdownMenuItem(value: b.id, child: Text(b.name)))
-                  .toList(),
-              onChanged: senderBranches.isEmpty
-                  ? null
-                  : (v) {
-                      setState(() {
-                        _fromBranchId = v;
-                        _fromAccountId = null;
-                        _fromAccounts = [];
-                      });
-                      if (v != null) _loadAccountsFor(v);
-                    },
-              validator: (v) => v == null ? 'Выберите филиал' : null,
-            ),
             if (senderBranches.isEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.xs, bottom: 4),
@@ -548,7 +1479,20 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                   if (v != null) {
                     final match = _fromAccounts.where((a) => a.id == v);
                     if (match.isNotEmpty) {
-                      _transferCurrency = match.first.currency;
+                      final newCurrency = match.first.currency;
+                      // Валюта перевода жёстко = валюта счёта. Получение и
+                      // комиссия тоже сбрасываются на эту валюту — это
+                      // ожидаемое поведение по умолчанию (выбрал сума-счёт —
+                      // перевод в сумах). Хочешь cross-currency — поменяй
+                      // «Валюта получения» уже ПОСЛЕ выбора счёта.
+                      _transferCurrency = newCurrency;
+                      _toCurrency = newCurrency;
+                      // В режиме fromAccount комиссия привязана к своему
+                      // счёту — не трогаем. В остальных режимах подгоняем.
+                      if (_commissionMode != CommissionMode.fromAccount) {
+                        _commissionCurrency = newCurrency;
+                      }
+                      _resetRateInput();
                     }
                   }
                 });
@@ -559,10 +1503,83 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           BlocBuilder<DashboardBloc, DashboardState>(
             builder: (context, dashState) {
               final balance = dashState.accountBalances[_fromAccountId] ?? 0;
+              final isNegative = balance < 0;
+              // Берём валюту ПРЯМО из выбранного счёта, а не из
+              // `_transferCurrency` — последний обновляется через setState и
+              // может застрять на старом значении, если поток счетов пришёл
+              // после рендера (race). Авторитет — сам счёт.
+              final accountCurrency = _fromAccounts
+                  .where((a) => a.id == _fromAccountId)
+                  .map((a) => a.currency)
+                  .cast<String?>()
+                  .firstWhere((_) => true, orElse: () => _transferCurrency) ??
+                  _transferCurrency;
+              if (isNegative) {
+                // Защита от расхождения кэша balances с ledger_entries.
+                // Если на счёте отрицательное значение, это почти всегда
+                // не реальный овердрафт, а сбившийся кэш. Предупреждаем
+                // creator-а сразу — запустить миграцию 031 + audit.
+                return Padding(
+                  padding: const EdgeInsets.only(top: AppSpacing.sm),
+                  child: Container(
+                    padding: const EdgeInsets.all(AppSpacing.sm),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .error
+                          .withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .error
+                            .withValues(alpha: 0.35),
+                        width: 0.6,
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(AppIcons.error_outline,
+                            size: 16,
+                            color: Theme.of(context).colorScheme.error),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Баланс: ${balance.formatCurrencyNoDecimals()} $accountCurrency',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Theme.of(context).colorScheme.error,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Отрицательный баланс — кэш разошёлся с журналом операций. '
+                                'Попроси администратора запустить пересчёт балансов (миграция 031).',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
               return Padding(
                 padding: const EdgeInsets.only(top: AppSpacing.sm),
                 child: Text(
-                  'Доступно: ${balance.formatCurrencyNoDecimals()} $_transferCurrency',
+                  'Доступно: ${balance.formatCurrencyNoDecimals()} $accountCurrency',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.primary,
@@ -578,32 +1595,19 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           decoration: const InputDecoration(
             labelText: 'ФИО отправителя',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.person_outline, size: 20),
+            prefixIcon: Icon(AppIcons.person_outline, size: 20),
             isDense: true,
           ),
         ),
         const SizedBox(height: AppSpacing.formFieldGap),
-        TextFormField(
-          controller: _senderPhoneCtrl,
-          decoration: InputDecoration(
-            labelText: 'Телефон отправителя',
-            border: const OutlineInputBorder(),
-            prefixIcon: const Icon(Icons.phone_outlined, size: 20),
-            isDense: true,
-            hintText: '+7 900 123 45 67',
-            helperText: _senderAutofillHint,
-            helperMaxLines: 2,
-            helperStyle: TextStyle(
-              color: AppColors.primary,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          keyboardType: TextInputType.phone,
-          inputFormatters: [
-            PhoneInputFormatter(),
-            LengthLimitingTextInputFormatter(kPhoneMaxFormattedLength),
-          ],
-          onChanged: (_) => _scheduleContactLookup(side: 'sender'),
+        ContactAutocompleteField(
+          side: 'sender',
+          phoneController: _senderPhoneCtrl,
+          nameController: _senderNameCtrl,
+          infoController: _senderInfoCtrl,
+          label: 'Телефон отправителя',
+          hintText: '+7 900 123 45 67',
+          onCurrencyPicked: _applyContactCurrency,
         ),
         const SizedBox(height: AppSpacing.formFieldGap),
         TextFormField(
@@ -611,7 +1615,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           decoration: const InputDecoration(
             labelText: 'Доп. инфо отправителя',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.info_outline, size: 20),
+            prefixIcon: Icon(AppIcons.info_outline, size: 20),
             isDense: true,
           ),
         ),
@@ -634,7 +1638,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
 
         return _FormSection(
           title: 'Получатель',
-          icon: Icons.arrow_downward_rounded,
+          icon: AppIcons.arrow_downward,
           children: [
             DropdownButtonFormField<String>(
               key: ValueKey(
@@ -667,7 +1671,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
             labelText: 'Назначение платежа',
             hintText: 'Оплата по договору, аванс, возврат...',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.description_outlined, size: 20),
+            prefixIcon: Icon(AppIcons.description, size: 20),
             isDense: true,
           ),
           maxLines: 2,
@@ -688,32 +1692,18 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           decoration: const InputDecoration(
             labelText: 'ФИО получателя',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.person_outline, size: 20),
+            prefixIcon: Icon(AppIcons.person_outline, size: 20),
             isDense: true,
           ),
         ),
         const SizedBox(height: AppSpacing.formFieldGap),
-        TextFormField(
-          controller: _receiverPhoneCtrl,
-          decoration: InputDecoration(
-            labelText: 'Телефон получателя',
-            border: const OutlineInputBorder(),
-            prefixIcon: const Icon(Icons.phone_outlined, size: 20),
-            isDense: true,
-            hintText: '+998 90 123 45 67',
-            helperText: _receiverAutofillHint,
-            helperMaxLines: 2,
-            helperStyle: TextStyle(
-              color: AppColors.primary,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          keyboardType: TextInputType.phone,
-          inputFormatters: [
-            PhoneInputFormatter(),
-            LengthLimitingTextInputFormatter(kPhoneMaxFormattedLength),
-          ],
-          onChanged: (_) => _scheduleContactLookup(side: 'receiver'),
+        ContactAutocompleteField(
+          side: 'receiver',
+          phoneController: _receiverPhoneCtrl,
+          nameController: _receiverNameCtrl,
+          infoController: _receiverInfoCtrl,
+          label: 'Телефон получателя',
+          hintText: '+998 90 123 45 67',
         ),
         const SizedBox(height: AppSpacing.formFieldGap),
         TextFormField(
@@ -721,7 +1711,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           decoration: const InputDecoration(
             labelText: 'Доп. инфо получателя',
             border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.info_outline, size: 20),
+            prefixIcon: Icon(AppIcons.info_outline, size: 20),
             isDense: true,
           ),
         ),
@@ -751,9 +1741,11 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
 
     return _FormSection(
       title: 'Параметры перевода',
-      icon: Icons.tune_rounded,
+      icon: AppIcons.tune,
       children: [
         // ── Сумма + валюта отправителя в одной строке ──
+        // Валюта перевода жёстко привязана к валюте выбранного счёта.
+        // Хочешь сменить — выбери другой счёт.
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -764,7 +1756,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                 decoration: InputDecoration(
                   labelText: 'Сумма к списанию',
                   border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.payments_outlined),
+                  prefixIcon: const Icon(AppIcons.payments),
                   hintText: '0',
                   errorText: _balanceError,
                 ),
@@ -785,23 +1777,12 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
             const SizedBox(width: AppSpacing.sm),
             Expanded(
               flex: 2,
-              child: _buildCurrencyDropdown(
+              child: _LockedCurrencyField(
                 label: 'Валюта',
-                value: _transferCurrency,
-                options: senderCurrencies,
-                onChanged: (v) {
-                  setState(() {
-                    _transferCurrency = v;
-                    if (_toCurrency == _transferCurrency ||
-                        !_availableCurrencies().contains(_toCurrency)) {
-                      _toCurrency = _transferCurrency;
-                    }
-                    if (!_availableCurrencies().contains(_commissionCurrency)) {
-                      _commissionCurrency = _transferCurrency;
-                    }
-                    _resetRateInput();
-                  });
-                },
+                currency: _fromAccountId != null ? _transferCurrency : null,
+                helperText: _fromAccountId != null
+                    ? 'из счёта'
+                    : 'Выберите счёт',
               ),
             ),
           ],
@@ -809,67 +1790,87 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         const SizedBox(height: AppSpacing.md),
 
         // ── Валюта получателя ──
-        Builder(builder: (_) {
-          final receiverBranch = _allBranches
-              .where((b) => b.id == _toBranchId)
-              .cast<Branch?>()
-              .firstWhere((_) => true, orElse: () => null);
-          final receiverCurrencies =
-              _availableCurrencies(branch: receiverBranch);
-          final isSame = _toCurrency == _transferCurrency;
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                flex: 3,
-                child: _buildCurrencyDropdown(
-                  label: 'Валюта получения',
-                  value: _toCurrency,
-                  options: receiverCurrencies,
-                  helperText: isSame
-                      ? 'Совпадает с валютой отправителя — конвертация не нужна'
-                      : null,
-                  onChanged: (v) {
-                    setState(() {
-                      _toCurrency = v;
-                      _resetRateInput();
-                    });
-                  },
-                ),
-              ),
-              if (!isSame) ...[
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  flex: 2,
-                  child: Focus(
-                    onFocusChange: (f) {
-                      if (!f) _restoreDefault(_exchangeRateController, '1.0');
-                    },
-                    child: TextFormField(
-                      controller: _exchangeRateController,
-                      decoration: InputDecoration(
-                        labelText: _rateLabel(_transferCurrency, _toCurrency),
-                        hintText: _rateHint(_transferCurrency, _toCurrency),
-                        border: const OutlineInputBorder(),
-                        errorText: _exchangeRateError,
-                        suffixText:
-                            _quotePair(_transferCurrency, _toCurrency)?.$2,
-                        prefixIcon: const Icon(Icons.swap_horiz_rounded),
-                      ),
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
-                      inputFormatters: [DecimalInputFormatter()],
-                      onTap: () => _smartClear(_exchangeRateController),
-                      onChanged: (_) =>
-                          setState(() => _exchangeRateError = null),
+        // Если в настройках выключен флаг «использовать курсы валют»,
+        // блок полностью скрыт и валюта получения принудительно
+        // приравнивается к валюте отправителя.
+        BlocBuilder<UserPrefsCubit, UserPrefs>(
+          buildWhen: (a, b) => a.useExchangeRates != b.useExchangeRates,
+          builder: (context, prefs) {
+            if (!prefs.useExchangeRates) {
+              if (_toCurrency != _transferCurrency) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  setState(() {
+                    _toCurrency = _transferCurrency;
+                    _resetRateInput();
+                  });
+                });
+              }
+              return const SizedBox.shrink();
+            }
+            final receiverBranch = _allBranches
+                .where((b) => b.id == _toBranchId)
+                .cast<Branch?>()
+                .firstWhere((_) => true, orElse: () => null);
+            final receiverCurrencies =
+                _availableCurrencies(branch: receiverBranch);
+            final isSame = _toCurrency == _transferCurrency;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: _buildCurrencyDropdown(
+                      label: 'Валюта получения',
+                      value: _toCurrency,
+                      options: receiverCurrencies,
+                      helperText: isSame
+                          ? 'Совпадает с валютой отправителя — конвертация не нужна'
+                          : null,
+                      onChanged: (v) {
+                        setState(() {
+                          _toCurrency = v;
+                          _resetRateInput();
+                        });
+                      },
                     ),
                   ),
-                ),
-              ],
-            ],
-          );
-        }),
-        const SizedBox(height: AppSpacing.lg),
+                  if (!isSame) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      flex: 2,
+                      child: Focus(
+                        onFocusChange: (f) {
+                          if (!f) _restoreDefault(_exchangeRateController, '1.0');
+                        },
+                        child: TextFormField(
+                          controller: _exchangeRateController,
+                          decoration: InputDecoration(
+                            labelText: _rateLabel(_transferCurrency, _toCurrency),
+                            hintText: _rateHint(_transferCurrency, _toCurrency),
+                            border: const OutlineInputBorder(),
+                            errorText: _exchangeRateError,
+                            suffixText:
+                                _quotePair(_transferCurrency, _toCurrency)?.$2,
+                            prefixIcon: const Icon(AppIcons.swap_horiz),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
+                          inputFormatters: [DecimalInputFormatter()],
+                          onTap: () => _smartClear(_exchangeRateController),
+                          onChanged: (_) =>
+                              setState(() => _exchangeRateError = null),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        ),
 
         // ── Комиссия (отдельный визуальный блок) ──
         _CommissionBlock(
@@ -885,6 +1886,76 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
               setState(() => _commissionCurrency = v),
           transferCurrency: _transferCurrency,
           errorText: _commissionError,
+          isFromAccountMode: _commissionMode == CommissionMode.fromAccount,
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        _CommissionModePicker(
+          mode: _commissionMode,
+          onChanged: (m) {
+            setState(() {
+              _commissionMode = m;
+              if (m != CommissionMode.fromAccount) {
+                _commissionAccountId = null;
+              }
+            });
+          },
+        ),
+        if (_commissionMode == CommissionMode.fromAccount) ...[
+          const SizedBox(height: AppSpacing.sm),
+          DropdownButtonFormField<String>(
+            key: ValueKey('commission-acc-$_commissionAccountId-${_fromAccounts.length}'),
+            isExpanded: true,
+            decoration: const InputDecoration(
+              labelText: 'Счёт для зачисления комиссии',
+              helperText: 'Комиссия будет добавлена на этот счёт как доход',
+              helperMaxLines: 2,
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(AppIcons.account_balance, size: 18),
+              isDense: true,
+            ),
+            initialValue: _commissionAccountId != null &&
+                    _fromAccounts.any((a) => a.id == _commissionAccountId)
+                ? _commissionAccountId
+                : null,
+            items: _fromAccounts
+                .map((a) => DropdownMenuItem(
+                      value: a.id,
+                      child: Text(
+                        '${CurrencyUtils.flag(a.currency)} ${a.name} (${a.currency})',
+                      ),
+                    ))
+                .toList(),
+            onChanged: (v) {
+              setState(() {
+                _commissionAccountId = v;
+                if (v != null) {
+                  final m = _fromAccounts.where((a) => a.id == v);
+                  if (m.isNotEmpty) {
+                    _commissionCurrency = m.first.currency;
+                  }
+                }
+              });
+            },
+          ),
+        ],
+        const SizedBox(height: AppSpacing.md),
+        // ── Дилерская модель (buy/sell rate + spread profit) ────
+        _DealerModeBlock(
+          enabled: _dealerMode,
+          onToggle: (v) => setState(() {
+            _dealerMode = v;
+            if (!v) {
+              _buyRateCtrl.clear();
+              _sellRateCtrl.clear();
+            }
+          }),
+          baseCurrency: _baseCurrency,
+          sourceCurrency: _transferCurrency,
+          onBaseChanged: (v) => setState(() => _baseCurrency = v),
+          buyCtrl: _buyRateCtrl,
+          sellCtrl: _sellRateCtrl,
+          onRateChanged: () => setState(() {}),
+          spreadPreview: _dealerSpreadPreview,
         ),
       ],
     );
@@ -953,6 +2024,18 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     final isDark = context.isDark;
 
     if (amount <= 0) return const SizedBox.shrink();
+
+    // Desktop+dark: rich tilted "thermal-printer" receipt preview
+    // (matches transfer-create-desktop reference). Mobile and light theme
+    // keep the simpler breakdown card below.
+    if (context.isDesktop && isDark) {
+      return _buildDesktopReceipt(
+        amount: amount,
+        commission: commission,
+        rate: rate,
+        needsCommissionRate: needsCommissionRate,
+      );
+    }
 
     Widget previewContent;
     if (needsCommissionRate) {
@@ -1027,6 +2110,119 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     );
   }
 
+  Widget _buildDesktopReceipt({
+    required double amount,
+    required double commission,
+    required double rate,
+    required bool needsCommissionRate,
+  }) {
+    final fromBranch = _allBranches
+        .where((b) => b.id == _fromBranchId)
+        .cast<Branch?>()
+        .firstWhere((_) => true, orElse: () => null);
+    final toBranch = _allBranches
+        .where((b) => b.id == _toBranchId)
+        .cast<Branch?>()
+        .firstWhere((_) => true, orElse: () => null);
+    final user = context.read<AuthBloc>().state.user;
+    final balance = context
+            .read<DashboardBloc>()
+            .state
+            .accountBalances[_fromAccountId] ??
+        0;
+
+    final commLabel = _commissionType == CommissionType.percentage
+        ? 'Комиссия (${_commissionValueController.text.isEmpty ? '0' : _commissionValueController.text}%)'
+        : 'Комиссия';
+    final commPayer = _commissionMode == CommissionMode.fromTransfer
+        ? 'удерживается из перевода'
+        : (_commissionMode == CommissionMode.fromAccount
+            ? 'на отдельный счёт'
+            : (_commissionMode == CommissionMode.fromSender
+                ? 'отправитель'
+                : 'получатель'));
+
+    // Async branch: fetch commission FX if needed; otherwise compute synchronously.
+    Widget receiptOf({
+      required double commissionInTransferCur,
+      required double receiverGets,
+      required double totalDebit,
+    }) =>
+        LiveReceiptPreview(
+          fromBranchName: fromBranch?.name ?? '—',
+          fromBranchCode: fromBranch != null
+              ? shortBranchCode(fromBranch.name,
+                  explicitCode: fromBranch.code)
+              : '—',
+          fromCountryFlag:
+              flagForBranchCountry(fromBranch?.address),
+          toBranchName: toBranch?.name ?? '—',
+          toBranchCode: toBranch != null
+              ? shortBranchCode(toBranch.name, explicitCode: toBranch.code)
+              : '—',
+          toCountryFlag: flagForBranchCountry(toBranch?.address),
+          fromCurrency: _transferCurrency,
+          toCurrency: _toCurrency,
+          amount: amount,
+          received: receiverGets,
+          rate: rate,
+          commissionLabel: commLabel,
+          commission: commission,
+          commissionCurrency: _commissionCurrency,
+          commissionPayer: commPayer,
+          totalDebit: totalDebit,
+          senderName: _senderNameCtrl.text.trim(),
+          senderPhone: _senderPhoneCtrl.text.trim(),
+          receiverName: _receiverNameCtrl.text.trim(),
+          receiverPhone: _receiverPhoneCtrl.text.trim(),
+          description: _descriptionCtrl.text.trim(),
+          operatorName: user?.displayName ?? '—',
+          operatorBranchCode: fromBranch?.code ?? '',
+          draftId:
+              'TR-DRAFT-${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
+          insufficient: (_commissionMode == CommissionMode.fromSender
+                  ? amount + commission
+                  : amount) >
+              balance,
+        );
+
+    Widget centered(Widget child) => Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: child,
+          ),
+        );
+
+    if (needsCommissionRate) {
+      return centered(
+        FutureBuilder(
+          future: sl<ExchangeRateRepository>()
+              .getLatestRate(_commissionCurrency, _transferCurrency)
+              .then((r) => r.fold((_) => null, (v) => v)),
+          builder: (ctx, snap) {
+            final commissionRate = snap.data?.rate ?? 0.0;
+            final commissionInTransferCur =
+                commissionRate > 0 ? commission * commissionRate : commission;
+            final receiverGets = (amount - commissionInTransferCur) * rate;
+            return receiptOf(
+              commissionInTransferCur: commissionInTransferCur,
+              receiverGets: receiverGets,
+              totalDebit: amount,
+            );
+          },
+        ),
+      );
+    }
+    final receiverGets = (amount - commission) * rate;
+    return centered(
+      receiptOf(
+        commissionInTransferCur: commission,
+        receiverGets: receiverGets,
+        totalDebit: amount,
+      ),
+    );
+  }
+
   Widget _buildPreviewContent({
     required double amount,
     required double commission,
@@ -1045,7 +2241,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         // Заголовок + сумма к получению (главный показатель)
         Row(
           children: [
-            Icon(Icons.calculate_outlined,
+            Icon(AppIcons.calculate,
                 size: 18, color: AppColors.primary),
             const SizedBox(width: 6),
             Text(
@@ -1104,7 +2300,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           label: 'Списание с отправителя',
           value: totalDebit,
           currency: _transferCurrency,
-          icon: Icons.arrow_upward_rounded,
+          icon: AppIcons.arrow_upward,
           iconColor: Colors.red.shade400,
         ),
         const SizedBox(height: 6),
@@ -1114,7 +2310,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
               : 'Комиссия',
           value: commission,
           currency: _commissionCurrency,
-          icon: Icons.account_balance_outlined,
+          icon: AppIcons.account_balance,
           iconColor: Colors.orange.shade400,
           extra: _commissionCurrency != _transferCurrency && commissionInTransferCur > 0
               ? '≈ ${commissionInTransferCur.formatCurrencyNoDecimals()} $_transferCurrency'
@@ -1126,7 +2322,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
             label: 'Курс конвертации',
             value: null,
             currency: '',
-            icon: Icons.swap_horiz_rounded,
+            icon: AppIcons.swap_horiz,
             iconColor: AppColors.primary,
             customRight: _rateSummary(),
           ),
@@ -1135,7 +2331,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           const SizedBox(height: AppSpacing.sm),
           Row(
             children: [
-              Icon(Icons.info_outline, size: 12, color: secondary),
+              Icon(AppIcons.info_outline, size: 12, color: secondary),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(
@@ -1179,7 +2375,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
                 height: 18,
                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
               )
-            : const Icon(Icons.send_rounded),
+            : const Icon(AppIcons.send),
         label: Text(isCreating ? 'Обработка...' : 'Создать перевод'),
       ),
     );
@@ -1192,7 +2388,17 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     if (_fromAccountId == null) return;
 
     final balance = context.read<DashboardBloc>().state.accountBalances[_fromAccountId] ?? 0;
-    final totalDebit = amount; // CommissionMode.fromTransfer — списание = сумма
+    // Pre-flight баланса: учитываем выбранный режим комиссии. Для
+    // fromTransfer / fromAccount списание = amount; для fromSender —
+    // amount + commission. Для toReceiver — amount (но он в UI скрыт).
+    final commissionValueForCheck =
+        double.tryParse(_commissionValueController.text) ?? 0;
+    final commissionForCheck = _commissionType == CommissionType.percentage
+        ? amount * commissionValueForCheck / 100
+        : commissionValueForCheck;
+    final totalDebit = _commissionMode == CommissionMode.fromSender
+        ? amount + commissionForCheck
+        : amount;
     if (totalDebit > balance) {
       setState(() {
         _balanceError = 'Недостаточно средств. Доступно: ${balance.formatCurrencyNoDecimals()}, требуется: ${totalDebit.formatCurrencyNoDecimals()} $_transferCurrency';
@@ -1249,6 +2455,13 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         commission > 0 &&
         _commissionCurrency.isNotEmpty &&
         _commissionCurrency != currency) {
+      // Захватываем все context-зависимые объекты ДО await, чтобы потом
+      // не было use_build_context_synchronously — линтер не доверяет
+      // mounted-check после async gap, а через локальные ссылки можно
+      // безопасно дёргать messenger/theme/errorColor.
+      final messenger = ScaffoldMessenger.of(context);
+      final errorColor = Theme.of(context).colorScheme.error;
+      void goToRates() => context.go('/exchange-rates');
       final direct = await sl<ExchangeRateRepository>()
           .getLatestRate(_commissionCurrency, currency)
           .then((r) => r.fold((_) => null, (v) => v));
@@ -1266,20 +2479,22 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
               'Откройте «Курсы валют» и добавьте пару, либо установите валюту '
               'комиссии равной валюте перевода ($currency).';
         });
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           SnackBar(
             content: Text(
               'Не задан курс $_commissionCurrency → $currency для пересчёта комиссии. '
               'Перейдите в «Курсы валют» и добавьте пару.',
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
-            backgroundColor: Theme.of(context).colorScheme.error,
+            backgroundColor: errorColor,
             behavior: SnackBarBehavior.floating,
             duration: const Duration(seconds: 6),
             action: SnackBarAction(
               label: 'Открыть',
               textColor: Colors.white,
-              onPressed: () => context.go('/exchange-rates'),
+              onPressed: () {
+                if (mounted) goToRates();
+              },
             ),
           ),
         );
@@ -1288,6 +2503,23 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     }
 
     if (!mounted) return;
+    if (_commissionMode == CommissionMode.fromAccount &&
+        _commissionAccountId == null) {
+      setState(() {
+        _commissionError = 'Выберите счёт для зачисления комиссии';
+      });
+      return;
+    }
+
+    // F4 (AML/KYC) — НЕблокирующий предполётный скрин субъекта. Любая
+    // ошибка скрина не мешает создать перевод; при срабатывании порога
+    // оператор подтверждает вручную и флаг пишется в журнал.
+    if (!context.mounted) return;
+    final amlOk =
+        await _amlPreflight(context, amount: amount, currency: currency);
+    if (!amlOk) return;
+
+    if (!context.mounted) return;
     context.read<TransferBloc>().add(TransferCreateRequested(
           fromBranchId: _fromBranchId!,
           toBranchId: _toBranchId!,
@@ -1300,7 +2532,10 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           commissionType: _commissionType.name,
           commissionValue: commissionValue,
           commissionCurrency: _commissionCurrency,
-          commissionMode: CommissionMode.fromTransfer.name,
+          commissionMode: _commissionMode.name,
+          commissionAccountId: _commissionMode == CommissionMode.fromAccount
+              ? _commissionAccountId
+              : null,
           idempotencyKey: const Uuid().v4(),
           description: _descriptionCtrl.text.trim().isNotEmpty ? _descriptionCtrl.text.trim() : null,
           senderName: _senderNameCtrl.text.trim().isNotEmpty ? _senderNameCtrl.text.trim() : null,
@@ -1309,7 +2544,143 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           receiverName: _receiverNameCtrl.text.trim().isNotEmpty ? _receiverNameCtrl.text.trim() : null,
           receiverPhone: _receiverPhoneCtrl.text.trim().isNotEmpty ? _receiverPhoneCtrl.text.trim() : null,
           receiverInfo: _receiverInfoCtrl.text.trim().isNotEmpty ? _receiverInfoCtrl.text.trim() : null,
+          // Dealer mode — только если toggle включён и оба курса валидны.
+          buyRate: _dealerBuyValue > 0 && _dealerSellValue > 0 ? _dealerBuyValue : null,
+          sellRate: _dealerBuyValue > 0 && _dealerSellValue > 0 ? _dealerSellValue : null,
+          baseCurrency:
+              _dealerBuyValue > 0 && _dealerSellValue > 0 ? _baseCurrency : null,
         ));
+  }
+
+  /// F4 (AML/KYC) — НЕблокирующий скрин субъекта перевода по телефону.
+  /// Возвращает true, если можно продолжать. Любая ошибка/недоступность
+  /// скрина => true: AML не должен мешать рабочему денежному потоку.
+  /// При срабатывании порога показываем предупреждение; если оператор
+  /// подтверждает — фиксируем флаг в журнале (best-effort) и продолжаем.
+  Future<bool> _amlPreflight(
+    BuildContext context, {
+    required double amount,
+    required String currency,
+  }) async {
+    final senderPhone = _senderPhoneCtrl.text.trim();
+    final receiverPhone = _receiverPhoneCtrl.text.trim();
+    final phone = senderPhone.isNotEmpty ? senderPhone : receiverPhone;
+    if (phone.isEmpty) return true;
+    final subjectName = senderPhone.isNotEmpty
+        ? _senderNameCtrl.text.trim()
+        : _receiverNameCtrl.text.trim();
+
+    Map<String, dynamic> res;
+    try {
+      final raw = await Supabase.instance.client.rpc('aml_screen', params: {
+        'p_subject_phone': phone,
+        'p_amount': amount,
+        'p_currency': currency,
+        'p_has_id': false,
+      }).timeout(const Duration(seconds: 8));
+      if (raw is! Map) return true;
+      res = Map<String, dynamic>.from(raw);
+    } catch (_) {
+      return true;
+    }
+
+    if (res['flagged'] != true) return true;
+    final warnings = <String>[];
+    final w = res['warnings'];
+    if (w is List) {
+      for (final x in w) {
+        warnings.add(x.toString());
+      }
+    }
+    if (warnings.isEmpty) return true;
+
+    if (!context.mounted) return true;
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(AppIcons.shield, color: AppColors.warning),
+        title: const Text('Предупреждение AML / KYC'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Скрин субъекта выявил срабатывания. Это не блокирует '
+              'операцию — решение за вами:',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            for (final wn in warnings)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2, right: 6),
+                      child: Icon(AppIcons.error_outline,
+                          size: 14, color: AppColors.warning),
+                    ),
+                    Expanded(
+                      child:
+                          Text(wn, style: const TextStyle(fontSize: 12.5)),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Создать и отметить'),
+          ),
+        ],
+      ),
+    );
+
+    if (proceed != true) return false;
+
+    // Best-effort фиксация флага. transfer_id ещё нет (перевод не
+    // создан) — журнал свяжет по телефону/сумме/времени.
+    try {
+      final high = res['overDaily'] == true || res['overMonthly'] == true;
+      await Supabase.instance.client.rpc('aml_record_flag', params: {
+        'p_flag_type': 'screening',
+        'p_subject_phone': phone,
+        if (subjectName.isNotEmpty) 'p_subject_name': subjectName,
+        'p_currency': currency,
+        'p_amount': amount,
+        'p_severity': high ? 'high' : 'medium',
+        'p_details': {'warnings': warnings, 'source': 'create_transfer'},
+      }).timeout(const Duration(seconds: 8));
+    } catch (_) {
+      // Журналирование не критично — не мешаем созданию перевода.
+    }
+    return true;
+  }
+
+  double get _dealerBuyValue {
+    if (!_dealerMode) return 0;
+    return double.tryParse(_buyRateCtrl.text.replaceAll(',', '.')) ?? 0;
+  }
+
+  double get _dealerSellValue {
+    if (!_dealerMode) return 0;
+    return double.tryParse(_sellRateCtrl.text.replaceAll(',', '.')) ?? 0;
+  }
+
+  /// Spread profit preview (= amount − (amount/buy)*sell) в валюте перевода.
+  double get _dealerSpreadPreview {
+    if (!_dealerMode) return 0;
+    final amt = double.tryParse(_amountController.text.replaceAll(',', '.')) ?? 0;
+    if (amt <= 0 || _dealerBuyValue <= 0 || _dealerSellValue <= 0) return 0;
+    if (_baseCurrency == _transferCurrency) return 0;
+    return amt - (amt / _dealerBuyValue) * _dealerSellValue;
   }
 }
 
@@ -1433,6 +2804,7 @@ class _CommissionBlock extends StatelessWidget {
     required this.onCurrencyChanged,
     required this.transferCurrency,
     required this.errorText,
+    this.isFromAccountMode = false,
   });
 
   final CommissionType type;
@@ -1446,6 +2818,9 @@ class _CommissionBlock extends StatelessWidget {
   final ValueChanged<String> onCurrencyChanged;
   final String transferCurrency;
   final String? errorText;
+
+  /// Когда true — валюта блокируется и берётся из выбранного счёта.
+  final bool isFromAccountMode;
 
   @override
   Widget build(BuildContext context) {
@@ -1469,7 +2844,7 @@ class _CommissionBlock extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.account_balance_outlined,
+              Icon(AppIcons.account_balance,
                   size: 16, color: Theme.of(context).colorScheme.primary),
               const SizedBox(width: 6),
               Text(
@@ -1529,49 +2904,192 @@ class _CommissionBlock extends StatelessWidget {
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   flex: 2,
-                  child: DropdownButtonFormField<String>(
-                    initialValue: currencies.contains(currency)
-                        ? currency
-                        : transferCurrency,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Валюта',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: currencies
-                        .map((c) => DropdownMenuItem(
-                              value: c,
-                              child: Row(
-                                children: [
-                                  Text(CurrencyUtils.flag(c)),
-                                  const SizedBox(width: 6),
-                                  Text(c),
-                                ],
-                              ),
-                            ))
-                        .toList(),
-                    onChanged: (v) {
-                      if (v != null) onCurrencyChanged(v);
-                    },
-                  ),
+                  child: isFromAccountMode
+                      ? InputDecorator(
+                          decoration: const InputDecoration(
+                            labelText: 'Валюта',
+                            helperText: 'из счёта',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(AppIcons.lock_outline, size: 16),
+                            isDense: true,
+                          ),
+                          child: Text(
+                            currency,
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        )
+                      : DropdownButtonFormField<String>(
+                          initialValue: currencies.contains(currency)
+                              ? currency
+                              : transferCurrency,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Валюта',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: currencies
+                              .map((c) => DropdownMenuItem(
+                                    value: c,
+                                    child: Row(
+                                      children: [
+                                        Text(CurrencyUtils.flag(c)),
+                                        const SizedBox(width: 6),
+                                        Text(c),
+                                      ],
+                                    ),
+                                  ))
+                              .toList(),
+                          onChanged: (v) {
+                            if (v != null) onCurrencyChanged(v);
+                          },
+                        ),
                 ),
               ],
             ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            CommissionMode.fromTransfer.description,
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
           ),
         ],
       ),
     );
   }
 }
+
+/// Переключатель режима списания комиссии.
+///
+/// В UI оставлены только два режима — этого хватает для всей бухгалтерии:
+///   • [CommissionMode.fromTransfer] — комиссия удерживается из суммы перевода.
+///   • [CommissionMode.fromAccount]  — комиссия списывается с отдельного счёта
+///     филиала (валюта берётся из этого счёта автоматически).
+///
+/// Режимы [CommissionMode.fromSender] / [CommissionMode.toReceiver] остаются
+/// в enum (исторические переводы и серверные RPC), но в форме создания не
+/// показываются — это путало операторов.
+class _CommissionModePicker extends StatelessWidget {
+  const _CommissionModePicker({
+    required this.mode,
+    required this.onChanged,
+  });
+
+  final CommissionMode mode;
+  final ValueChanged<CommissionMode> onChanged;
+
+  static const _visibleModes = [
+    CommissionMode.fromTransfer,
+    CommissionMode.fromAccount,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selected = _visibleModes.contains(mode) ? mode : CommissionMode.fromTransfer;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Режим комиссии',
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.4,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 6),
+        SegmentedButton<CommissionMode>(
+          segments: _visibleModes
+              .map((m) => ButtonSegment<CommissionMode>(
+                    value: m,
+                    label: Text(
+                      m == CommissionMode.fromTransfer
+                          ? 'Внутри перевода'
+                          : 'На отдельный счёт',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    icon: Icon(
+                      m == CommissionMode.fromTransfer
+                          ? Icons.call_merge
+                          : Icons.account_balance_wallet_outlined,
+                      size: 16,
+                    ),
+                  ))
+              .toList(),
+          selected: {selected},
+          onSelectionChanged: (v) => onChanged(v.first),
+          showSelectedIcon: false,
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: WidgetStateProperty.all(
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          selected.description,
+          style: TextStyle(
+            fontSize: 11,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Read-only визуальное поле для валюты перевода. Берётся из выбранного
+/// from-account и не редактируется отдельно от него.
+class _LockedCurrencyField extends StatelessWidget {
+  const _LockedCurrencyField({
+    required this.label,
+    required this.currency,
+    required this.helperText,
+  });
+
+  final String label;
+  final String? currency;
+  final String helperText;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InputDecorator(
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        helperText: helperText,
+        helperMaxLines: 2,
+        prefixIcon: const Icon(AppIcons.lock_outline, size: 18),
+      ),
+      child: Row(
+        children: [
+          if (currency != null) ...[
+            Text(CurrencyUtils.flag(currency!)),
+            const SizedBox(width: 8),
+            Text(
+              currency!,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+            ),
+          ] else
+            Text(
+              '—',
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 String _formatInsufficientFundsError(String msg) {
   final match = RegExp(r'Available:\s*([\d.]+),\s*required:\s*([\d.]+)', caseSensitive: false).firstMatch(msg);
   if (match != null) {
@@ -1583,5 +3101,552 @@ String _formatInsufficientFundsError(String msg) {
     return 'Недостаточно средств на счёте';
   }
   return msg;
+}
+
+/// Дилерская модель: toggle + поля buy/sell rate + base + live preview
+/// spread. Идентичен по UX с partner_transfer_dialog._DealerModeToggle.
+class _DealerModeBlock extends StatelessWidget {
+  const _DealerModeBlock({
+    required this.enabled,
+    required this.onToggle,
+    required this.baseCurrency,
+    required this.sourceCurrency,
+    required this.onBaseChanged,
+    required this.buyCtrl,
+    required this.sellCtrl,
+    required this.onRateChanged,
+    required this.spreadPreview,
+  });
+  final bool enabled;
+  final ValueChanged<bool> onToggle;
+  final String baseCurrency;
+  final String sourceCurrency;
+  final ValueChanged<String> onBaseChanged;
+  final TextEditingController buyCtrl;
+  final TextEditingController sellCtrl;
+  final VoidCallback onRateChanged;
+  final double spreadPreview;
+
+  static const _bases = ['USD', 'EUR', 'RUB', 'UZS', 'KZT'];
+
+  /// Тянет последний рыночный курс из exchange_rates: base → sourceCurrency.
+  /// Если пара есть напрямую → подставляет в buyCtrl. Если только обратная
+  /// (sourceCurrency → base) → инвертирует.
+  Future<void> _fillMarketRate(BuildContext context) async {
+    if (baseCurrency == sourceCurrency) return;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final direct = await sl<ExchangeRateRepository>()
+          .getLatestRate(baseCurrency, sourceCurrency)
+          .then((r) => r.fold((_) => null, (v) => v));
+      double? rate = (direct?.rate ?? 0) > 0 ? direct!.rate : null;
+      if (rate == null) {
+        final inverse = await sl<ExchangeRateRepository>()
+            .getLatestRate(sourceCurrency, baseCurrency)
+            .then((r) => r.fold((_) => null, (v) => v));
+        if ((inverse?.rate ?? 0) > 0) rate = 1 / inverse!.rate;
+      }
+      if (rate == null || rate <= 0) {
+        messenger.showSnackBar(SnackBar(
+          content: Text(
+              'Нет курса $baseCurrency → $sourceCurrency. Добавь в «Курсы валют».'),
+          backgroundColor: AppColors.warning,
+          behavior: SnackBarBehavior.floating,
+        ));
+        return;
+      }
+      buyCtrl.text =
+          rate == rate.roundToDouble() ? rate.toStringAsFixed(0) : rate.toString();
+      // Sell обычно ниже buy на маржу — оставляем пустым чтобы оператор
+      // ввёл вручную (или подставил такой же если без spread).
+      onRateChanged();
+      messenger.showSnackBar(SnackBar(
+        content: Text('Buy подставлен: 1 $baseCurrency = $rate $sourceCurrency'),
+        backgroundColor: Colors.green.shade700,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(
+        content: Text('Не удалось получить курс: $e'),
+        backgroundColor: AppColors.error,
+      ));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: AppSpacing.xs),
+      decoration: BoxDecoration(
+        color: enabled
+            ? scheme.primary.withValues(alpha: 0.06)
+            : scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        border: Border.all(
+          color: enabled
+              ? scheme.primary.withValues(alpha: 0.25)
+              : scheme.outline.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Switch(
+                value: enabled,
+                onChanged: onToggle,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Дилерская модель (учёт курсовой прибыли)',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: enabled ? scheme.primary : null,
+                      ),
+                    ),
+                    Text(
+                      enabled
+                          ? 'Buy rate (что говорим клиенту) / Sell rate (внутренний) → spread profit'
+                          : 'Включи если у тебя есть внутренний курс отличный от клиентского',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (enabled) ...[
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: DropdownButtonFormField<String>(
+                    initialValue:
+                        _bases.contains(baseCurrency) ? baseCurrency : 'USD',
+                    isExpanded: true,
+                    isDense: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Base',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _bases
+                        .map((c) => DropdownMenuItem(
+                              value: c,
+                              child: Text(c,
+                                  style: const TextStyle(fontSize: 13)),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) onBaseChanged(v);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: buyCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true),
+                    inputFormatters: [DecimalInputFormatter()],
+                    onChanged: (_) => onRateChanged(),
+                    decoration: InputDecoration(
+                      labelText: 'Buy rate',
+                      helperText: '1 $baseCurrency = X $sourceCurrency',
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    controller: sellCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true),
+                    inputFormatters: [DecimalInputFormatter()],
+                    onChanged: (_) => onRateChanged(),
+                    decoration: InputDecoration(
+                      labelText: 'Sell rate',
+                      helperText: '1 $baseCurrency = Y $sourceCurrency',
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: baseCurrency == sourceCurrency
+                    ? null
+                    : () => _fillMarketRate(context),
+                icon: const Icon(AppIcons.refresh, size: 14),
+                label: const Text('Подставить рыночный курс',
+                    style: TextStyle(fontSize: 11)),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 0),
+                ),
+              ),
+            ),
+            if (spreadPreview.abs() > 0.005) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: AppSpacing.sm, vertical: 6),
+                decoration: BoxDecoration(
+                  color: spreadPreview > 0
+                      ? Colors.green.withValues(alpha: 0.1)
+                      : Colors.red.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      spreadPreview > 0
+                          ? Icons.trending_up
+                          : Icons.trending_down,
+                      size: 16,
+                      color: spreadPreview > 0
+                          ? Colors.green.shade700
+                          : Colors.red.shade700,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        spreadPreview > 0
+                            ? 'Прибыль с курса: +${spreadPreview.toStringAsFixed(0)} $sourceCurrency'
+                            : 'Убыток с курса: ${spreadPreview.toStringAsFixed(0)} $sourceCurrency',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: spreadPreview > 0
+                              ? Colors.green.shade800
+                              : Colors.red.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Hero-layout helper widgets ──────────────────────────────────
+
+class _HeroSectionHeading extends StatelessWidget {
+  const _HeroSectionHeading({
+    required this.title,
+    required this.icon,
+    this.subtitle,
+  });
+  final String title;
+  final IconData icon;
+  final String? subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: AppColors.darkCard,
+            border: Border.all(color: AppColors.darkBorder),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          alignment: Alignment.center,
+          child: Icon(icon, size: 14, color: AppColors.darkTextSecondary),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
+                  color: AppColors.darkTextPrimary,
+                ),
+              ),
+              if (subtitle != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Text(
+                    subtitle!,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: AppColors.darkTextTertiary,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PartyCard extends StatelessWidget {
+  const _PartyCard({
+    required this.role,
+    required this.accent,
+    required this.isSender,
+    required this.nameCtrl,
+    required this.phoneCtrl,
+    required this.infoCtrl,
+    this.onCurrencyPicked,
+  });
+  final String role;
+  final Color accent;
+  final bool isSender;
+  final TextEditingController nameCtrl;
+  final TextEditingController phoneCtrl;
+  final TextEditingController infoCtrl;
+  final ValueChanged<String>? onCurrencyPicked;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+      decoration: BoxDecoration(
+        color: AppColors.darkCard,
+        border: Border.all(color: AppColors.darkBorder),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 24,
+                height: 24,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  isSender ? AppIcons.arrow_upward : AppIcons.arrow_downward,
+                  size: 12,
+                  color: accent,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                role.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                  color: accent,
+                ),
+              ),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 10),
+            child: Divider(
+                height: 1, thickness: 0.6, color: AppColors.darkDivider),
+          ),
+          _HeroIconField(
+            controller: nameCtrl,
+            icon: AppIcons.person_outline,
+            hint: 'ФИО или организация',
+          ),
+          const SizedBox(height: 9),
+          ContactAutocompleteField(
+            side: isSender ? 'sender' : 'receiver',
+            phoneController: phoneCtrl,
+            nameController: nameCtrl,
+            infoController: infoCtrl,
+            label: 'Телефон',
+            hintText: isSender ? '+7 900 123 45 67' : '+998 90 123 45 67',
+            onCurrencyPicked: onCurrencyPicked,
+          ),
+          const SizedBox(height: 9),
+          _HeroIconField(
+            controller: infoCtrl,
+            icon: AppIcons.info_outline,
+            hint: 'Документ (опционально)',
+            mono: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroIconField extends StatelessWidget {
+  const _HeroIconField({
+    required this.controller,
+    required this.icon,
+    required this.hint,
+    this.mono = false,
+  });
+  final TextEditingController controller;
+  final IconData icon;
+  final String hint;
+  final bool mono;
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      style: mono
+          ? const TextStyle(
+              fontSize: 13,
+              fontFamily: 'JetBrains Mono',
+              color: AppColors.darkTextPrimary,
+            )
+          : const TextStyle(
+              fontSize: 13,
+              color: AppColors.darkTextPrimary,
+            ),
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(
+          fontSize: 13,
+          color: AppColors.darkTextDisabled,
+        ),
+        prefixIcon: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Icon(icon, size: 14, color: AppColors.darkTextTertiary),
+        ),
+        prefixIconConstraints: const BoxConstraints(minWidth: 34, minHeight: 0),
+        isDense: true,
+        filled: true,
+        fillColor: AppColors.darkSurface,
+        contentPadding: const EdgeInsets.symmetric(vertical: 11),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(9),
+          borderSide: const BorderSide(color: AppColors.darkBorder),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(9),
+          borderSide: const BorderSide(color: AppColors.darkBorder),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(9),
+          borderSide: const BorderSide(color: AppColors.primary, width: 1.4),
+        ),
+      ),
+    );
+  }
+}
+
+class _GradientPrimaryButton extends StatelessWidget {
+  const _GradientPrimaryButton({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    this.enabled = true,
+    this.loading = false,
+  });
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+  final bool enabled;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      height: 50,
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: enabled ? AppColors.primaryGradient : null,
+            color: enabled ? null : AppColors.darkCardHover,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: enabled
+                ? [
+                    BoxShadow(
+                      color: AppColors.primary.withValues(alpha: 0.5),
+                      blurRadius: 22,
+                      offset: const Offset(0, 8),
+                    ),
+                  ]
+                : null,
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: enabled ? onPressed : null,
+            child: Center(
+              child: loading
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(AppColors.darkBg),
+                      ),
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          icon,
+                          size: 16,
+                          color: enabled
+                              ? AppColors.darkBg
+                              : AppColors.darkTextTertiary,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          label,
+                          style: TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w800,
+                            color: enabled
+                                ? AppColors.darkBg
+                                : AppColors.darkTextTertiary,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 

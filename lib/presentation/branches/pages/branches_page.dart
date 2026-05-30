@@ -14,7 +14,10 @@ import 'package:ethnocount/domain/repositories/branch_repository.dart';
 import 'package:ethnocount/data/datasources/remote/ledger_remote_ds.dart';
 import 'package:ethnocount/presentation/approvals/approval_guards.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
+import 'package:ethnocount/presentation/branches/widgets/branches_list_pane.dart';
+import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class BranchesPage extends StatefulWidget {
   const BranchesPage({super.key});
 
@@ -77,7 +80,30 @@ class _BranchesPageState extends State<BranchesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final isCreator = _currentUser?.role.isCreator ?? false;
+    // `canManage` теперь зависит от выбранного филиала: accountant может
+    // управлять счетами только в assigned-филиалах (миграция 048).
+    // Для верхнеуровневых действий («Добавить филиал», список) флаг
+    // оставляем по creator-only — это управление БРАНЧАМИ, а не их
+    // счетами.
+    final canManageBranches =
+        _currentUser?.canManageBranches ?? false;
+    final canManageSelectedAccounts =
+        _selected == null
+            ? canManageBranches
+            : (_currentUser?.canManageBranchAccountIn(_selected!.id) ?? false);
+
+    if (context.isDesktop && context.isDark) {
+      return _DesktopHeroLayout(
+        branches: _branches,
+        selected: _selected,
+        accounts: _accounts,
+        balances: _balances,
+        loading: _loading,
+        onSelect: _selectBranch,
+        canManage: canManageSelectedAccounts,
+        canCreateBranch: canManageBranches,
+      );
+    }
 
     return context.isDesktop
         ? _DesktopLayout(
@@ -87,12 +113,15 @@ class _BranchesPageState extends State<BranchesPage> {
             balances: _balances,
             loading: _loading,
             onSelect: _selectBranch,
-            canManage: isCreator,
+            canManage: canManageSelectedAccounts,
+            canCreateBranch: canManageBranches,
           )
         : _MobileLayout(
             branches: _branches,
             loading: _loading,
-            canManage: isCreator,
+            canManage: canManageBranches,
+            canManageAccountsIn: (id) =>
+                _currentUser?.canManageBranchAccountIn(id) ?? false,
           );
   }
 }
@@ -108,6 +137,7 @@ class _DesktopLayout extends StatelessWidget {
     required this.loading,
     required this.onSelect,
     required this.canManage,
+    required this.canCreateBranch,
   });
 
   final List<Branch> branches;
@@ -116,7 +146,14 @@ class _DesktopLayout extends StatelessWidget {
   final Map<String, double> balances;
   final bool loading;
   final ValueChanged<Branch> onSelect;
+
+  /// Управление счетами ВЫБРАННОГО филиала: creator/director всегда,
+  /// accountant — только если филиал в assignedBranchIds. См. миграцию 048.
   final bool canManage;
+
+  /// Создание новых филиалов — только creator. accountant даже в своём
+  /// филиале не может добавлять новые БРАНЧИ (только счета).
+  final bool canCreateBranch;
 
   @override
   Widget build(BuildContext context) {
@@ -146,10 +183,10 @@ class _DesktopLayout extends StatelessWidget {
                   ],
                 ),
               ),
-              if (canManage)
+              if (canCreateBranch)
                 FilledButton.icon(
                   onPressed: () => _showCreateBranchDialog(context),
-                  icon: const Icon(Icons.add_business_rounded),
+                  icon: const Icon(AppIcons.add_business),
                   label: const Text('Добавить филиал'),
                 ),
             ],
@@ -190,13 +227,157 @@ class _DesktopLayout extends StatelessWidget {
   }
 }
 
+// ─── Desktop hero (dark, design-spec list pane) ───
+
+class _DesktopHeroLayout extends StatelessWidget {
+  const _DesktopHeroLayout({
+    required this.branches,
+    required this.selected,
+    required this.accounts,
+    required this.balances,
+    required this.loading,
+    required this.onSelect,
+    required this.canManage,
+    required this.canCreateBranch,
+  });
+
+  final List<Branch> branches;
+  final Branch? selected;
+  final List<BranchAccount> accounts;
+  final Map<String, double> balances;
+  final bool loading;
+  final ValueChanged<Branch> onSelect;
+
+  /// Per-branch право: управление счетами выбранного филиала.
+  final bool canManage;
+
+  /// Только creator: добавление новых филиалов.
+  final bool canCreateBranch;
+
+  @override
+  Widget build(BuildContext context) {
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      builder: (context, dash) {
+        // Per-branch lookups. We pull from DashboardBloc's `branchAccounts`
+        // (already cached map of branchId → list of BranchAccount) and the
+        // global `accountBalances` map. For the currently selected branch
+        // we prefer the live `balances` already streamed into the page —
+        // they're the most up-to-date when ledger entries fire.
+        int accCount(String id) =>
+            dash.branchAccounts[id]?.length ?? 0;
+        double baseBal(Branch b) {
+          final accs = dash.branchAccounts[b.id] ?? const <BranchAccount>[];
+          double sum = 0;
+          for (final a in accs) {
+            if (a.currency != b.baseCurrency) continue;
+            sum += b.id == selected?.id
+                ? (balances[a.id] ?? dash.accountBalances[a.id] ?? 0)
+                : (dash.accountBalances[a.id] ?? 0);
+          }
+          return sum;
+        }
+
+        // Warning = any account with negative balance OR reserve accounts
+        // close to zero. Cheap heuristic; can be refined later.
+        bool hasWarning(String id) {
+          final accs = dash.branchAccounts[id] ?? const <BranchAccount>[];
+          for (final a in accs) {
+            final b = dash.accountBalances[a.id] ?? 0;
+            if (b < 0) return true;
+          }
+          return false;
+        }
+
+        double totalUsd() {
+          // No live FX cache here — return sum of USD accounts only as a
+          // safe lower bound. KPI label still says "USD-экв." which is
+          // accurate for the part we can compute synchronously.
+          double sum = 0;
+          for (final b in branches) {
+            final accs = dash.branchAccounts[b.id] ?? const <BranchAccount>[];
+            for (final a in accs) {
+              if (a.currency.toUpperCase() != 'USD') continue;
+              sum += (dash.accountBalances[a.id] ?? 0);
+            }
+          }
+          return sum;
+        }
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(
+              width: 420,
+              child: BranchesListPane(
+                branches: branches,
+                selectedId: selected?.id,
+                onSelect: onSelect,
+                accountsCount: accCount,
+                balanceLookup: (id) {
+                  final b = branches.firstWhere(
+                    (br) => br.id == id,
+                    orElse: () => selected ??
+                        (branches.isNotEmpty ? branches.first : _placeholderBranch),
+                  );
+                  return baseBal(b);
+                },
+                staffLookup: (_) => 0,
+                warningLookup: hasWarning,
+                totalUsdEquivalent: totalUsd(),
+                canCreate: canCreateBranch,
+                onCreate: () => _showCreateBranchDialog(context),
+              ),
+            ),
+            Expanded(
+              child: Container(
+                color: AppColors.darkBg,
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: selected != null
+                    ? _BranchDetail(
+                        branch: selected!,
+                        accounts: accounts,
+                        balances: balances,
+                        canManage: canManage,
+                      )
+                    : const _EmptyDetail(),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Sentinel never actually used at runtime — pure type-system filler for
+/// the `firstWhere(orElse:)` branch above. Required because [Branch] has
+/// no const default constructor.
+final _placeholderBranch = Branch(
+  id: '',
+  name: '',
+  code: '',
+  baseCurrency: 'USD',
+  createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+);
+
 // ─── Mobile ───
 
 class _MobileLayout extends StatelessWidget {
-  const _MobileLayout({required this.branches, required this.loading, required this.canManage});
+  const _MobileLayout({
+    required this.branches,
+    required this.loading,
+    required this.canManage,
+    required this.canManageAccountsIn,
+  });
   final List<Branch> branches;
   final bool loading;
+
+  /// Создание новых филиалов: creator-only.
   final bool canManage;
+
+  /// Per-branch право на счета: для accountant возвращает true только
+  /// если его assigned_branch_ids содержит этот id.
+  final bool Function(String branchId) canManageAccountsIn;
 
   @override
   Widget build(BuildContext context) {
@@ -205,7 +386,7 @@ class _MobileLayout extends StatelessWidget {
       floatingActionButton: canManage
           ? FloatingActionButton.extended(
               onPressed: () => _showCreateBranchDialog(context),
-              icon: const Icon(Icons.add_business_rounded),
+              icon: const Icon(AppIcons.add_business),
               label: const Text('Добавить'),
             )
           : null,
@@ -230,13 +411,13 @@ class _MobileLayout extends StatelessWidget {
                   title: Text(branch.name,
                       style: const TextStyle(fontWeight: FontWeight.w600)),
                   subtitle: Text(branch.baseCurrency),
-                  trailing: const Icon(Icons.chevron_right_rounded),
+                  trailing: const Icon(AppIcons.chevron_right),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => _BranchDetailScreen(
                           branch: branch,
-                          canManage: canManage,
+                          canManage: canManageAccountsIn(branch.id),
                         ),
                       ),
                     );
@@ -274,10 +455,12 @@ class _BranchDetailScreenState extends State<_BranchDetailScreen> {
     super.initState();
     _accSub = _repo.watchBranchAccounts(widget.branch.id).listen(
       (accs) {
-        if (mounted) setState(() {
-          _accounts = accs;
-          _loading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _accounts = accs;
+            _loading = false;
+          });
+        }
       },
       onError: (_) {
         // Если стрим упал (RLS/сеть) — не зависаем на вечном спиннере.
@@ -314,7 +497,7 @@ class _BranchDetailScreenState extends State<_BranchDetailScreen> {
         actions: [
           if (canManage)
             IconButton(
-              icon: const Icon(Icons.edit_outlined),
+              icon: const Icon(AppIcons.edit),
               onPressed: () => _showEditBranchDialog(context, branch),
               tooltip: 'Изменить филиал',
             ),
@@ -323,7 +506,7 @@ class _BranchDetailScreenState extends State<_BranchDetailScreen> {
       floatingActionButton: canManage
           ? FloatingActionButton.extended(
               onPressed: () => _showAddAccountDialog(context, branch),
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(AppIcons.add),
               label: const Text('Счёт'),
             )
           : null,
@@ -353,7 +536,7 @@ class _BranchDetailScreenState extends State<_BranchDetailScreen> {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.account_balance_outlined,
+                            Icon(AppIcons.account_balance,
                                 size: 48,
                                 color: context.isDark
                                     ? AppColors.darkTextSecondary
@@ -571,14 +754,14 @@ class _BranchDetail extends StatelessWidget {
                   OutlinedButton.icon(
                     onPressed: () =>
                         _showEditBranchDialog(context, branch),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    icon: const Icon(AppIcons.edit, size: 18),
                     label: const Text('Изменить филиал'),
                   ),
                 const SizedBox(width: AppSpacing.sm),
                 OutlinedButton.icon(
                   onPressed: () =>
                       _showAddAccountDialog(context, branch),
-                  icon: const Icon(Icons.add_rounded, size: 18),
+                  icon: const Icon(AppIcons.add, size: 18),
                   label: const Text('Добавить счёт'),
                 ),
               ],
@@ -598,7 +781,7 @@ class _BranchDetail extends StatelessWidget {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.account_balance_outlined,
+                          Icon(AppIcons.account_balance,
                               size: 40,
                               color: context.isDark
                                   ? AppColors.darkTextSecondary
@@ -714,7 +897,7 @@ class _AccountCard extends StatelessWidget {
               if (canManage) ...[
                 const SizedBox(width: 4),
                 IconButton(
-                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  icon: const Icon(AppIcons.edit, size: 18),
                   onPressed: onEdit,
                   tooltip: 'Изменить',
                   visualDensity: VisualDensity.compact,
@@ -724,8 +907,8 @@ class _AccountCard extends StatelessWidget {
                 IconButton(
                   icon: Icon(
                     account.archivedAt != null
-                        ? Icons.unarchive_outlined
-                        : Icons.archive_outlined,
+                        ? AppIcons.unarchive
+                        : AppIcons.archive,
                     size: 18,
                   ),
                   color: account.archivedAt != null ? Colors.teal : Colors.red,
@@ -793,7 +976,7 @@ class _AccountCard extends StatelessWidget {
                 children: [
                   if (cardNumberLine != null)
                     _AccountField(
-                      icon: Icons.credit_card_outlined,
+                      icon: AppIcons.credit_card,
                       label: 'Номер карты',
                       value: cardNumberLine,
                       mono: true,
@@ -801,20 +984,20 @@ class _AccountCard extends StatelessWidget {
                   if (account.cardholderName != null &&
                       account.cardholderName!.isNotEmpty)
                     _AccountField(
-                      icon: Icons.person_outline,
+                      icon: AppIcons.person_outline,
                       label: 'Держатель',
                       value: account.cardholderName!,
                     ),
                   if (account.bankName != null &&
                       account.bankName!.isNotEmpty)
                     _AccountField(
-                      icon: Icons.account_balance_outlined,
+                      icon: AppIcons.account_balance,
                       label: 'Банк',
                       value: account.bankName!,
                     ),
                   if (account.expiryFormatted != null)
                     _AccountField(
-                      icon: Icons.calendar_today_outlined,
+                      icon: AppIcons.calendar_today,
                       label: 'Срок',
                       value: account.expiryFormatted!,
                     ),
@@ -828,7 +1011,7 @@ class _AccountCard extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.notes_rounded, size: 14, color: secondary),
+                Icon(AppIcons.notes, size: 14, color: secondary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
@@ -905,7 +1088,7 @@ Future<void> _confirmArchiveAccount(
       title: Row(
         children: [
           Icon(
-            isArchived ? Icons.unarchive_outlined : Icons.warning_amber_rounded,
+            isArchived ? AppIcons.unarchive : AppIcons.warning_amber,
             color: isArchived ? Colors.teal : Colors.red,
           ),
           const SizedBox(width: 8),
@@ -928,8 +1111,8 @@ Future<void> _confirmArchiveAccount(
           ),
           onPressed: () => Navigator.of(dialogCtx).pop(true),
           icon: Icon(isArchived
-              ? Icons.unarchive_outlined
-              : Icons.delete_forever_rounded),
+              ? AppIcons.unarchive
+              : AppIcons.delete_forever),
           label: Text(isArchived ? 'Восстановить' : 'Удалить'),
         ),
       ],
@@ -1019,7 +1202,7 @@ class _EmptyDetail extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.business_outlined,
+            Icon(AppIcons.business,
                 size: 48,
                 color: context.isDark
                     ? AppColors.darkTextSecondary
@@ -1077,7 +1260,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
     return AlertDialog(
       title: const Row(
         children: [
-          Icon(Icons.add_business_rounded),
+          Icon(AppIcons.add_business),
           SizedBox(width: 8),
           Text('Новый филиал'),
         ],
@@ -1155,7 +1338,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white),
                 )
-              : const Icon(Icons.check_rounded),
+              : const Icon(AppIcons.check),
           label: const Text('Создать'),
         ),
       ],
@@ -1258,7 +1441,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
     return AlertDialog(
       title: const Row(
         children: [
-          Icon(Icons.edit_outlined),
+          Icon(AppIcons.edit),
           SizedBox(width: 8),
           Text('Изменить филиал'),
         ],
@@ -1357,7 +1540,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white),
                 )
-              : const Icon(Icons.check_rounded),
+              : const Icon(AppIcons.check),
           label: const Text('Сохранить'),
         ),
       ],
@@ -1513,7 +1696,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
               ),
               const SizedBox(height: AppSpacing.sm),
               DropdownButtonFormField<AccountType>(
-                value: _type,
+                initialValue: _type,
                 decoration: const InputDecoration(
                   labelText: 'Тип счёта',
                   border: OutlineInputBorder(),
@@ -1526,7 +1709,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
               ),
               const SizedBox(height: AppSpacing.sm),
               DropdownButtonFormField<String>(
-                value: _currency,
+                initialValue: _currency,
                 decoration: const InputDecoration(
                   labelText: 'Валюта',
                   border: OutlineInputBorder(),
@@ -1760,7 +1943,7 @@ class _SupportedCurrenciesPicker extends StatelessWidget {
                 selected: selected,
                 showCheckmark: false,
                 avatar: isBase
-                    ? Icon(Icons.star_rounded,
+                    ? Icon(AppIcons.star,
                         size: 14, color: theme.colorScheme.primary)
                     : null,
                 onSelected: isBase

@@ -318,15 +318,31 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
       currency: event.currency,
       branchId: event.branchId,
     );
-    result.fold(
-      (f) => emit(state.copyWith(
+    await result.fold(
+      (f) async => emit(state.copyWith(
         status: ClientBlocStatus.error,
         errorMessage: f.message,
       )),
-      (_) => emit(state.copyWith(
-        status: ClientBlocStatus.success,
-        successMessage: 'Клиент успешно создан',
-      )),
+      (newId) async {
+        // Немедленно добавляем созданного клиента в список, не дожидаясь
+        // realtime-канала: при навигации BLoC и канал 'clients_changes'
+        // могут пересоздаться, и broadcast о вставке теряется — тогда новый
+        // клиент "пропадает" из списка до ручного перезахода на экран.
+        var newList = state.clients;
+        final fresh = await _repository.getClient(newId);
+        fresh.fold((_) => null, (c) {
+          if (!state.clients.any((e) => e.id == c.id)) {
+            newList = [...state.clients, c]
+              ..sort((a, b) =>
+                  a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+          }
+        });
+        emit(state.copyWith(
+          status: ClientBlocStatus.success,
+          successMessage: 'Клиент успешно создан',
+          clients: newList,
+        ));
+      },
     );
   }
 

@@ -6,7 +6,8 @@ import 'package:ethnocount/domain/usecases/transfer/create_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/confirm_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/issue_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/issue_partial_transfer.dart';
-import 'package:ethnocount/domain/usecases/transfer/reject_transfer.dart';
+import 'package:ethnocount/domain/usecases/transfer/dispatch_to_courier.dart';
+import 'package:ethnocount/domain/usecases/transfer/replace_pending_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/update_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/watch_transfers.dart';
 
@@ -23,6 +24,7 @@ class TransfersLoadRequested extends TransferEvent {
   final TransferStatus? statusFilter;
   final DateTime? startDate;
   final DateTime? endDate;
+  final String? query;
   final bool loadMore;
 
   const TransfersLoadRequested({
@@ -30,11 +32,13 @@ class TransfersLoadRequested extends TransferEvent {
     this.statusFilter,
     this.startDate,
     this.endDate,
+    this.query,
     this.loadMore = false,
   });
 
   @override
-  List<Object?> get props => [branchId, statusFilter, startDate, endDate, loadMore];
+  List<Object?> get props =>
+      [branchId, statusFilter, startDate, endDate, query, loadMore];
 }
 
 class TransferCreateRequested extends TransferEvent {
@@ -50,6 +54,7 @@ class TransferCreateRequested extends TransferEvent {
   final double commissionValue;
   final String commissionCurrency;
   final String commissionMode;
+  final String? commissionAccountId;
   final String idempotencyKey;
   final String? description;
   final String? clientId;
@@ -59,6 +64,10 @@ class TransferCreateRequested extends TransferEvent {
   final String? receiverName;
   final String? receiverPhone;
   final String? receiverInfo;
+  /// Dealer mode (опц.). Если указаны — RPC посчитает spread_profit.
+  final double? buyRate;
+  final double? sellRate;
+  final String? baseCurrency;
 
   const TransferCreateRequested({
     required this.fromBranchId,
@@ -73,6 +82,7 @@ class TransferCreateRequested extends TransferEvent {
     this.commissionValue = 0,
     required this.commissionCurrency,
     this.commissionMode = 'fromSender',
+    this.commissionAccountId,
     required this.idempotencyKey,
     this.description,
     this.clientId,
@@ -82,6 +92,9 @@ class TransferCreateRequested extends TransferEvent {
     this.receiverName,
     this.receiverPhone,
     this.receiverInfo,
+    this.buyRate,
+    this.sellRate,
+    this.baseCurrency,
   });
 
   @override
@@ -122,12 +135,76 @@ class TransferIssuePartialRequested extends TransferEvent {
   List<Object?> get props => [transferId, amount, note, fromAccountId];
 }
 
-class TransferRejectRequested extends TransferEvent {
+class TransferDispatchRequested extends TransferEvent {
   final String transferId;
-  final String reason;
-  const TransferRejectRequested(this.transferId, this.reason);
+  final String? courierName;
+  final String? courierPhone;
+  const TransferDispatchRequested(
+    this.transferId, {
+    this.courierName,
+    this.courierPhone,
+  });
   @override
-  List<Object?> get props => [transferId, reason];
+  List<Object?> get props => [transferId, courierName, courierPhone];
+}
+
+/// Полное редактирование pending перевода: валюта, сумма, курс,
+/// комиссия, счёт-источник + контактные поля.
+class TransferReplacePendingRequested extends TransferEvent {
+  final String transferId;
+  final String? fromAccountId;
+  final double? amount;
+  final String? currency;
+  final String? toCurrency;
+  final double? exchangeRate;
+  final String? commissionType;
+  final double? commissionValue;
+  final String? commissionCurrency;
+  final String? commissionMode;
+  final String? toAccountId;
+  final String? description;
+  final String? clientId;
+  final String? senderName;
+  final String? senderPhone;
+  final String? senderInfo;
+  final String? receiverName;
+  final String? receiverPhone;
+  final String? receiverInfo;
+  final String? amendmentNote;
+  final String? commissionAccountId;
+  final double? buyRate;
+  final double? sellRate;
+  final String? baseCurrency;
+
+  const TransferReplacePendingRequested({
+    required this.transferId,
+    this.fromAccountId,
+    this.amount,
+    this.currency,
+    this.toCurrency,
+    this.exchangeRate,
+    this.commissionType,
+    this.commissionValue,
+    this.commissionCurrency,
+    this.commissionMode,
+    this.toAccountId,
+    this.description,
+    this.clientId,
+    this.senderName,
+    this.senderPhone,
+    this.senderInfo,
+    this.receiverName,
+    this.receiverPhone,
+    this.receiverInfo,
+    this.amendmentNote,
+    this.commissionAccountId,
+    this.buyRate,
+    this.sellRate,
+    this.baseCurrency,
+  });
+
+  @override
+  List<Object?> get props => [transferId, amount, currency, exchangeRate];
 }
 
 class TransferUpdateRequested extends TransferEvent {
@@ -219,35 +296,39 @@ class TransferBlocState extends Equatable {
 class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
   final CreateTransferUseCase _createTransfer;
   final UpdateTransferUseCase _updateTransfer;
+  final ReplacePendingTransferUseCase _replacePending;
   final ConfirmTransferUseCase _confirmTransfer;
   final IssueTransferUseCase _issueTransfer;
   final IssuePartialTransferUseCase _issuePartialTransfer;
-  final RejectTransferUseCase _rejectTransfer;
+  final DispatchToCourierUseCase _dispatchToCourier;
   final WatchTransfersUseCase _watchTransfers;
 
   TransferBloc({
     required CreateTransferUseCase createTransfer,
     required UpdateTransferUseCase updateTransfer,
+    required ReplacePendingTransferUseCase replacePending,
     required ConfirmTransferUseCase confirmTransfer,
     required IssueTransferUseCase issueTransfer,
     required IssuePartialTransferUseCase issuePartialTransfer,
-    required RejectTransferUseCase rejectTransfer,
+    required DispatchToCourierUseCase dispatchToCourier,
     required WatchTransfersUseCase watchTransfers,
   })  : _createTransfer = createTransfer,
         _updateTransfer = updateTransfer,
+        _replacePending = replacePending,
         _confirmTransfer = confirmTransfer,
         _issueTransfer = issueTransfer,
         _issuePartialTransfer = issuePartialTransfer,
-        _rejectTransfer = rejectTransfer,
+        _dispatchToCourier = dispatchToCourier,
         _watchTransfers = watchTransfers,
         super(const TransferBlocState()) {
     on<TransfersLoadRequested>(_onLoad);
     on<TransferCreateRequested>(_onCreate);
     on<TransferUpdateRequested>(_onUpdate);
+    on<TransferReplacePendingRequested>(_onReplacePending);
     on<TransferConfirmRequested>(_onConfirm);
     on<TransferIssueRequested>(_onIssue);
     on<TransferIssuePartialRequested>(_onIssuePartial);
-    on<TransferRejectRequested>(_onReject);
+    on<TransferDispatchRequested>(_onDispatch);
   }
 
   Future<void> _onLoad(
@@ -268,6 +349,7 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
         statusFilter: event.statusFilter,
         startDate: event.startDate,
         endDate: event.endDate,
+        query: event.query,
         limit: currentLimit,
       ),
       onData: (transfers) => state.copyWith(
@@ -301,6 +383,7 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
       commissionValue: event.commissionValue,
       commissionCurrency: event.commissionCurrency,
       commissionMode: event.commissionMode,
+      commissionAccountId: event.commissionAccountId,
       idempotencyKey: event.idempotencyKey,
       description: event.description,
       clientId: event.clientId,
@@ -310,6 +393,9 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
       receiverName: event.receiverName,
       receiverPhone: event.receiverPhone,
       receiverInfo: event.receiverInfo,
+      buyRate: event.buyRate,
+      sellRate: event.sellRate,
+      baseCurrency: event.baseCurrency,
     );
 
     result.fold(
@@ -425,15 +511,37 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
     );
   }
 
-  Future<void> _onReject(
-    TransferRejectRequested event,
+  Future<void> _onReplacePending(
+    TransferReplacePendingRequested event,
     Emitter<TransferBlocState> emit,
   ) async {
     emit(state.copyWith(status: TransferBlocStatus.loading));
 
-    final result = await _rejectTransfer(
+    final result = await _replacePending(
       transferId: event.transferId,
-      reason: event.reason,
+      fromAccountId: event.fromAccountId,
+      amount: event.amount,
+      currency: event.currency,
+      toCurrency: event.toCurrency,
+      exchangeRate: event.exchangeRate,
+      commissionType: event.commissionType,
+      commissionValue: event.commissionValue,
+      commissionCurrency: event.commissionCurrency,
+      commissionMode: event.commissionMode,
+      toAccountId: event.toAccountId,
+      description: event.description,
+      clientId: event.clientId,
+      senderName: event.senderName,
+      senderPhone: event.senderPhone,
+      senderInfo: event.senderInfo,
+      receiverName: event.receiverName,
+      receiverPhone: event.receiverPhone,
+      receiverInfo: event.receiverInfo,
+      amendmentNote: event.amendmentNote,
+      commissionAccountId: event.commissionAccountId,
+      buyRate: event.buyRate,
+      sellRate: event.sellRate,
+      baseCurrency: event.baseCurrency,
     );
     result.fold(
       (failure) => emit(state.copyWith(
@@ -442,7 +550,30 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
       )),
       (_) => emit(state.copyWith(
         status: TransferBlocStatus.success,
-        successMessage: 'Transfer rejected — funds unlocked',
+        successMessage: 'Перевод обновлён',
+      )),
+    );
+  }
+
+  Future<void> _onDispatch(
+    TransferDispatchRequested event,
+    Emitter<TransferBlocState> emit,
+  ) async {
+    emit(state.copyWith(status: TransferBlocStatus.loading));
+
+    final result = await _dispatchToCourier(
+      transferId: event.transferId,
+      courierName: event.courierName,
+      courierPhone: event.courierPhone,
+    );
+    result.fold(
+      (failure) => emit(state.copyWith(
+        status: TransferBlocStatus.error,
+        errorMessage: failure.message,
+      )),
+      (_) => emit(state.copyWith(
+        status: TransferBlocStatus.success,
+        successMessage: 'Перевод передан курьеру',
       )),
     );
   }

@@ -63,7 +63,8 @@ import 'package:ethnocount/domain/usecases/transfer/create_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/confirm_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/issue_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/issue_partial_transfer.dart';
-import 'package:ethnocount/domain/usecases/transfer/reject_transfer.dart';
+import 'package:ethnocount/domain/usecases/transfer/dispatch_to_courier.dart';
+import 'package:ethnocount/domain/usecases/transfer/replace_pending_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/update_transfer.dart';
 import 'package:ethnocount/domain/usecases/transfer/watch_transfers.dart';
 import 'package:ethnocount/domain/usecases/branch/watch_branches.dart';
@@ -94,7 +95,7 @@ Future<void> initDependencies() async {
   // ─── Services ───
   sl.registerLazySingleton(() => CredentialStorageService());
   sl.registerLazySingleton(() => SessionService());
-  sl.registerLazySingleton(() => GridColumnPreferencesService());
+  sl.registerLazySingleton(() => GridColumnPreferencesService(supabase));
   sl.registerLazySingleton(() => FcmService(sl()));
   sl.registerLazySingleton(() => NotificationFxService());
   sl.registerLazySingleton(() => ConnectivityService());
@@ -168,8 +169,9 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => ConfirmTransferUseCase(sl()));
   sl.registerLazySingleton(() => IssueTransferUseCase(sl()));
   sl.registerLazySingleton(() => IssuePartialTransferUseCase(sl()));
-  sl.registerLazySingleton(() => RejectTransferUseCase(sl()));
+  sl.registerLazySingleton(() => DispatchToCourierUseCase(sl()));
   sl.registerLazySingleton(() => UpdateTransferUseCase(sl()));
+  sl.registerLazySingleton(() => ReplacePendingTransferUseCase(sl()));
   sl.registerLazySingleton(() => WatchTransfersUseCase(sl()));
   sl.registerLazySingleton(() => WatchBranchesUseCase(sl()));
   sl.registerLazySingleton(() => GetAccountBalanceUseCase(sl()));
@@ -195,10 +197,11 @@ Future<void> initDependencies() async {
   sl.registerFactory(() => TransferBloc(
         createTransfer: sl(),
         updateTransfer: sl(),
+        replacePending: sl(),
         confirmTransfer: sl(),
         issueTransfer: sl(),
         issuePartialTransfer: sl(),
-        rejectTransfer: sl(),
+        dispatchToCourier: sl(),
         watchTransfers: sl(),
       ));
   sl.registerFactory(() => LedgerBloc(

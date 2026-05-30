@@ -25,23 +25,6 @@ extension TransferApprovalGuard on BuildContext {
     }
   }
 
-  /// Запрос на отклонение/отмену перевода. Если accountant — open dialog.
-  /// Возвращает true, если действие реально нужно выполнить direct (т.е.
-  /// текущий пользователь — director/creator). Иначе false: caller не
-  /// должен вызывать bloc-event, заявка уже отправлена.
-  Future<bool> guardRejectTransfer(Transfer t, {required String reason}) async {
-    if (!_isAccountant) return true;
-    await RequestApprovalDialog.show(
-      this,
-      action: ApprovalAction.transferReject,
-      targetId: t.id,
-      summary:
-          'Отклонить перевод ${t.transactionCode ?? t.id} на сумму ${t.amount} ${t.currency}',
-      payload: {'reason': reason},
-    );
-    return false;
-  }
-
   /// Запрос на изменение суммы перевода.
   Future<bool> guardAmendTransferAmount(
     Transfer t, {
@@ -102,7 +85,7 @@ extension ClientApprovalGuard on BuildContext {
       if (country != null && country != c.country) 'country': country,
       if (currency != null && currency != c.currency) 'currency': currency,
       if (branchId != null && branchId != c.branchId) 'branch_id': branchId,
-      if (walletCurrencies != null) 'wallet_currencies': walletCurrencies,
+      'wallet_currencies': ?walletCurrencies,
     };
     if (changes.isEmpty) return false;
     await RequestApprovalDialog.show(
@@ -155,17 +138,17 @@ extension BranchAccountApprovalGuard on BuildContext {
   }) async {
     if (!_isAccountantAccount) return true;
     final payload = <String, dynamic>{
-      if (name != null) 'name': name,
+      'name': ?name,
       if (type != null) 'type': type.name,
-      if (currency != null) 'currency': currency,
-      if (cardNumber != null) 'card_number': cardNumber,
+      'currency': ?currency,
+      'card_number': ?cardNumber,
       if (clearCardNumber) 'clear_card_number': true,
-      if (cardholderName != null) 'cardholder_name': cardholderName,
-      if (bankName != null) 'bank_name': bankName,
-      if (expiryMonth != null) 'expiry_month': expiryMonth,
-      if (expiryYear != null) 'expiry_year': expiryYear,
-      if (notes != null) 'notes': notes,
-      if (sortOrder != null) 'sort_order': sortOrder,
+      'cardholder_name': ?cardholderName,
+      'bank_name': ?bankName,
+      'expiry_month': ?expiryMonth,
+      'expiry_year': ?expiryYear,
+      'notes': ?notes,
+      'sort_order': ?sortOrder,
     };
     if (payload.isEmpty) return false;
     await RequestApprovalDialog.show(

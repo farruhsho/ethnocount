@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
     <channel>
-        <title>EthnoCount</title>
-        <description>Обновления EthnoCount — казначейская система Ethno Logistics</description>
+        <title>Финансы</title>
+        <description>Обновления приложения «Финансы» — казначейская система филиалов</description>
         <language>ru</language>
         <item>
             <title>Версия 1.0.0</title>

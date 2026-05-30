@@ -12,6 +12,7 @@ import 'package:ethnocount/presentation/clients/bloc/client_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/presentation/clients/widgets/convert_currency_dialog.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Full-screen client detail (mobile). Shows hero balance card, per-currency
 /// wallets with conversion option, transactions list, and Telegram block.
 class ClientDetailScreen extends StatefulWidget {
@@ -24,6 +25,11 @@ class ClientDetailScreen extends StatefulWidget {
 }
 
 class _ClientDetailScreenState extends State<ClientDetailScreen> {
+  /// True = верхняя часть (identity + hero + wallets + actions) развёрнута.
+  /// False = свёрнута, видна compact-полоска с балансом, а операции
+  /// получают почти весь экран. Меняется кнопкой в AppBar.
+  bool _topExpanded = true;
+
   @override
   void initState() {
     super.initState();
@@ -73,7 +79,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
           return Scaffold(
             appBar: AppBar(
               leading: IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
+                icon: const Icon(AppIcons.arrow_back),
                 onPressed: () => Navigator.of(context).pop(),
               ),
             ),
@@ -86,6 +92,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
         final txs = state.transactions
             .where((t) => t.clientId == client.id)
             .toList();
+        final txItems = _buildTxItems(txs);
         final wallets = _walletsForClient(client, balance);
         final usdEquiv = _usdEquivalent(wallets);
         final hasNegative = wallets.any((w) => w.amount < -0.0049);
@@ -100,117 +107,165 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                 scrolledUnderElevation: 0.5,
                 backgroundColor: scheme.surface,
                 leading: IconButton(
-                  icon: const Icon(Icons.arrow_back_rounded),
+                  icon: const Icon(AppIcons.arrow_back),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
+                actions: [
+                  IconButton(
+                    tooltip: _topExpanded
+                        ? 'Свернуть верх — больше места операциям'
+                        : 'Развернуть верх (баланс, кошельки)',
+                    icon: Icon(_topExpanded
+                        ? AppIcons.expand_less
+                        : AppIcons.expand_more),
+                    onPressed: () =>
+                        setState(() => _topExpanded = !_topExpanded),
+                  ),
+                ],
               ),
 
-              // Identity block
-              SliverToBoxAdapter(
-                child: _IdentityBlock(client: client),
-              ),
-
-              // Hero balance card
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.md),
-                sliver: SliverToBoxAdapter(
-                  child: _HeroBalanceCard(
+              // Когда верх свёрнут — показываем только compact-strip
+              // с балансом и кошельками-чипами (одна строка).
+              if (!_topExpanded)
+                SliverToBoxAdapter(
+                  child: _CompactTopStrip(
                     client: client,
                     wallets: wallets,
                     usdEquiv: usdEquiv,
-                    isNegative: hasNegative,
                   ),
                 ),
-              ),
 
-              // Wallet list
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: AppSpacing.md, vertical: AppSpacing.sm),
-                sliver: SliverToBoxAdapter(
-                  child: _SectionHeader(
-                    title: 'Кошельки',
-                    hint: '${wallets.length} ${_pluralCcy(wallets.length)}',
+              // Полный верх раскрыт.
+              if (_topExpanded) ...[
+                SliverToBoxAdapter(
+                  child: _IdentityBlock(client: client),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.md,
+                      AppSpacing.sm, AppSpacing.md, AppSpacing.md),
+                  sliver: SliverToBoxAdapter(
+                    child: _HeroBalanceCard(
+                      client: client,
+                      wallets: wallets,
+                      usdEquiv: usdEquiv,
+                      isNegative: hasNegative,
+                    ),
                   ),
                 ),
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md, vertical: AppSpacing.xs),
+                  sliver: SliverToBoxAdapter(
+                    child: _SectionHeader(
+                      title: 'Кошельки',
+                      hint:
+                          '${wallets.length} ${_pluralCcy(wallets.length)}',
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: SizedBox(
+                    height: 92,
+                    child: ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md),
+                      itemCount: wallets.length,
+                      separatorBuilder: (_, _) =>
+                          const SizedBox(width: 8),
+                      itemBuilder: (_, i) {
+                        final w = wallets[i];
+                        return _WalletChip(
+                          wallet: w,
+                          onTap: () => _showWalletActions(
+                              context, client, balance, w),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+                const SliverToBoxAdapter(
+                    child: SizedBox(height: AppSpacing.sm)),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.xs,
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: _ActionButtons(
+                      client: client,
+                      balance: balance,
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(AppSpacing.md,
+                      AppSpacing.xs, AppSpacing.md, AppSpacing.sm),
+                  sliver: SliverToBoxAdapter(
+                    child: _InfoCollapsible(client: client),
+                  ),
+                ),
+              ],
+
+              // Transactions — sticky-заголовок + lazy SliverList по строкам.
+              // Большие истории (>50 операций) теперь рендерятся виртуально,
+              // без перестройки всего Column на каждый скролл.
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _StickySectionHeader(
+                  background: scheme.surface,
+                  title: 'Операции',
+                  hint: txs.isEmpty
+                      ? 'нет операций'
+                      : 'последние ${txs.length}',
+                ),
               ),
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate([
-                    for (final w in wallets) ...[
-                      _WalletTile(
-                        client: client,
-                        balance: balance,
-                        wallet: w,
-                        onTap: () =>
-                            _showWalletActions(context, client, balance, w),
+              if (txs.isEmpty)
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.xs,
+                    AppSpacing.md,
+                    AppSpacing.xl + 24,
+                  ),
+                  sliver: SliverToBoxAdapter(
+                    child: _EmptyTxCard(isDark: isDark),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.xs,
+                    AppSpacing.md,
+                    AppSpacing.xl + 24,
+                  ),
+                  sliver: DecoratedSliver(
+                    decoration: BoxDecoration(
+                      color: scheme.surface,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: scheme.outline.withValues(alpha: 0.18),
+                        width: 0.5,
                       ),
-                      const SizedBox(height: 8),
-                    ],
-                    const SizedBox(height: AppSpacing.sm),
-                  ]),
-                ),
-              ),
-
-              // Action buttons
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.xs,
-                  AppSpacing.md,
-                  AppSpacing.md,
-                ),
-                sliver: SliverToBoxAdapter(
-                  child: _ActionButtons(
-                    client: client,
-                    balance: balance,
+                    ),
+                    sliver: SliverPadding(
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 14),
+                      sliver: SliverList.separated(
+                        itemCount: txItems.length,
+                        separatorBuilder: (_, _) => Divider(
+                          height: 1,
+                          color: scheme.outline.withValues(alpha: 0.15),
+                        ),
+                        itemBuilder: (_, i) =>
+                            _TransactionRow(data: txItems[i]),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-
-              // Info
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                sliver: SliverToBoxAdapter(
-                  child: _SectionHeader(title: 'Информация', hint: null),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                    AppSpacing.md, AppSpacing.xs, AppSpacing.md, AppSpacing.md),
-                sliver: SliverToBoxAdapter(
-                  child: _InfoCard(client: client),
-                ),
-              ),
-
-              // Transactions
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                sliver: SliverToBoxAdapter(
-                  child: _SectionHeader(
-                    title: 'Операции',
-                    hint: 'последние ${txs.length}',
-                  ),
-                ),
-              ),
-              SliverPadding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.xs,
-                  AppSpacing.md,
-                  AppSpacing.xl + 24,
-                ),
-                sliver: SliverList(
-                  delegate: SliverChildListDelegate([
-                    if (txs.isEmpty)
-                      _EmptyTxCard(isDark: isDark)
-                    else
-                      _TransactionsCard(transactions: txs),
-                  ]),
-                ),
-              ),
             ],
           ),
         );
@@ -286,7 +341,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
               ),
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.add_circle_outline_rounded,
+                leading: const Icon(AppIcons.add_circle_outline,
                     color: Colors.green),
                 title: const Text('Пополнить'),
                 subtitle: Text('Зачислить средства на ${wallet.currency}'),
@@ -301,7 +356,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.remove_circle_outline_rounded,
+                leading: const Icon(AppIcons.remove_circle_outline,
                     color: Colors.red),
                 title: const Text('Списать'),
                 subtitle: Text('Снять средства с ${wallet.currency}'),
@@ -317,7 +372,7 @@ class _ClientDetailScreenState extends State<ClientDetailScreen> {
                 },
               ),
               ListTile(
-                leading: Icon(Icons.swap_horiz_rounded,
+                leading: Icon(AppIcons.swap_horiz,
                     color: scheme.primary),
                 title: const Text('Конвертировать'),
                 subtitle:
@@ -422,8 +477,8 @@ class _SimpleOperationDialogState extends State<_SimpleOperationDialog> {
         children: [
           Icon(
             widget.isDeposit
-                ? Icons.add_circle_outline_rounded
-                : Icons.remove_circle_outline_rounded,
+                ? AppIcons.add_circle_outline
+                : AppIcons.remove_circle_outline,
             color: color,
           ),
           const SizedBox(width: 8),
@@ -528,6 +583,113 @@ String _pluralCcy(int n) {
 }
 
 // ─── Identity Block ───
+
+/// Компактная полоска с балансом + scrollable wallet-chips. Отображается
+/// в режиме «свёрнутого верха» (когда пользователь нажал на ⌃ в AppBar).
+/// Освобождает экран для длинной истории операций.
+class _CompactTopStrip extends StatelessWidget {
+  const _CompactTopStrip({
+    required this.client,
+    required this.wallets,
+    required this.usdEquiv,
+  });
+  final Client client;
+  final List<_Wallet> wallets;
+  final double usdEquiv;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outline.withValues(alpha: 0.12),
+            width: 0.5,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          // Аватар-инициалы.
+          CircleAvatar(
+            radius: 16,
+            backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+            child: Text(
+              client.name.isEmpty
+                  ? '?'
+                  : client.name.characters.first.toUpperCase(),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          // Имя.
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  client.name.isEmpty ? '—' : client.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                // Все кошельки в одну строку chip-row, scroll если нужно.
+                SizedBox(
+                  height: 22,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: wallets.length,
+                    separatorBuilder: (_, _) => const SizedBox(width: 4),
+                    itemBuilder: (_, i) {
+                      final w = wallets[i];
+                      final positive = w.amount > 0;
+                      final color = positive
+                          ? Colors.green.shade600
+                          : (w.amount < 0
+                              ? Colors.red.shade600
+                              : scheme.onSurfaceVariant);
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${w.amount.formatCurrency()} ${w.currency}',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w800,
+                            color: color,
+                            fontFeatures: const [
+                              FontFeature.tabularFigures()
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _IdentityBlock extends StatelessWidget {
   const _IdentityBlock({required this.client});
@@ -778,134 +940,6 @@ class _HeroBalanceCard extends StatelessWidget {
   }
 }
 
-// ─── Wallet tile ───
-
-class _WalletTile extends StatelessWidget {
-  const _WalletTile({
-    required this.client,
-    required this.balance,
-    required this.wallet,
-    required this.onTap,
-  });
-
-  final Client client;
-  final ClientBalance? balance;
-  final _Wallet wallet;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final isDark = context.isDark;
-    final secondary = isDark
-        ? AppColors.darkTextSecondary
-        : AppColors.lightTextSecondary;
-    final isNeg = wallet.amount < -0.0049;
-    final color = isNeg ? AppColors.error : AppColors.primary;
-    final surface = isNeg
-        ? AppColors.error.withValues(alpha: 0.10)
-        : AppColors.primary.withValues(alpha: 0.10);
-
-    return Material(
-      color: scheme.surface,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
-        side: BorderSide(
-          color: scheme.outline.withValues(alpha: 0.18),
-          width: 0.5,
-        ),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: surface,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  wallet.currency,
-                  style: GoogleFonts.jetBrainsMono(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: color,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Text(
-                          'Кошелёк ${wallet.currency}',
-                          style: const TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        if (wallet.isPrimary) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: AppColors.primary.withValues(alpha: 0.14),
-                              borderRadius: BorderRadius.circular(100),
-                            ),
-                            child: Text(
-                              'ОСН',
-                              style: TextStyle(
-                                fontSize: 9,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.4,
-                                color: AppColors.primary,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      CurrencyUtils.name(wallet.currency),
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: secondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '${wallet.amount.formatCurrency()} ${wallet.currency}',
-                style: GoogleFonts.jetBrainsMono(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: isNeg ? AppColors.error : scheme.onSurface,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Icon(Icons.chevron_right_rounded,
-                  size: 18, color: secondary),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ─── Action buttons (deposit / debit / convert) ───
 
 class _ActionButtons extends StatelessWidget {
@@ -930,7 +964,7 @@ class _ActionButtons extends StatelessWidget {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               textStyle: compactTextStyle,
             ),
-            icon: const Icon(Icons.arrow_downward_rounded, size: 16),
+            icon: const Icon(AppIcons.arrow_downward, size: 16),
             label: const Text('Пополнить'),
           ),
         ),
@@ -948,7 +982,7 @@ class _ActionButtons extends StatelessWidget {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               textStyle: compactTextStyle,
             ),
-            icon: const Icon(Icons.arrow_upward_rounded, size: 16),
+            icon: const Icon(AppIcons.arrow_upward, size: 16),
             label: const Text('Списать'),
           ),
         ),
@@ -969,7 +1003,7 @@ class _ActionButtons extends StatelessWidget {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               textStyle: compactTextStyle,
             ),
-            icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+            icon: const Icon(AppIcons.swap_horiz, size: 16),
             label: const Text('Обмен'),
           ),
         ),
@@ -1033,6 +1067,139 @@ class _SectionHeader extends StatelessWidget {
 
 // ─── Info card ───
 
+/// Свёрнутая по умолчанию «Информация»: ExpansionTile c той же [_InfoCard]
+/// внутри. До раскрытия — компактная одна строка («Информация · телефон,
+/// страна»), даёт операциям больше места на экране.
+class _InfoCollapsible extends StatelessWidget {
+  const _InfoCollapsible({required this.client});
+  final Client client;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Theme(
+      data: Theme.of(context).copyWith(
+        dividerColor: Colors.transparent,
+        splashColor: Colors.transparent,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: scheme.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: scheme.outline.withValues(alpha: 0.18),
+            width: 0.5,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+          childrenPadding: const EdgeInsets.only(bottom: 4),
+          collapsedShape: const RoundedRectangleBorder(),
+          shape: const RoundedRectangleBorder(),
+          leading: Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(AppIcons.info_outline,
+                size: 16, color: AppColors.primary),
+          ),
+          title: const Text(
+            'Информация',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(
+            client.phone.isEmpty
+                ? client.country.toUpperCase()
+                : '${client.phone} · ${client.country.toUpperCase()}',
+            style: TextStyle(
+              fontSize: 11.5,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          children: [
+            _InfoCard(client: client),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Компактный «чип» кошелька для горизонтальной карусели: валюта,
+/// сумма моно-шрифтом, негативный — красный. По тапу — то же
+/// меню действий, что у [_WalletTile].
+class _WalletChip extends StatelessWidget {
+  const _WalletChip({required this.wallet, required this.onTap});
+  final _Wallet wallet;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isNeg = wallet.amount < -0.0049;
+    final accent = isNeg ? AppColors.error : AppColors.primary;
+    return Material(
+      color: scheme.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: BorderSide(
+          color: accent.withValues(alpha: 0.25),
+          width: 0.8,
+        ),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          width: 140,
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    CurrencyUtils.flag(wallet.currency),
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    wallet.currency,
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: accent,
+                      letterSpacing: 0.4,
+                    ),
+                  ),
+                ],
+              ),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  wallet.amount.formatCurrencyNoDecimals(),
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: isNeg ? AppColors.error : scheme.onSurface,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoCard extends StatelessWidget {
   const _InfoCard({required this.client});
   final Client client;
@@ -1053,14 +1220,14 @@ class _InfoCard extends StatelessWidget {
       child: Column(
         children: [
           _InfoRow(
-            icon: Icons.phone_outlined,
+            icon: AppIcons.phone,
             label: 'Телефон',
             value: client.phone,
             color: AppColors.secondary,
           ),
           _Divider(),
           _InfoRow(
-            icon: Icons.flag_outlined,
+            icon: AppIcons.flag,
             label: 'Страна',
             value: client.country.toUpperCase(),
             color: AppColors.warning,
@@ -1071,7 +1238,7 @@ class _InfoCard extends StatelessWidget {
             builder: (ctx, dash) {
               final branchName = _branchNameFromList(client.branchId, dash.branches);
               return _InfoRow(
-                icon: Icons.account_balance_outlined,
+                icon: AppIcons.account_balance,
                 label: 'Филиал',
                 value: branchName,
                 color: AppColors.primary,
@@ -1080,7 +1247,7 @@ class _InfoCard extends StatelessWidget {
           ),
           _Divider(),
           _InfoRow(
-            icon: Icons.account_balance_wallet_outlined,
+            icon: AppIcons.account_balance_wallet,
             label: 'Валюты кошелька',
             value: client.walletCurrencies.isEmpty
                 ? client.currency
@@ -1092,7 +1259,7 @@ class _InfoCard extends StatelessWidget {
               client.telegramChatId!.isNotEmpty) ...[
             _Divider(),
             _InfoRow(
-              icon: Icons.send_rounded,
+              icon: AppIcons.send,
               label: 'Telegram',
               value: 'Подключён · ${client.telegramChatId}',
               color: const Color(0xFF229ED9),
@@ -1200,52 +1367,80 @@ class _InfoRow extends StatelessWidget {
 
 // ─── Transactions ───
 
-class _TransactionsCard extends StatelessWidget {
-  const _TransactionsCard({required this.transactions});
-  final List<ClientTransaction> transactions;
+/// Группирует конвертации по conversionId и возвращает уже отсортированный
+/// (по убыванию даты) список row-моделей. Вынесено из _TransactionsCard,
+/// чтобы CustomScrollView мог итерироваться по списку лениво (SliverList.builder),
+/// а не строить весь Column сразу.
+List<_TxRowData> _buildTxItems(List<ClientTransaction> transactions) {
+  final groups = <String, List<ClientTransaction>>{};
+  final standalone = <ClientTransaction>[];
+  for (final t in transactions) {
+    if (t.conversionId == null) {
+      standalone.add(t);
+    } else {
+      groups.putIfAbsent(t.conversionId!, () => []).add(t);
+    }
+  }
+  final items = <_TxRowData>[];
+  items.addAll(standalone.map(_TxRowData.simple));
+  items.addAll(groups.entries.map((e) => _TxRowData.conversion(e.value)));
+  items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  return items;
+}
+
+/// Sticky-header для секции «Операции». Прилипает к верху при скролле —
+/// делает навигацию по длинной истории удобнее (видно где ты в списке).
+class _StickySectionHeader extends SliverPersistentHeaderDelegate {
+  _StickySectionHeader({
+    required this.background,
+    required this.title,
+    required this.hint,
+  });
+  final Color background;
+  final String title;
+  final String hint;
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    // Группируем конвертации по conversionId — показываем как одну строку.
-    final groups = <String, List<ClientTransaction>>{};
-    final standalone = <ClientTransaction>[];
-    for (final t in transactions) {
-      if (t.conversionId == null) {
-        standalone.add(t);
-      } else {
-        groups.putIfAbsent(t.conversionId!, () => []).add(t);
-      }
-    }
-    final items = <_TxRowData>[];
-    items.addAll(standalone.map((t) => _TxRowData.simple(t)));
-    items.addAll(groups.entries.map((e) => _TxRowData.conversion(e.value)));
-    items.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  double get minExtent => 44;
+  @override
+  double get maxExtent => 44;
 
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
-      decoration: BoxDecoration(
-        color: scheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: scheme.outline.withValues(alpha: 0.18),
-          width: 0.5,
-        ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Column(
+      color: background,
+      padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.xs),
+      alignment: Alignment.bottomLeft,
+      child: Row(
         children: [
-          for (var i = 0; i < items.length; i++) ...[
-            _TransactionRow(data: items[i]),
-            if (i < items.length - 1)
-              Divider(
-                height: 1,
-                color: scheme.outline.withValues(alpha: 0.15),
-              ),
-          ],
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text(
+            hint,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
         ],
       ),
     );
   }
+
+  @override
+  bool shouldRebuild(covariant _StickySectionHeader old) =>
+      old.title != title || old.hint != hint || old.background != background;
 }
 
 class _TxRowData {
@@ -1284,8 +1479,8 @@ class _TransactionRow extends StatelessWidget {
     final isDeposit = t.isDeposit;
     final color = isDeposit ? AppColors.primary : AppColors.warning;
     final icon = isDeposit
-        ? Icons.arrow_downward_rounded
-        : Icons.arrow_upward_rounded;
+        ? AppIcons.arrow_downward
+        : AppIcons.arrow_upward;
     final sign = isDeposit ? '+' : '−';
 
     return Padding(
@@ -1371,7 +1566,7 @@ class _TransactionRow extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(
-              Icons.swap_horiz_rounded,
+              AppIcons.swap_horiz,
               color: Colors.white,
               size: 14,
             ),
@@ -1458,7 +1653,7 @@ class _EmptyTxCard extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Icon(Icons.receipt_long_outlined,
+          Icon(AppIcons.receipt_long,
               size: 28, color: scheme.outline),
           const SizedBox(height: 8),
           Text(

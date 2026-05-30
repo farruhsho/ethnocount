@@ -4,6 +4,7 @@ import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/constants/app_typography.dart';
 import 'package:ethnocount/presentation/common/widgets/shimmer_loading.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class AdvancedDataTable<T> extends StatelessWidget {
   const AdvancedDataTable({
     super.key,
@@ -102,7 +103,7 @@ class AdvancedDataTable<T> extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.inbox_outlined,
+            AppIcons.inbox,
             size: 64,
             color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
           ),
@@ -126,7 +127,7 @@ class AdvancedDataTable<T> extends StatelessWidget {
         children: [
           OutlinedButton.icon(
             onPressed: hasPrevious ? onPreviousPage : null,
-            icon: const Icon(Icons.chevron_left, size: 18),
+            icon: const Icon(AppIcons.chevron_left, size: 18),
             label: const Text('Previous'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
@@ -136,7 +137,7 @@ class AdvancedDataTable<T> extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: hasNext ? onNextPage : null,
             icon: const Text('Next'),
-            label: const Icon(Icons.chevron_right, size: 18),
+            label: const Icon(AppIcons.chevron_right, size: 18),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
             ),
@@ -233,7 +234,7 @@ class BuiltAdvancedDataTable extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.inbox_outlined,
+            AppIcons.inbox,
             size: 64,
             color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.3),
           ),
@@ -257,7 +258,7 @@ class BuiltAdvancedDataTable extends StatelessWidget {
         children: [
           OutlinedButton.icon(
             onPressed: hasPrevious ? onPreviousPage : null,
-            icon: const Icon(Icons.chevron_left, size: 18),
+            icon: const Icon(AppIcons.chevron_left, size: 18),
             label: const Text('Previous'),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
@@ -267,7 +268,7 @@ class BuiltAdvancedDataTable extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: hasNext ? onNextPage : null,
             icon: const Text('Next'),
-            label: const Icon(Icons.chevron_right, size: 18),
+            label: const Icon(AppIcons.chevron_right, size: 18),
             style: OutlinedButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
             ),

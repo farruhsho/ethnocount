@@ -9,6 +9,16 @@ class ClientRemoteDataSource {
 
   ClientRemoteDataSource(this._client);
 
+  /// Монотонный суффикс для имён realtime-каналов. supabase-flutter кэширует
+  /// каналы по topic, поэтому два одновременных подписчика на канал с
+  /// одинаковым именем делят один объект — и `removeChannel` одного (при
+  /// пересоздании BLoC на навигации) срывает подписку другого, из-за чего
+  /// live-обновления молча перестают приходить. Уникальное имя на каждую
+  /// подписку исключает эту гонку.
+  static int _channelSeq = 0;
+  static String _uniqueChannel(String base) =>
+      '${base}_${DateTime.now().microsecondsSinceEpoch}_${_channelSeq++}';
+
   /// Stream of all active clients ordered by name.
   Stream<List<Client>> watchClients({String? search}) {
     final controller = StreamController<List<Client>>.broadcast();
@@ -20,7 +30,7 @@ class ClientRemoteDataSource {
     });
 
     final channel = _client
-        .channel('clients_changes')
+        .channel(_uniqueChannel('clients_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -72,7 +82,7 @@ class ClientRemoteDataSource {
     });
 
     final channel = _client
-        .channel('client_balances_changes')
+        .channel(_uniqueChannel('client_balances_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -153,7 +163,7 @@ class ClientRemoteDataSource {
     });
 
     final channel = _client
-        .channel('client_tx_$clientId')
+        .channel(_uniqueChannel('client_tx_$clientId'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -271,6 +281,10 @@ class ClientRemoteDataSource {
   }
 
   /// Atomic currency conversion within a client wallet.
+  ///
+  /// `description` намеренно не передаём при null — PostgREST в этом случае
+  /// корректно использует DEFAULT, а раньше явный `null` в редких сборках
+  /// валился в "could not determine polymorphic type".
   Future<Map<String, dynamic>> convertClientCurrency({
     required String clientId,
     required String fromCurrency,
@@ -279,15 +293,22 @@ class ClientRemoteDataSource {
     required double rate,
     String? description,
   }) async {
-    final result = await _client.rpc('convert_client_currency', params: {
+    final params = <String, dynamic>{
       'p_client_id': clientId,
       'p_from_currency': fromCurrency,
       'p_to_currency': toCurrency,
       'p_amount': amount,
       'p_rate': rate,
-      'p_description': description,
-    });
-    return Map<String, dynamic>.from(result as Map);
+    };
+    if (description != null && description.trim().isNotEmpty) {
+      params['p_description'] = description.trim();
+    }
+    final result = await _client.rpc('convert_client_currency', params: params);
+    if (result is Map) return Map<String, dynamic>.from(result);
+    // RPC может вернуть jsonb, который supabase-flutter иногда отдаёт как
+    // List/строку при странных конфигурациях — оборачиваем в success-ответ
+    // и просто триггерим refetch баланса.
+    return {'success': true};
   }
 
   double _round(double value, int decimals) {

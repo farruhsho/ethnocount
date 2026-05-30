@@ -2,8 +2,10 @@ import 'package:equatable/equatable.dart';
 
 /// Тип согласовываемой операции. Совпадает 1:1 с public.approval_action_t
 /// из migration 021 — порядок и имена не менять без миграции.
+///
+/// `transferReject` исключён в миграции 022 — отклонение перевода больше
+/// не существует как операция (вся отмена-цепочка удалена).
 enum ApprovalAction {
-  transferReject,
   transferAmendAmount,
   clientUpdate,
   clientArchive,
@@ -12,8 +14,6 @@ enum ApprovalAction {
 
   String toWire() {
     switch (this) {
-      case ApprovalAction.transferReject:
-        return 'transfer_reject';
       case ApprovalAction.transferAmendAmount:
         return 'transfer_amend_amount';
       case ApprovalAction.clientUpdate:
@@ -29,8 +29,6 @@ enum ApprovalAction {
 
   static ApprovalAction? tryFromWire(String? value) {
     switch (value) {
-      case 'transfer_reject':
-        return ApprovalAction.transferReject;
       case 'transfer_amend_amount':
         return ApprovalAction.transferAmendAmount;
       case 'client_update':
@@ -48,8 +46,6 @@ enum ApprovalAction {
   /// Локализованное название — для UI карточек и notifications.
   String get label {
     switch (this) {
-      case ApprovalAction.transferReject:
-        return 'Отмена перевода';
       case ApprovalAction.transferAmendAmount:
         return 'Изменение суммы перевода';
       case ApprovalAction.clientUpdate:

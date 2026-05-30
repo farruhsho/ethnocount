@@ -4,8 +4,6 @@ admin.initializeApp();
 
 export * from './createTransfer';
 export * from './confirmTransfer';
-export * from './rejectTransfer';
-export * from './cancelTransfer';
 export * from './exportLedger';
 export * from './exportReport';
 export * from './setExchangeRate';

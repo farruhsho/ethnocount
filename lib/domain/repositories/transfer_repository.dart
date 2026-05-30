@@ -7,11 +7,16 @@ import 'package:ethnocount/domain/entities/enums.dart';
 /// Repository for inter-branch transfer operations.
 abstract class TransferRepository {
   /// Stream of transfers with optional filters.
+  ///
+  /// [query] — свободный текст для поиска: совпадает по
+  /// `transaction_code`, имени/телефону отправителя или получателя.
+  /// Чисто числовой ввод дополнительно сопоставляется с `amount`.
   Stream<List<Transfer>> watchTransfers({
     String? branchId,
     TransferStatus? statusFilter,
     DateTime? startDate,
     DateTime? endDate,
+    String? query,
     int limit = 50,
     Object? startAfter,
   });
@@ -35,6 +40,7 @@ abstract class TransferRepository {
     required double commissionValue,
     required String commissionCurrency,
     String commissionMode = 'fromSender',
+    String? commissionAccountId,
     required String idempotencyKey,
     String? description,
     String? clientId,
@@ -44,6 +50,9 @@ abstract class TransferRepository {
     String? receiverName,
     String? receiverPhone,
     String? receiverInfo,
+    double? buyRate,
+    double? sellRate,
+    String? baseCurrency,
   });
 
   /// Confirm receipt of a transfer (receiving branch action).
@@ -55,11 +64,12 @@ abstract class TransferRepository {
     List<MapEntry<String, double>>? toAccountSplits,
   });
 
-  /// Reject a transfer (receiving branch action).
-  /// Atomic: unlocks funds back to sender.
-  Future<Either<Failure, void>> rejectTransfer({
+  /// Sender-branch action: cash handed over to the courier.
+  /// Transitions `toDelivery` → `withCourier`. Optional courier metadata.
+  Future<Either<Failure, void>> dispatchToCourier({
     required String transferId,
-    required String reason,
+    String? courierName,
+    String? courierPhone,
   });
 
   /// Mark transfer as fully issued — pays out the entire remaining balance
@@ -85,11 +95,34 @@ abstract class TransferRepository {
   /// Realtime stream of payout tranches for a single transfer.
   Stream<List<TransferIssuance>> watchIssuances(String transferId);
 
-  /// Cancel a pending transfer (sender branch action).
-  /// Atomic: refunds sender + writes compensating ledger credit.
-  Future<Either<Failure, void>> cancelTransfer({
+  /// Полная замена финансов pending (created) перевода:
+  /// валюта, сумма, курс, комиссия, счёт-источник + метаданные.
+  /// Все изменения атомарны (refund + new debit).
+  Future<Either<Failure, void>> replacePendingTransfer({
     required String transferId,
-    String reason = '',
+    String? fromAccountId,
+    double? amount,
+    String? currency,
+    String? toCurrency,
+    double? exchangeRate,
+    String? commissionType,
+    double? commissionValue,
+    String? commissionCurrency,
+    String? commissionMode,
+    String? toAccountId,
+    String? description,
+    String? clientId,
+    String? senderName,
+    String? senderPhone,
+    String? senderInfo,
+    String? receiverName,
+    String? receiverPhone,
+    String? receiverInfo,
+    String? amendmentNote,
+    String? commissionAccountId,
+    double? buyRate,
+    double? sellRate,
+    String? baseCurrency,
   });
 
   /// Update pending transfer: amount, sender/receiver info (Creator or canManageTransfers).

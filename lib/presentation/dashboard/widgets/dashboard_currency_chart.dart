@@ -186,7 +186,7 @@ class _LegendRow extends StatelessWidget {
             ),
           ),
           Text(
-            '${value.abs().formatCurrency()}',
+            value.abs().formatCurrency(),
             style: const TextStyle(
               fontSize: 11,
               fontFamily: 'JetBrains Mono',

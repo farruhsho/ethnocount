@@ -98,6 +98,14 @@ class NotificationRemoteDataSource {
         .eq('id', notificationId);
   }
 
+  /// Delete a single notification by id. Called from the notifications page
+  /// swipe-action. RLS policy `notifications_delete` (миграция 051) allows
+  /// any authenticated user to delete notifications targeted at branches
+  /// they have access to.
+  Future<void> deleteNotification(String notificationId) async {
+    await _client.from('notifications').delete().eq('id', notificationId);
+  }
+
   /// Mark all notifications for the given branches as read.
   Future<void> markAllAsRead(List<String> branchIds) async {
     final ids = branchIds.where((id) => id.isNotEmpty).toSet().toList();
@@ -159,9 +167,8 @@ class NotificationRemoteDataSource {
     const map = {
       'incoming_transfer': NotificationType.incomingTransfer,
       'transfer_confirmed': NotificationType.transferConfirmed,
-      'transfer_rejected': NotificationType.transferRejected,
+      'transfer_dispatched': NotificationType.transferDispatched,
       'transfer_issued': NotificationType.transferIssued,
-      'transfer_cancelled': NotificationType.transferCancelled,
       'transfer_amended': NotificationType.transferAmended,
     };
     if (type == null) return NotificationType.systemAlert;

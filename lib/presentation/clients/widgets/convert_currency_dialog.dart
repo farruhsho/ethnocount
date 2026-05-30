@@ -10,6 +10,7 @@ import 'package:ethnocount/core/utils/decimal_input_formatter.dart';
 import 'package:ethnocount/domain/entities/client.dart';
 import 'package:ethnocount/presentation/clients/bloc/client_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Открывает bottom-sheet (mobile) или диалог (desktop) для конвертации
 /// валют клиента. Принимает текущий [client], [balance] и валюту, с которой
 /// пользователь начал операцию ([initialFrom]). Курс — «1 from = X to».
@@ -236,7 +237,7 @@ class _ConvertCurrencyBodyState extends State<_ConvertCurrencyBody> {
                       ),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.swap_horiz_rounded,
+                    child: const Icon(AppIcons.swap_horiz,
                         color: Colors.white, size: 22),
                   ),
                   const SizedBox(width: AppSpacing.sm),
@@ -291,7 +292,7 @@ class _ConvertCurrencyBodyState extends State<_ConvertCurrencyBody> {
                       child: Center(
                         child: IconButton.filledTonal(
                           onPressed: _swap,
-                          icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+                          icon: const Icon(AppIcons.swap_horiz, size: 18),
                           tooltip: 'Поменять местами',
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(
@@ -337,7 +338,7 @@ class _ConvertCurrencyBodyState extends State<_ConvertCurrencyBody> {
                 decoration: InputDecoration(
                   labelText: 'Курс · 1 $_from = ? $_to',
                   border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.percent_rounded, size: 18),
+                  prefixIcon: const Icon(AppIcons.percent, size: 18),
                   suffixText: _to,
                   hintText: _hintRate(_from, _to),
                   errorText: _rateError,
@@ -453,7 +454,7 @@ class _ConvertCurrencyBodyState extends State<_ConvertCurrencyBody> {
                                     color: Colors.white,
                                   ),
                                 )
-                              : const Icon(Icons.swap_horiz_rounded),
+                              : const Icon(AppIcons.swap_horiz),
                           label: const Text('Конвертировать'),
                         );
                       },

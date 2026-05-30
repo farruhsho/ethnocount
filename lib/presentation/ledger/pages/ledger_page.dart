@@ -27,6 +27,7 @@ import 'package:ethnocount/domain/entities/export_settings.dart';
 import 'package:ethnocount/data/datasources/remote/user_remote_ds.dart';
 import 'package:ethnocount/core/di/injection.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 String _ledgerAccountLabel(
   LedgerEntry e,
   Map<String, List<BranchAccount>> branchAccounts,
@@ -163,7 +164,7 @@ class _LedgerPageState extends State<LedgerPage> {
                           Expanded(
                             child: FilledButton.tonalIcon(
                               onPressed: () => context.go('/bank-import'),
-                              icon: const Icon(Icons.upload_file_rounded, size: 18),
+                              icon: const Icon(AppIcons.upload_file, size: 18),
                               label: const FittedBox(
                                 fit: BoxFit.scaleDown,
                                 alignment: Alignment.centerLeft,
@@ -181,7 +182,7 @@ class _LedgerPageState extends State<LedgerPage> {
                                       height: 18,
                                       child: CircularProgressIndicator(strokeWidth: 2),
                                     )
-                                  : const Icon(Icons.download_rounded, size: 18),
+                                  : const Icon(AppIcons.download, size: 18),
                               label: FittedBox(
                                 fit: BoxFit.scaleDown,
                                 child: Text(
@@ -209,7 +210,7 @@ class _LedgerPageState extends State<LedgerPage> {
                     const SizedBox(width: AppSpacing.sm),
                     FilledButton.tonalIcon(
                       onPressed: () => context.go('/bank-import'),
-                      icon: const Icon(Icons.upload_file_rounded, size: 16),
+                      icon: const Icon(AppIcons.upload_file, size: 16),
                       label: const Text(
                         'Импорт из банка',
                         style: TextStyle(fontSize: 13),
@@ -224,7 +225,7 @@ class _LedgerPageState extends State<LedgerPage> {
                               height: 16,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.download_rounded, size: 16),
+                          : const Icon(AppIcons.download, size: 16),
                       label: Text(
                         _isExporting ? 'Загрузка...' : 'Экспорт',
                         style: const TextStyle(fontSize: 13),
@@ -457,7 +458,7 @@ class _LedgerPageState extends State<LedgerPage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            noBranches ? Icons.lock_outline : Icons.account_tree_outlined,
+            noBranches ? AppIcons.lock_outline : AppIcons.account_tree,
             size: 64,
             color: context.isDark
                 ? AppColors.darkTextSecondary
@@ -481,7 +482,7 @@ class _LedgerPageState extends State<LedgerPage> {
 
   Widget _buildEmptyState(BuildContext context) {
     return const EmptyState(
-      icon: Icons.receipt_long_outlined,
+      icon: AppIcons.receipt_long,
       title: 'Записи в журнале отсутствуют',
       subtitle: 'По выбранному филиалу операций пока нет. Измените фильтры или повторите позже.',
     );
@@ -591,8 +592,8 @@ class _LedgerEntryCard extends StatelessWidget {
               ),
               child: Icon(
                 isCredit
-                    ? Icons.arrow_downward_rounded
-                    : Icons.arrow_upward_rounded,
+                    ? AppIcons.arrow_downward
+                    : AppIcons.arrow_upward,
                 size: 18,
                 color: amountColor,
               ),

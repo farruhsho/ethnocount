@@ -20,9 +20,11 @@ import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
 import 'package:ethnocount/presentation/common/widgets/desktop_data_grid.dart';
 import 'package:ethnocount/presentation/transfers/widgets/edit_transfer_dialog.dart';
+import 'package:ethnocount/presentation/transfers/widgets/transfer_status_chip.dart' show TransferStatusChip;
 import 'package:ethnocount/core/utils/branch_access.dart';
 
-/// Экран принятых переводов (confirmed + issued) с деталями: курс, налом, по карте.
+import 'package:ethnocount/core/icons/app_icons.dart';
+/// Экран принятых переводов: toDelivery + withCourier + delivered.
 class AcceptedTransfersPage extends StatefulWidget {
   const AcceptedTransfersPage({super.key});
 
@@ -60,7 +62,7 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
     final branches = filterBranchesByAccess(allBranches, user);
     final state = context.watch<TransferBloc>().state;
     final transfers = state.transfers
-        .where((t) => t.isConfirmed || t.isIssued)
+        .where((t) => t.isToDelivery || t.isWithCourier || t.isDelivered)
         .toList();
 
     return BlocListener<TransferBloc, TransferBlocState>(
@@ -79,7 +81,7 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.check_circle_outline, size: 28, color: AppColors.success),
+                      const Icon(AppIcons.check_circle_outline, size: 28, color: AppColors.success),
                       const SizedBox(width: AppSpacing.sm),
                       Text(
                         'Принятые переводы',
@@ -133,7 +135,7 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      Icons.inbox_outlined,
+                      AppIcons.inbox,
                       size: 64,
                       color: context.isDark
                           ? AppColors.darkTextTertiary
@@ -195,7 +197,10 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
                       transfer: t,
                       branches: allBranches,
                       branchAccounts: branchAccounts,
-                      onIssue: t.isConfirmed
+                      // «Выдать» доступно как из toDelivery (быстрый путь
+                      // для cash без курьера и для card), так и из
+                      // withCourier (cash после возврата курьера).
+                      onIssue: (t.isToDelivery || t.isWithCourier)
                           ? () => context
                               .read<TransferBloc>()
                               .add(TransferIssueRequested(t.id))
@@ -206,7 +211,6 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
                           builder: (ctx) => EditTransferDialog(
                             transfer: t,
                             onSaved: () => Navigator.of(ctx).pop(),
-                            allowAmountEdit: false,
                           ),
                         );
                       },
@@ -313,7 +317,7 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
             'toCurrency': TrinaCell(value: recvCur),
             'commissionDisplay': TrinaCell(value: commissionText),
             'toAccount': TrinaCell(value: toAccountDisplay),
-            'status': TrinaCell(value: t.isIssued ? 'issued' : 'confirmed'),
+            'status': TrinaCell(value: t.status.name),
             'createdBy': TrinaCell(value: _userDisplay(userNames, t.createdBy)),
             'confirmedBy': TrinaCell(value: t.confirmedBy != null ? _userDisplay(userNames, t.confirmedBy!) : '—'),
           });
@@ -336,7 +340,6 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
                   builder: (ctx) => EditTransferDialog(
                     transfer: t,
                     onSaved: () => Navigator.of(ctx).pop(),
-                    allowAmountEdit: false,
                   ),
                 );
               }
@@ -358,7 +361,7 @@ class _AcceptedTransfersPageState extends State<AcceptedTransfersPage> {
 
     final payoutByTransfer = <String, List<String>>{};
     for (final t in transfers) {
-      if (!(t.isIssued || t.issuedAmount > 0)) continue;
+      if (!(t.isDelivered || t.issuedAmount > 0)) continue;
       try {
         final issuances = await transferRepo.watchIssuances(t.id).first;
         final ids = issuances
@@ -469,22 +472,7 @@ class _AcceptedTransferTile extends StatelessWidget {
                         ),
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: (t.isIssued ? Colors.teal : AppColors.success)
-                            .withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        t.isIssued ? 'Выдан' : 'Принят',
-                        style: TextStyle(
-                          color: t.isIssued ? Colors.teal : AppColors.success,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
+                    TransferStatusChip(status: t.status),
                   ],
                 ),
                 if (t.transactionCode != null)
@@ -510,7 +498,7 @@ class _AcceptedTransferTile extends StatelessWidget {
                 Text('Счёт отправителя: ${_accountName(t.fromAccountId)}',
                     style: TextStyle(fontSize: 11, color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary)),
                 if (toAcc != null)
-                  Text('Счёт получателя: ${toAcc.name} (${toType})',
+                  Text('Счёт получателя: ${toAcc.name} ($toType)',
                       style: TextStyle(fontSize: 11, color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary)),
                 const SizedBox(height: AppSpacing.md),
                 // Сумма, валюта, курс, налом/карта
@@ -519,34 +507,34 @@ class _AcceptedTransferTile extends StatelessWidget {
                   runSpacing: AppSpacing.sm,
                   children: [
                     _InfoChip(
-                      icon: Icons.arrow_upward,
+                      icon: AppIcons.arrow_upward,
                       label: 'Списано: ${t.totalDebitAmount.formatCurrencyNoDecimals()} ${t.currency}',
                       color: const Color(0xFFE53935),
                     ),
                     _InfoChip(
-                      icon: Icons.payments,
+                      icon: AppIcons.payments,
                       label: 'Выдано: ${t.convertedAmount.formatCurrencyNoDecimals()} $recvCur',
                       color: AppColors.primary,
                     ),
                     _InfoChip(
-                      icon: Icons.currency_exchange,
+                      icon: AppIcons.currency_exchange,
                       label: '${t.currency} → $recvCur: ${t.exchangeRate}',
                       color: AppColors.secondary,
                     ),
                     if (t.commission > 0)
                       _InfoChip(
-                        icon: Icons.percent,
+                        icon: AppIcons.percent,
                         label: 'Комиссия: ${t.commission.formatCurrencyNoDecimals()} ${t.commissionCurrency}',
                         color: Colors.orange,
                       ),
                     _InfoChip(
-                      icon: isCash ? Icons.payments : Icons.credit_card,
+                      icon: isCash ? AppIcons.payments : AppIcons.credit_card,
                       label: isCash ? 'Наличные' : (isCard ? 'Карта' : toType),
                       color: isCash ? Colors.green : Colors.blue,
                     ),
                     if (fromAcc != null)
                       _InfoChip(
-                        icon: Icons.account_balance_wallet,
+                        icon: AppIcons.account_balance_wallet,
                         label: 'Счёт отправителя: ${fromAcc.name}',
                         color: Colors.grey,
                       ),
@@ -569,7 +557,7 @@ class _AcceptedTransferTile extends StatelessWidget {
                       if (onEdit != null)
                         OutlinedButton.icon(
                           onPressed: onEdit,
-                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          icon: const Icon(AppIcons.edit, size: 16),
                           label: const Text('Изменить'),
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(
@@ -583,7 +571,7 @@ class _AcceptedTransferTile extends StatelessWidget {
                       if (onIssue != null)
                         FilledButton.icon(
                           onPressed: onIssue,
-                          icon: const Icon(Icons.check_circle_outline, size: 16),
+                          icon: const Icon(AppIcons.check_circle_outline, size: 16),
                           label: const Text('Выдать'),
                           style: FilledButton.styleFrom(
                             backgroundColor: Colors.teal,

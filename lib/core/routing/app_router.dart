@@ -31,6 +31,7 @@ import 'package:ethnocount/presentation/purchases/bloc/purchase_bloc.dart';
 import 'package:ethnocount/presentation/branches/pages/branches_page.dart';
 import 'package:ethnocount/presentation/admin/pages/admin_panel_page.dart';
 import 'package:ethnocount/presentation/approvals/pages/approvals_page.dart';
+import 'package:ethnocount/presentation/counterparties/pages/counterparties_page.dart';
 import 'package:ethnocount/presentation/common/widgets/adaptive_scaffold.dart';
 
 /// Application router using go_router.
@@ -253,6 +254,10 @@ class AppRouter {
               path: '/notifications',
               name: RouteNames.notifications,
               builder: (context, state) => const NotificationsPage(),
+            ),
+            GoRoute(
+              path: '/counterparties',
+              builder: (context, state) => const CounterpartiesPage(),
             ),
             GoRoute(
               path: '/approvals',

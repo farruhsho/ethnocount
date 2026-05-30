@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Маленький круглый чип `+2.4%` / `-3 со вчера` — растёт/падает.
 /// Цвет — primary для positive, error для negative; нейтральный, если 0/null.
 class DeltaChip extends StatelessWidget {
@@ -32,8 +33,8 @@ class DeltaChip extends StatelessWidget {
             ? AppColors.error.withValues(alpha: 0.10)
             : Colors.white.withValues(alpha: 0.06));
     final icon = positive
-        ? Icons.arrow_upward_rounded
-        : (negative ? Icons.arrow_downward_rounded : Icons.remove_rounded);
+        ? AppIcons.arrow_upward
+        : (negative ? AppIcons.arrow_downward : AppIcons.remove);
 
     return Container(
       padding: EdgeInsets.symmetric(

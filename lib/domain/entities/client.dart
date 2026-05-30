@@ -1,6 +1,6 @@
 import 'package:equatable/equatable.dart';
 
-/// A client account — money the client entrusts to Ethno Logistics.
+/// A client account — money the client entrusts to the company.
 class Client extends Equatable {
   final String id;
 

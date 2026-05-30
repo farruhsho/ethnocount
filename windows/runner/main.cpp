@@ -27,7 +27,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1440, 900);
-  if (!window.Create(L"Ethno Logistics Treasury", origin, size)) {
+  // L"Финансы" в Windows runner отображается мусором, если .rc/.cpp не в
+  // UTF-16. Заголовок окна обновляется из Flutter (MaterialApp.title), а тут
+  // оставляем латинизированный fallback для самой первой кадровой отрисовки.
+  if (!window.Create(L"Finansy", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

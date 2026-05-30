@@ -7,6 +7,7 @@ import 'package:ethnocount/core/utils/currency_utils.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
+import 'package:ethnocount/core/extensions/number_x.dart';
 import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/branch_account.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
@@ -20,6 +21,7 @@ import 'package:ethnocount/domain/entities/audit_log.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class AdminPanelPage extends StatefulWidget {
   const AdminPanelPage({super.key});
 
@@ -78,7 +80,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       floatingActionButton: isMobile
           ? FloatingActionButton.extended(
               onPressed: () => _showAddEntitySheet(context),
-              icon: const Icon(Icons.add_rounded),
+              icon: const Icon(AppIcons.add),
               label: const Text('Добавить'),
             )
           : null,
@@ -112,7 +114,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                         gradient: AppColors.primaryGradient,
                         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                       ),
-                      child: Icon(Icons.admin_panel_settings,
+                      child: Icon(AppIcons.admin_panel_settings,
                           color: Colors.white, size: isMobile ? 20 : 24),
                     ),
                     const SizedBox(width: AppSpacing.md),
@@ -145,15 +147,24 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       ),
                     ),
                     if (!isMobile) ...[
+                      if (_currentUser?.role == SystemRole.creator) ...[
+                        _QuickActionButton(
+                          icon: AppIcons.account_balance,
+                          label: 'Аудит балансов',
+                          color: AppColors.warning,
+                          onTap: () => _showBalanceAuditDialog(context),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                      ],
                       _QuickActionButton(
-                        icon: Icons.person_add_rounded,
+                        icon: AppIcons.person_add,
                         label: 'Сотрудник',
                         color: AppColors.secondary,
                         onTap: () => _showCreateUserDialog(context),
                       ),
                       const SizedBox(width: AppSpacing.sm),
                       _QuickActionButton(
-                        icon: Icons.add_business_rounded,
+                        icon: AppIcons.add_business,
                         label: 'Филиал',
                         color: AppColors.primary,
                         onTap: () => _showCreateBranchDialog(context),
@@ -173,7 +184,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.dashboard_outlined, size: 18, color: cs.primary),
+                          Icon(AppIcons.dashboard, size: 18, color: cs.primary),
                           const SizedBox(width: 6),
                           const Text('Обзор системы'),
                         ],
@@ -183,7 +194,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.people_outline, size: 18),
+                          const Icon(AppIcons.people_outline, size: 18),
                           const SizedBox(width: 6),
                           Text('Сотрудники (${_users.length})'),
                         ],
@@ -193,7 +204,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.business_outlined, size: 18),
+                          const Icon(AppIcons.business, size: 18),
                           const SizedBox(width: 6),
                           Text('Филиалы (${_branches.length})'),
                         ],
@@ -203,7 +214,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.security_outlined, size: 18),
+                          const Icon(AppIcons.security, size: 18),
                           const SizedBox(width: 6),
                           const Text('Матрица доступов'),
                         ],
@@ -213,7 +224,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.history_rounded, size: 18),
+                          const Icon(AppIcons.history, size: 18),
                           const SizedBox(width: 6),
                           const Text('Аудит'),
                         ],
@@ -288,7 +299,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
               ListTile(
                 leading: const CircleAvatar(
                   backgroundColor: AppColors.secondary,
-                  child: Icon(Icons.person_add_rounded, color: Colors.white),
+                  child: Icon(AppIcons.person_add, color: Colors.white),
                 ),
                 title: const Text('Новый сотрудник'),
                 subtitle: const Text('Бухгалтер с доступом к филиалам'),
@@ -301,7 +312,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
                 leading: const CircleAvatar(
                   backgroundColor: AppColors.primary,
                   child:
-                      Icon(Icons.add_business_rounded, color: Colors.white),
+                      Icon(AppIcons.add_business, color: Colors.white),
                 ),
                 title: const Text('Новый филиал'),
                 subtitle: const Text('Офис/точка со своими счетами'),
@@ -362,7 +373,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       builder: (dialogCtx) => AlertDialog(
         title: const Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            Icon(AppIcons.warning_amber, color: Colors.red),
             SizedBox(width: 8),
             Expanded(child: Text('Удалить сотрудника?')),
           ],
@@ -389,7 +400,7 @@ class _AdminPanelPageState extends State<AdminPanelPage>
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.of(dialogCtx).pop(true),
-            icon: const Icon(Icons.delete_forever_rounded),
+            icon: const Icon(AppIcons.delete_forever),
             label: const Text('Удалить'),
           ),
         ],
@@ -443,6 +454,13 @@ class _AdminPanelPageState extends State<AdminPanelPage>
       ),
     );
   }
+
+  void _showBalanceAuditDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => const _BalanceAuditDialog(),
+    );
+  }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -487,14 +505,14 @@ class _OverviewTab extends StatelessWidget {
               _KpiCard(
                 title: 'Всего сотрудников',
                 value: '${users.length}',
-                icon: Icons.people_rounded,
+                icon: AppIcons.people,
                 color: AppColors.secondary,
                 subtitle: '$activeUsers активных',
               ),
               _KpiCard(
                 title: 'Creators',
                 value: '$creators',
-                icon: Icons.shield_rounded,
+                icon: AppIcons.shield,
                 color: Colors.purple,
                 subtitle: 'Полные права',
               ),
@@ -502,21 +520,21 @@ class _OverviewTab extends StatelessWidget {
                 _KpiCard(
                   title: 'Директоры',
                   value: '$directors',
-                  icon: Icons.supervisor_account_rounded,
+                  icon: AppIcons.supervisor_account,
                   color: Colors.orange,
                   subtitle: 'Управление бухгалтерами',
                 ),
               _KpiCard(
                 title: 'Бухгалтеры',
                 value: '$accountants',
-                icon: Icons.calculate_rounded,
+                icon: AppIcons.calculate,
                 color: AppColors.primary,
                 subtitle: 'Ограниченный доступ',
               ),
               _KpiCard(
                 title: 'Филиалы',
                 value: '$activeBranches',
-                icon: Icons.business_rounded,
+                icon: AppIcons.business,
                 color: AppColors.warning,
                 subtitle: '${branches.length} всего',
               ),
@@ -524,7 +542,7 @@ class _OverviewTab extends StatelessWidget {
                 _KpiCard(
                   title: 'Заблокированы',
                   value: '$blockedUsers',
-                  icon: Icons.block_rounded,
+                  icon: AppIcons.block,
                   color: AppColors.error,
                   subtitle: 'Нет доступа',
                 ),
@@ -654,7 +672,7 @@ class _UsersTab extends StatelessWidget {
       onChanged: onSearchChanged,
       decoration: InputDecoration(
         hintText: 'Поиск по имени или email...',
-        prefixIcon: const Icon(Icons.search_rounded, size: 20),
+        prefixIcon: const Icon(AppIcons.search, size: 20),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
         ),
@@ -720,7 +738,7 @@ class _UsersTab extends StatelessWidget {
               const SizedBox(width: AppSpacing.md),
               FilledButton.icon(
                 onPressed: onCreate,
-                icon: const Icon(Icons.person_add_rounded, size: 18),
+                icon: const Icon(AppIcons.person_add, size: 18),
                 label: const Text('Добавить'),
               ),
             ],
@@ -900,13 +918,13 @@ class _UserCard extends StatelessWidget {
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 20),
+                icon: const Icon(AppIcons.edit, size: 20),
                 onPressed: onEdit,
                 tooltip: 'Редактировать',
               ),
               if (onDelete != null)
                 IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 20),
+                  icon: const Icon(AppIcons.delete_outline, size: 20),
                   color: Colors.red,
                   onPressed: onDelete,
                   tooltip: 'Удалить',
@@ -985,13 +1003,13 @@ class _UserRow extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    icon: const Icon(AppIcons.edit, size: 18),
                     onPressed: onEdit,
                     tooltip: 'Редактировать',
                   ),
                   if (onDelete != null)
                     IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 18),
+                      icon: const Icon(AppIcons.delete_outline, size: 18),
                       color: Colors.red,
                       onPressed: onDelete,
                       tooltip: 'Удалить',
@@ -1086,13 +1104,13 @@ class _BranchesTabState extends State<_BranchesTab> {
                     color: Theme.of(context).colorScheme.surfaceContainerHighest,
                     child: Row(
                       children: [
-                        const Icon(Icons.business_rounded, size: 18),
+                        const Icon(AppIcons.business, size: 18),
                         const SizedBox(width: 8),
                         Text('Филиалы (${widget.branches.length})',
                           style: context.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w600)),
                         const Spacer(),
                         IconButton(
-                          icon: const Icon(Icons.add_rounded, size: 20),
+                          icon: const Icon(AppIcons.add, size: 20),
                           onPressed: () => _showCreateBranch(context),
                           tooltip: 'Добавить филиал',
                           visualDensity: VisualDensity.compact,
@@ -1165,7 +1183,7 @@ class _BranchesTabState extends State<_BranchesTab> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.touch_app_rounded, size: 48,
+                          Icon(AppIcons.touch_app, size: 48,
                             color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary),
                           const SizedBox(height: 12),
                           Text('Выберите филиал из списка',
@@ -1258,8 +1276,8 @@ class _BranchDetailCard extends StatelessWidget {
                       spacing: 8,
                       runSpacing: 4,
                       children: [
-                        _InfoChip(label: 'Валюта: ${branch.baseCurrency}', icon: Icons.currency_exchange_rounded),
-                        _InfoChip(label: '${accounts.length} счетов', icon: Icons.account_balance_rounded),
+                        _InfoChip(label: 'Валюта: ${branch.baseCurrency}', icon: AppIcons.currency_exchange),
+                        _InfoChip(label: '${accounts.length} счетов', icon: AppIcons.account_balance),
                       ],
                     ),
                   ],
@@ -1303,18 +1321,18 @@ class _BranchDetailCard extends StatelessWidget {
                 if (onEditBranch != null)
                   OutlinedButton.icon(
                     onPressed: () => onEditBranch!(branch),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    icon: const Icon(AppIcons.edit, size: 18),
                     label: const Text('Изменить'),
                   ),
                 if (onAssignAccountants != null)
                   OutlinedButton.icon(
                     onPressed: () => onAssignAccountants!(branch),
-                    icon: const Icon(Icons.manage_accounts_rounded, size: 18),
+                    icon: const Icon(AppIcons.manage_accounts, size: 18),
                     label: const Text('Доступ бухгалтерам'),
                   ),
                 OutlinedButton.icon(
                   onPressed: () => _showAddAccountDialog(context, branch),
-                  icon: const Icon(Icons.add_rounded, size: 18),
+                  icon: const Icon(AppIcons.add, size: 18),
                   label: const Text('Добавить счёт'),
                 ),
               ],
@@ -1331,7 +1349,7 @@ class _BranchDetailCard extends StatelessWidget {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.account_balance_wallet_outlined, size: 40,
+                          Icon(AppIcons.account_balance_wallet, size: 40,
                             color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary),
                           const SizedBox(height: 8),
                           const Text('Нет счетов. Добавьте первый счёт.'),
@@ -1458,7 +1476,7 @@ class _AccountTile extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if ((account.bankName ?? '').isNotEmpty) ...[
-                            Icon(Icons.account_balance_outlined, size: 11,
+                            Icon(AppIcons.account_balance, size: 11,
                                 color: context.isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
                             const SizedBox(width: 3),
                             Text(account.bankName!,
@@ -1466,7 +1484,7 @@ class _AccountTile extends StatelessWidget {
                             const SizedBox(width: 6),
                           ],
                           if (account.cardLast4 != null) ...[
-                            Icon(Icons.credit_card, size: 11, color: color),
+                            Icon(AppIcons.credit_card, size: 11, color: color),
                             const SizedBox(width: 3),
                             Text('•••• ${account.cardLast4}',
                                 style: TextStyle(fontSize: 10, color: color, fontFeatures: const [FontFeature.tabularFigures()])),
@@ -1495,7 +1513,7 @@ class _AccountTile extends StatelessWidget {
             const SizedBox(width: 8),
             if (onEdit != null)
               IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 20),
+                icon: const Icon(AppIcons.edit, size: 20),
                 tooltip: 'Изменить название счёта (Creator)',
                 onPressed: onEdit,
                 style: IconButton.styleFrom(
@@ -1504,7 +1522,7 @@ class _AccountTile extends StatelessWidget {
                 ),
               ),
             IconButton(
-              icon: const Icon(Icons.tune_rounded, size: 20),
+              icon: const Icon(AppIcons.tune, size: 20),
               tooltip: 'Корректировка баланса',
               onPressed: onAdjust,
               style: IconButton.styleFrom(
@@ -1556,7 +1574,7 @@ class _AccessMatrixTabState extends State<_AccessMatrixTab> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.grid_view_rounded, size: 48,
+            Icon(AppIcons.grid_view, size: 48,
               color: isDark ? AppColors.darkTextTertiary : AppColors.lightTextTertiary),
             const SizedBox(height: 12),
             Text(
@@ -1577,7 +1595,7 @@ class _AccessMatrixTabState extends State<_AccessMatrixTab> {
         children: [
           Row(
             children: [
-              const Icon(Icons.grid_view_rounded, size: 20),
+              const Icon(AppIcons.grid_view, size: 20),
               const SizedBox(width: 8),
               Text('Матрица доступов', style: context.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
               const SizedBox(width: 12),
@@ -1752,8 +1770,8 @@ class _AccessToggle extends StatelessWidget {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : hasAccess
-                ? const Icon(Icons.check_rounded, color: AppColors.primary, size: 20)
-                : Icon(Icons.close_rounded, color: Colors.grey.withValues(alpha: 0.4), size: 16),
+                ? const Icon(AppIcons.check, color: AppColors.primary, size: 20)
+                : Icon(AppIcons.close, color: Colors.grey.withValues(alpha: 0.4), size: 16),
       ),
     );
   }
@@ -1780,6 +1798,412 @@ class _QuickActionButton extends StatelessWidget {
         foregroundColor: color,
         side: BorderSide(color: color.withValues(alpha: 0.4)),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+    );
+  }
+}
+
+/// Диалог «Аудит и пересчёт балансов» (creator-only).
+///
+/// Дёргает RPC `admin_audit_balances` → показывает таблицу с разницей между
+/// кэшем (account_balances) и фактом из ledger_entries. Кнопка
+/// «Пересчитать всё» вызывает `admin_recompute_balances(NULL)`. Для отдельного
+/// счёта есть тап-кнопка «Пересчитать» в строке.
+///
+/// Это решение проблемы «доступно: −10 000 000» — кэш бывает разъезжается
+/// с журналом после legacy-миграций, и здесь Creator вручную выравнивает.
+class _BalanceAuditDialog extends StatefulWidget {
+  const _BalanceAuditDialog();
+
+  @override
+  State<_BalanceAuditDialog> createState() => _BalanceAuditDialogState();
+}
+
+class _BalanceAuditDialogState extends State<_BalanceAuditDialog> {
+  final _ledger = sl<LedgerRemoteDataSource>();
+  List<BalanceAuditRow> _rows = const [];
+  bool _loading = true;
+  bool _running = false;
+  String? _error;
+  bool _showOnlyDiff = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _runAudit();
+  }
+
+  Future<void> _runAudit() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final rows = await _ledger.auditBalances();
+      if (!mounted) return;
+      setState(() {
+        _rows = rows;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _recomputeAll() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Пересчитать все балансы?'),
+        content: const Text(
+          'Все account_balances будут переписаны как SUM(credit − debit) из ledger_entries. '
+          'Это безопасно — журнал является источником истины. Счета без записей в журнале пропускаются.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(AppIcons.refresh),
+            label: const Text('Пересчитать'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _running = true);
+    try {
+      final updated = await _ledger.recomputeBalances();
+      if (!mounted) return;
+      context.showSuccessSnackBar('Пересчитано счетов: $updated');
+      await _runAudit();
+    } catch (e) {
+      if (!mounted) return;
+      context.showSnackBar(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  Future<void> _recomputeOne(BalanceAuditRow row) async {
+    setState(() => _running = true);
+    try {
+      await _ledger.recomputeBalances(accountId: row.accountId);
+      if (!mounted) return;
+      context.showSuccessSnackBar('Счёт «${row.accountName}» пересчитан');
+      await _runAudit();
+    } catch (e) {
+      if (!mounted) return;
+      context.showSnackBar(e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final visible = _showOnlyDiff
+        ? _rows.where((r) => r.diff.abs() > 0.005).toList()
+        : _rows;
+    final diffCount = _rows.where((r) => r.diff.abs() > 0.005).length;
+    return Dialog(
+      insetPadding: const EdgeInsets.all(AppSpacing.lg),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 960, maxHeight: 720),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(AppIcons.account_balance,
+                      size: 22, color: scheme.primary),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text(
+                      'Аудит балансов',
+                      style: context.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(AppIcons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                'Сравниваем кэш (account_balances) с журналом (ledger_entries). '
+                'Расхождения → значит на счёте баг кэша; пересчёт это чинит.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Wrap(
+                spacing: AppSpacing.sm,
+                runSpacing: AppSpacing.sm,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _AuditChip(
+                    icon: AppIcons.fact_check,
+                    label: 'Всего счетов: ${_rows.length}',
+                  ),
+                  _AuditChip(
+                    icon: AppIcons.warning_amber,
+                    label: 'С расхождением: $diffCount',
+                    accent: diffCount > 0 ? AppColors.warning : null,
+                  ),
+                  FilterChip(
+                    selected: _showOnlyDiff,
+                    onSelected: (v) =>
+                        setState(() => _showOnlyDiff = v),
+                    label: const Text('Только с расхождением'),
+                  ),
+                  const Spacer(),
+                  OutlinedButton.icon(
+                    onPressed: _loading || _running ? null : _runAudit,
+                    icon: const Icon(AppIcons.refresh, size: 16),
+                    label: const Text('Обновить'),
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  FilledButton.icon(
+                    onPressed: _loading || _running || diffCount == 0
+                        ? null
+                        : _recomputeAll,
+                    icon: _running
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(AppIcons.refresh, size: 16),
+                    label: const Text('Пересчитать всё'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Expanded(
+                child: _loading
+                    ? const Center(child: CircularProgressIndicator())
+                    : _error != null
+                        ? Center(
+                            child: Text(
+                              _error!,
+                              style: TextStyle(color: scheme.error),
+                            ),
+                          )
+                        : visible.isEmpty
+                            ? Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(AppIcons.check_circle,
+                                        size: 36,
+                                        color: scheme.primary
+                                            .withValues(alpha: 0.7)),
+                                    const SizedBox(height: AppSpacing.sm),
+                                    Text(
+                                      _showOnlyDiff
+                                          ? 'Все балансы сходятся с журналом.'
+                                          : 'Нет данных.',
+                                      style: TextStyle(
+                                          color: scheme.onSurfaceVariant),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : ListView.separated(
+                                itemCount: visible.length,
+                                separatorBuilder: (_, _) => Divider(
+                                  height: 1,
+                                  color: scheme.outline.withValues(alpha: 0.12),
+                                ),
+                                itemBuilder: (_, i) => _AuditRowTile(
+                                  row: visible[i],
+                                  disabled: _running,
+                                  onRecompute: () =>
+                                      _recomputeOne(visible[i]),
+                                ),
+                              ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AuditChip extends StatelessWidget {
+  const _AuditChip({required this.icon, required this.label, this.accent});
+  final IconData icon;
+  final String label;
+  final Color? accent;
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = accent ?? scheme.onSurfaceVariant;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(100),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AuditRowTile extends StatelessWidget {
+  const _AuditRowTile({
+    required this.row,
+    required this.disabled,
+    required this.onRecompute,
+  });
+  final BalanceAuditRow row;
+  final bool disabled;
+  final VoidCallback onRecompute;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final hasDiff = row.diff.abs() > 0.005;
+    final diffColor = hasDiff
+        ? (row.diff > 0 ? AppColors.warning : scheme.error)
+        : scheme.onSurfaceVariant;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 3,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  row.accountName,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${row.currency} • ${row.ledgerRows} записей',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _NumberCell(
+              label: 'Кэш', value: row.cached, currency: row.currency),
+          _NumberCell(
+              label: 'Журнал',
+              value: row.computed,
+              currency: row.currency),
+          _NumberCell(
+              label: 'Δ',
+              value: row.diff,
+              currency: row.currency,
+              accent: diffColor,
+              bold: hasDiff),
+          const SizedBox(width: AppSpacing.sm),
+          if (hasDiff)
+            TextButton.icon(
+              onPressed: disabled ? null : onRecompute,
+              icon: const Icon(AppIcons.refresh, size: 14),
+              label: const Text('Пересчитать'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Icon(AppIcons.check_circle,
+                  size: 16, color: scheme.primary.withValues(alpha: 0.6)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NumberCell extends StatelessWidget {
+  const _NumberCell({
+    required this.label,
+    required this.value,
+    required this.currency,
+    this.accent,
+    this.bold = false,
+  });
+  final String label;
+  final double value;
+  final String currency;
+  final Color? accent;
+  final bool bold;
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 130,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.4,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value.formatCurrencyNoDecimals(),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+              color: accent ?? scheme.onSurface,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2056,7 +2480,7 @@ class _AssignAccountantsDialogState extends State<_AssignAccountantsDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.manage_accounts_rounded, color: AppColors.primary),
+          Icon(AppIcons.manage_accounts, color: AppColors.primary),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -2083,7 +2507,7 @@ class _AssignAccountantsDialogState extends State<_AssignAccountantsDialog> {
             : ListView.separated(
                     shrinkWrap: true,
                     itemCount: accountants.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, i) {
                       final user = accountants[i];
                       final hasAccess = _localAccess[user.id] ?? user.assignedBranchIds.contains(widget.branch.id);
@@ -2144,7 +2568,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
     return AlertDialog(
       title: const Row(
         children: [
-          Icon(Icons.person_add_rounded, color: AppColors.secondary),
+          Icon(AppIcons.person_add, color: AppColors.secondary),
           SizedBox(width: 10),
           Text('Новый сотрудник'),
         ],
@@ -2164,7 +2588,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Полное имя *',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.person_outline),
+                    prefixIcon: Icon(AppIcons.person_outline),
                   ),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите имя' : null,
                 ),
@@ -2174,7 +2598,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Email *',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.email_outlined),
+                    prefixIcon: Icon(AppIcons.email),
                   ),
                   keyboardType: TextInputType.emailAddress,
                   validator: (v) {
@@ -2190,9 +2614,9 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                   decoration: InputDecoration(
                     labelText: 'Пароль *',
                     border: const OutlineInputBorder(),
-                    prefixIcon: const Icon(Icons.lock_outline_rounded),
+                    prefixIcon: const Icon(AppIcons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                      icon: Icon(_obscure ? AppIcons.visibility : AppIcons.visibility_off),
                       onPressed: () => setState(() => _obscure = !_obscure),
                     ),
                   ),
@@ -2209,7 +2633,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Роль *',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.admin_panel_settings_outlined),
+                    prefixIcon: Icon(AppIcons.admin_panel_settings),
                   ),
                   items: _roleItems(_currentUserRole(context)),
                   onChanged: (v) => setState(() => _role = v ?? 'accountant'),
@@ -2271,7 +2695,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                     ),
                     child: Row(
                       children: [
-                        Icon(Icons.info_outline,
+                        Icon(AppIcons.info_outline,
                             size: 18,
                             color: _role == 'director'
                                 ? Colors.orange
@@ -2305,7 +2729,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
           onPressed: _loading ? null : _submit,
           icon: _loading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.check_rounded),
+              : const Icon(AppIcons.check),
           label: const Text('Создать'),
         ),
       ],
@@ -2415,7 +2839,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          const Icon(Icons.manage_accounts_rounded),
+          const Icon(AppIcons.manage_accounts),
           const SizedBox(width: 10),
           Expanded(child: Text('Редактировать: ${widget.user.displayName}', overflow: TextOverflow.ellipsis)),
         ],
@@ -2432,7 +2856,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Полное имя',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person_outline),
+                  prefixIcon: Icon(AppIcons.person_outline),
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
@@ -2444,7 +2868,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Email',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email_outlined),
+                  prefixIcon: Icon(AppIcons.email),
                   helperText: 'Меняется через защищённую серверную функцию',
                 ),
                 validator: (v) {
@@ -2461,7 +2885,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Роль',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.admin_panel_settings_outlined),
+                  prefixIcon: Icon(AppIcons.admin_panel_settings),
                 ),
                 items: _roleItems(_currentUserRole(context)),
                 onChanged: _currentUserRole(context) == SystemRole.creator
@@ -2529,7 +2953,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
           onPressed: _loading ? null : _submit,
           icon: _loading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.save_rounded),
+              : const Icon(AppIcons.save),
           label: const Text('Сохранить'),
         ),
       ],
@@ -2746,7 +3170,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          const Icon(Icons.edit_outlined, color: AppColors.primary),
+          const Icon(AppIcons.edit, color: AppColors.primary),
           const SizedBox(width: 10),
           const Expanded(child: Text('Изменить филиал')),
           if (isArchived)
@@ -2775,7 +3199,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                     labelText: 'Название филиала *',
                     border: OutlineInputBorder(),
                     hintText: 'Ташкент',
-                    prefixIcon: Icon(Icons.business_outlined),
+                    prefixIcon: Icon(AppIcons.business),
                   ),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
                 ),
@@ -2786,18 +3210,18 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                     labelText: 'Код филиала *',
                     helperText: 'Смена кода требует подтверждения и пишется в аудит',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.code_rounded),
+                    prefixIcon: Icon(AppIcons.code),
                   ),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите код' : null,
                 ),
                 const SizedBox(height: AppSpacing.md),
                 DropdownButtonFormField<String>(
                   key: ValueKey('edit-branch-curr-$_currency'),
-                  value: _currency,
+                  initialValue: _currency,
                   decoration: const InputDecoration(
                     labelText: 'Базовая валюта *',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.currency_exchange_rounded),
+                    prefixIcon: Icon(AppIcons.currency_exchange),
                   ),
                   items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                   onChanged: (v) => setState(() => _currency = v ?? 'USD'),
@@ -2806,7 +3230,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                 const Divider(),
                 const SizedBox(height: AppSpacing.sm),
                 Row(children: const [
-                  Icon(Icons.contacts_outlined, size: 18),
+                  Icon(AppIcons.contacts, size: 18),
                   SizedBox(width: 6),
                   Text('Контакты', style: TextStyle(fontWeight: FontWeight.w600)),
                 ]),
@@ -2816,7 +3240,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Адрес',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.place_outlined),
+                    prefixIcon: Icon(AppIcons.place),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -2826,7 +3250,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Телефон',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.phone_outlined),
+                    prefixIcon: Icon(AppIcons.phone),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -2836,13 +3260,13 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Заметки',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.note_outlined),
+                    prefixIcon: Icon(AppIcons.note),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
                 OutlinedButton.icon(
                   onPressed: _loading ? null : _toggleArchive,
-                  icon: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                  icon: Icon(isArchived ? AppIcons.unarchive : AppIcons.archive,
                       color: isArchived ? AppColors.success : AppColors.warning),
                   label: Text(isArchived ? 'Восстановить филиал' : 'Архивировать филиал',
                       style: TextStyle(color: isArchived ? AppColors.success : AppColors.warning)),
@@ -2862,7 +3286,7 @@ class _EditBranchDialogState extends State<_EditBranchDialog> {
           onPressed: _loading ? null : _submit,
           icon: _loading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.check_rounded),
+              : const Icon(AppIcons.check),
           label: const Text('Сохранить'),
         ),
       ],
@@ -2907,7 +3331,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
     return AlertDialog(
       title: const Row(
         children: [
-          Icon(Icons.add_business_rounded, color: AppColors.primary),
+          Icon(AppIcons.add_business, color: AppColors.primary),
           SizedBox(width: 10),
           Text('Новый филиал'),
         ],
@@ -2927,7 +3351,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                     labelText: 'Название филиала *',
                     border: OutlineInputBorder(),
                     hintText: 'Москва',
-                    prefixIcon: Icon(Icons.business_outlined),
+                    prefixIcon: Icon(AppIcons.business),
                   ),
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
                 ),
@@ -2938,7 +3362,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                     labelText: 'Код филиала *',
                     border: OutlineInputBorder(),
                     hintText: 'MSK',
-                    prefixIcon: Icon(Icons.code_rounded),
+                    prefixIcon: Icon(AppIcons.code),
                   ),
                   textCapitalization: TextCapitalization.characters,
                   validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите код' : null,
@@ -2950,7 +3374,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Базовая валюта *',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.currency_exchange_rounded),
+                    prefixIcon: Icon(AppIcons.currency_exchange),
                   ),
                   items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                   onChanged: (v) => setState(() => _currency = v ?? 'USD'),
@@ -2959,7 +3383,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                 const Divider(),
                 const SizedBox(height: AppSpacing.sm),
                 Row(children: const [
-                  Icon(Icons.contacts_outlined, size: 18),
+                  Icon(AppIcons.contacts, size: 18),
                   SizedBox(width: 6),
                   Text('Контакты (опционально)', style: TextStyle(fontWeight: FontWeight.w600)),
                 ]),
@@ -2969,7 +3393,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Адрес',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.place_outlined),
+                    prefixIcon: Icon(AppIcons.place),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -2979,7 +3403,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Телефон',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.phone_outlined),
+                    prefixIcon: Icon(AppIcons.phone),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
@@ -2989,7 +3413,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Заметки',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.note_outlined),
+                    prefixIcon: Icon(AppIcons.note),
                   ),
                 ),
               ],
@@ -3003,7 +3427,7 @@ class _CreateBranchDialogState extends State<_CreateBranchDialog> {
           onPressed: _loading ? null : _submit,
           icon: _loading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.check_rounded),
+              : const Icon(AppIcons.check),
           label: const Text('Создать'),
         ),
       ],
@@ -3122,7 +3546,7 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
                   const Divider(),
                   const SizedBox(height: AppSpacing.sm),
                   Row(children: const [
-                    Icon(Icons.credit_card_outlined, size: 18),
+                    Icon(AppIcons.credit_card, size: 18),
                     SizedBox(width: 6),
                     Text('Данные карты', style: TextStyle(fontWeight: FontWeight.w600)),
                   ]),
@@ -3313,7 +3737,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          const Icon(Icons.edit_rounded, color: AppColors.secondary),
+          const Icon(AppIcons.edit, color: AppColors.secondary),
           const SizedBox(width: 10),
           const Expanded(child: Text('Изменить счёт')),
           if (isArchived)
@@ -3339,14 +3763,14 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Название счёта *',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                  prefixIcon: Icon(AppIcons.account_balance_wallet),
                 ),
                 validator: (v) => (v == null || v.trim().isEmpty) ? 'Введите название' : null,
               ),
               const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<AccountType>(
                 key: ValueKey('edit-acc-type-$_type'),
-                value: _type,
+                initialValue: _type,
                 decoration: const InputDecoration(labelText: 'Тип счёта', border: OutlineInputBorder()),
                 items: AccountType.values.map((t) => DropdownMenuItem(value: t, child: Text(t.displayName))).toList(),
                 onChanged: (v) => setState(() => _type = v ?? _type),
@@ -3354,7 +3778,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
               const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<String>(
                 key: ValueKey('edit-acc-curr-$_currency'),
-                value: _currency,
+                initialValue: _currency,
                 decoration: const InputDecoration(labelText: 'Валюта', border: OutlineInputBorder()),
                 items: _currencies.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                 onChanged: (v) => setState(() => _currency = v ?? _currency),
@@ -3364,7 +3788,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
                 const Divider(),
                 const SizedBox(height: AppSpacing.sm),
                 Row(children: const [
-                  Icon(Icons.credit_card_outlined, size: 18),
+                  Icon(AppIcons.credit_card, size: 18),
                   SizedBox(width: 6),
                   Text('Данные карты', style: TextStyle(fontWeight: FontWeight.w600)),
                 ]),
@@ -3379,7 +3803,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
                     helperText: a.cardLast4 != null ? 'Текущая: •••• ${a.cardLast4}' : null,
                     border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
-                      icon: Icon(_revealCard ? Icons.visibility_off : Icons.visibility, size: 20),
+                      icon: Icon(_revealCard ? AppIcons.visibility_off : AppIcons.visibility, size: 20),
                       onPressed: _clearCard ? null : () => setState(() => _revealCard = !_revealCard),
                       tooltip: _revealCard ? 'Скрыть' : 'Показать',
                     ),
@@ -3438,7 +3862,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
               // Archive toggle
               OutlinedButton.icon(
                 onPressed: _loading ? null : _toggleArchive,
-                icon: Icon(isArchived ? Icons.unarchive_outlined : Icons.archive_outlined,
+                icon: Icon(isArchived ? AppIcons.unarchive : AppIcons.archive,
                     color: isArchived ? AppColors.success : AppColors.warning),
                 label: Text(isArchived ? 'Восстановить из архива' : 'Архивировать счёт',
                     style: TextStyle(color: isArchived ? AppColors.success : AppColors.warning)),
@@ -3457,7 +3881,7 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
           onPressed: _loading ? null : _submit,
           icon: _loading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Icon(Icons.save_rounded),
+              : const Icon(AppIcons.save),
           label: const Text('Сохранить'),
         ),
       ],
@@ -3576,7 +4000,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          const Icon(Icons.tune_rounded, color: AppColors.secondary),
+          const Icon(AppIcons.tune, color: AppColors.secondary),
           const SizedBox(width: 10),
           Expanded(child: Text('Корректировка: ${widget.account.name}', overflow: TextOverflow.ellipsis)),
         ],
@@ -3600,7 +4024,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.account_balance_wallet_rounded, size: 20, color: balColor),
+                    Icon(AppIcons.account_balance_wallet, size: 20, color: balColor),
                     const SizedBox(width: 10),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3626,7 +4050,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
                   Expanded(
                     child: _OperationCard(
                       label: 'Пополнение',
-                      icon: Icons.add_circle_outline_rounded,
+                      icon: AppIcons.add_circle_outline,
                       color: AppColors.income,
                       selected: _operation == 'credit',
                       onTap: () => setState(() => _operation = 'credit'),
@@ -3636,7 +4060,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
                   Expanded(
                     child: _OperationCard(
                       label: 'Списание',
-                      icon: Icons.remove_circle_outline_rounded,
+                      icon: AppIcons.remove_circle_outline,
                       color: AppColors.expense,
                       selected: _operation == 'debit',
                       onTap: () => setState(() => _operation = 'debit'),
@@ -3653,7 +4077,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Причина',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.label_outline_rounded),
+                  prefixIcon: Icon(AppIcons.label_outline),
                 ),
                 items: const [
                   DropdownMenuItem(value: 'adjustment', child: Text('Корректировка')),
@@ -3672,7 +4096,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
                   labelText: 'Сумма (${widget.account.currency}) *',
                   border: const OutlineInputBorder(),
                   prefixIcon: Icon(
-                    _operation == 'credit' ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+                    _operation == 'credit' ? AppIcons.arrow_upward : AppIcons.arrow_downward,
                     color: _operation == 'credit' ? AppColors.income : AppColors.expense,
                   ),
                 ),
@@ -3691,7 +4115,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Описание (необязательно)',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.notes_rounded),
+                  prefixIcon: Icon(AppIcons.notes),
                 ),
                 maxLines: 2,
               ),
@@ -3705,7 +4129,7 @@ class _AdjustBalanceDialogState extends State<_AdjustBalanceDialog> {
           onPressed: _loading ? null : _submit,
           icon: _loading
               ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : Icon(_operation == 'credit' ? Icons.add_rounded : Icons.remove_rounded),
+              : Icon(_operation == 'credit' ? AppIcons.add : AppIcons.remove),
           label: Text(_operation == 'credit' ? 'Пополнить' : 'Списать'),
           style: FilledButton.styleFrom(
             backgroundColor: _operation == 'credit' ? AppColors.income : AppColors.expense,
@@ -3935,7 +4359,7 @@ class _AuditTabState extends State<_AuditTab> {
               ),
               FilledButton.tonalIcon(
                 onPressed: _loading ? null : _reload,
-                icon: const Icon(Icons.refresh_rounded, size: 18),
+                icon: const Icon(AppIcons.refresh, size: 18),
                 label: const Text('Обновить'),
               ),
               Container(
@@ -3961,7 +4385,7 @@ class _AuditTabState extends State<_AuditTab> {
                     children: [
                       // ─── Branch-code history card ───
                       if (_codeHistory.isNotEmpty) ...[
-                        _sectionHeader(context, Icons.qr_code_rounded, 'История смен кода филиалов', _codeHistory.length),
+                        _sectionHeader(context, AppIcons.qr_code, 'История смен кода филиалов', _codeHistory.length),
                         const SizedBox(height: AppSpacing.sm),
                         Card(
                           elevation: 0,
@@ -3974,12 +4398,12 @@ class _AuditTabState extends State<_AuditTab> {
                               final at = DateTime.tryParse(e['changed_at'] ?? '') ?? DateTime.now();
                               return ListTile(
                                 dense: true,
-                                leading: const Icon(Icons.swap_horiz_rounded, color: AppColors.warning),
+                                leading: const Icon(AppIcons.swap_horiz, color: AppColors.warning),
                                 title: Row(
                                   children: [
                                     Text(e['old_code'] ?? '—',
                                         style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600, decoration: TextDecoration.lineThrough)),
-                                    const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: Icon(Icons.arrow_forward, size: 14)),
+                                    const Padding(padding: EdgeInsets.symmetric(horizontal: 6), child: Icon(AppIcons.arrow_forward, size: 14)),
                                     Text(e['new_code'] ?? '—',
                                         style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w700, color: AppColors.primary)),
                                     const SizedBox(width: 10),
@@ -4000,7 +4424,7 @@ class _AuditTabState extends State<_AuditTab> {
                         const SizedBox(height: AppSpacing.xl),
                       ],
                       // ─── Audit log feed ───
-                      _sectionHeader(context, Icons.history_rounded, 'Журнал аудита', _logs.length),
+                      _sectionHeader(context, AppIcons.history, 'Журнал аудита', _logs.length),
                       const SizedBox(height: AppSpacing.sm),
                       if (_logs.isEmpty)
                         Padding(
@@ -4008,7 +4432,7 @@ class _AuditTabState extends State<_AuditTab> {
                           child: Center(
                             child: Column(
                               children: [
-                                Icon(Icons.history_toggle_off_rounded,
+                                Icon(AppIcons.history_toggle_off,
                                     size: 48, color: Colors.grey.shade400),
                                 const SizedBox(height: AppSpacing.sm),
                                 const Text('Записей нет', style: TextStyle(color: Colors.grey)),
@@ -4072,22 +4496,22 @@ class _AuditLogTile extends StatelessWidget {
   final String branchName;
 
   static const _actionIcons = {
-    'branch.created': (Icons.add_business_rounded, AppColors.success),
-    'branch.updated': (Icons.edit_outlined, AppColors.primary),
-    'branch.archived': (Icons.archive_outlined, AppColors.warning),
-    'branch.unarchived': (Icons.unarchive_outlined, AppColors.success),
-    'account.created': (Icons.account_balance_wallet_outlined, AppColors.success),
-    'account.updated': (Icons.edit_outlined, AppColors.primary),
-    'account.archived': (Icons.archive_outlined, AppColors.warning),
-    'account.unarchived': (Icons.unarchive_outlined, AppColors.success),
-    'accounts.reordered': (Icons.swap_vert_rounded, AppColors.primary),
-    'user.branches_set': (Icons.alt_route_rounded, AppColors.primary),
-    'user.permissions_updated': (Icons.admin_panel_settings_outlined, AppColors.primary),
-    'user.role_changed': (Icons.swap_horiz_rounded, AppColors.warning),
-    'user.activated': (Icons.verified_user_outlined, AppColors.success),
-    'user.deactivated': (Icons.block_rounded, AppColors.error),
-    'user.profile_updated': (Icons.person_outline, AppColors.primary),
-    'user.created': (Icons.person_add_rounded, AppColors.success),
+    'branch.created': (AppIcons.add_business, AppColors.success),
+    'branch.updated': (AppIcons.edit, AppColors.primary),
+    'branch.archived': (AppIcons.archive, AppColors.warning),
+    'branch.unarchived': (AppIcons.unarchive, AppColors.success),
+    'account.created': (AppIcons.account_balance_wallet, AppColors.success),
+    'account.updated': (AppIcons.edit, AppColors.primary),
+    'account.archived': (AppIcons.archive, AppColors.warning),
+    'account.unarchived': (AppIcons.unarchive, AppColors.success),
+    'accounts.reordered': (AppIcons.swap_vert, AppColors.primary),
+    'user.branches_set': (AppIcons.alt_route, AppColors.primary),
+    'user.permissions_updated': (AppIcons.admin_panel_settings, AppColors.primary),
+    'user.role_changed': (AppIcons.swap_horiz, AppColors.warning),
+    'user.activated': (AppIcons.verified_user, AppColors.success),
+    'user.deactivated': (AppIcons.block, AppColors.error),
+    'user.profile_updated': (AppIcons.person_outline, AppColors.primary),
+    'user.created': (AppIcons.person_add, AppColors.success),
   };
 
   String _formatAt(DateTime dt) {
@@ -4101,7 +4525,7 @@ class _AuditLogTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = context.isDark;
-    final style = _actionIcons[log.action] ?? (Icons.fiber_manual_record, Colors.grey);
+    final style = _actionIcons[log.action] ?? (AppIcons.fiber_manual_record, Colors.grey);
     final icon = style.$1;
     final color = style.$2;
     final entityLabel = switch (log.entityType) {
@@ -4183,7 +4607,7 @@ const _kPermissionPresets = <_PermissionPreset>[
   _PermissionPreset(
     'Кассир',
     'Переводы, покупки, клиенты, просмотр леджера',
-    Icons.point_of_sale_outlined,
+    AppIcons.point_of_sale,
     AppColors.secondary,
     AccountantPermissions(
       canTransfers: true,
@@ -4202,7 +4626,7 @@ const _kPermissionPresets = <_PermissionPreset>[
   _PermissionPreset(
     'Старший бухгалтер',
     'Полное управление + аналитика + отчёты',
-    Icons.calculate_outlined,
+    AppIcons.calculate,
     AppColors.primary,
     AccountantPermissions(
       canTransfers: true,
@@ -4221,7 +4645,7 @@ const _kPermissionPresets = <_PermissionPreset>[
   _PermissionPreset(
     'Аналитик',
     'Только просмотр: леджер, аналитика, отчёты',
-    Icons.query_stats_outlined,
+    AppIcons.query_stats,
     AppColors.warning,
     AccountantPermissions(
       canTransfers: false,
@@ -4240,7 +4664,7 @@ const _kPermissionPresets = <_PermissionPreset>[
   _PermissionPreset(
     'Только просмотр',
     'Минимум — только филиалы и курсы',
-    Icons.visibility_outlined,
+    AppIcons.visibility,
     Colors.grey,
     AccountantPermissions(
       canTransfers: false,
@@ -4280,7 +4704,7 @@ class _PermissionPresetPicker extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.tune_rounded, size: 16, color: AppColors.primary),
+              const Icon(AppIcons.tune, size: 16, color: AppColors.primary),
               const SizedBox(width: 6),
               const Text('Пресеты прав',
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+import 'package:ethnocount/core/constants/app_branding.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/di/injection.dart';
@@ -9,8 +10,11 @@ import 'package:ethnocount/data/datasources/remote/system_settings_remote_ds.dar
 import 'package:ethnocount/data/datasources/remote/user_session_remote_ds.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/settings/bloc/theme_cubit.dart';
+import 'package:ethnocount/presentation/settings/bloc/user_prefs_cubit.dart';
 import 'package:ethnocount/presentation/common/animations/fade_slide.dart';
+import 'package:ethnocount/presentation/aml/widgets/aml_control_sheet.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class SettingsPage extends StatelessWidget {
   const SettingsPage({super.key});
 
@@ -104,6 +108,38 @@ class SettingsPage extends StatelessWidget {
               ),
               const SizedBox(height: AppSpacing.md),
 
+              // Курсы валют — per-device toggle
+              FadeSlideTransition(
+                delay: const Duration(milliseconds: 60),
+                child: _SettingsCard(
+                  title: 'Курсы валют',
+                  subtitle: 'Применять при создании перевода',
+                  children: [
+                    BlocBuilder<UserPrefsCubit, UserPrefs>(
+                      builder: (context, prefs) {
+                        return SwitchListTile(
+                          value: prefs.useExchangeRates,
+                          onChanged: (v) => context
+                              .read<UserPrefsCubit>()
+                              .setUseExchangeRates(v),
+                          title: const Text('Использовать курсы валют'),
+                          subtitle: Text(
+                            prefs.useExchangeRates
+                                ? 'Можно отправлять перевод в одной валюте и получать в другой по курсу.'
+                                : 'Все переводы остаются в валюте отправителя — без конвертации.',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          dense: true,
+                          contentPadding:
+                              const EdgeInsets.symmetric(horizontal: 16),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+
               // Session duration (Creator only)
               BlocBuilder<AuthBloc, AuthState>(
                 buildWhen: (a, b) => a.user?.role != b.user?.role,
@@ -150,6 +186,43 @@ class SettingsPage extends StatelessWidget {
                               ),
                             );
                           },
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: AppSpacing.md),
+
+              // AML / KYC (Creator + Director)
+              BlocBuilder<AuthBloc, AuthState>(
+                buildWhen: (a, b) => a.user?.role != b.user?.role,
+                builder: (context, state) {
+                  final role = state.user?.role;
+                  final canSee =
+                      (role?.isCreator ?? false) || (role?.isDirector ?? false);
+                  if (!canSee) return const SizedBox.shrink();
+
+                  return FadeSlideTransition(
+                    delay: const Duration(milliseconds: 85),
+                    child: _SettingsCard(
+                      title: 'Контроль AML / KYC',
+                      subtitle:
+                          'Пороги идентификации и лимиты, журнал флагов',
+                      children: [
+                        ListTile(
+                          leading: const Icon(
+                            AppIcons.shield,
+                            color: AppColors.primary,
+                          ),
+                          title: const Text('Открыть панель AML / KYC'),
+                          subtitle: const Text(
+                            'Настройка порогов по валютам и проверка флагов',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                          trailing: const Icon(AppIcons.chevron_right, size: 18),
+                          dense: true,
+                          onTap: () => showAmlControlSheet(context),
                         ),
                       ],
                     ),
@@ -239,8 +312,8 @@ class SettingsPage extends StatelessWidget {
                   title: 'О системе',
                   children: [
                     ListTile(
-                      title: const Text('EthnoCount'),
-                      subtitle: const Text('Казначейская система Ethno Logistics\nВерсия 1.0.0'),
+                      title: const Text(kAppDisplayName),
+                      subtitle: const Text('Казначейская система · Версия 1.0.0'),
                       isThreeLine: true,
                       dense: true,
                     ),
@@ -280,7 +353,7 @@ class SettingsPage extends StatelessWidget {
                           context.read<AuthBloc>().add(const AuthSignOutAllDevicesRequested());
                         }
                       },
-                      icon: const Icon(Icons.devices_other_rounded, size: 18),
+                      icon: const Icon(AppIcons.devices_other, size: 18),
                       label: const Text('Выйти из всех устройств'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.error,
@@ -293,7 +366,7 @@ class SettingsPage extends StatelessWidget {
                       onPressed: () {
                         context.read<AuthBloc>().add(const AuthSignOutRequested());
                       },
-                      icon: const Icon(Icons.logout_rounded),
+                      icon: const Icon(AppIcons.logout),
                       label: const Text('Выйти из системы'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.error,
@@ -398,10 +471,10 @@ class _DeviceTileState extends State<_DeviceTile> {
     return ListTile(
       leading: Icon(
         session.deviceType == 'Desktop'
-            ? Icons.desktop_windows_outlined
+            ? AppIcons.desktop_windows
             : session.deviceType == 'Mobile'
-                ? Icons.smartphone_outlined
-                : Icons.language,
+                ? AppIcons.smartphone
+                : AppIcons.language,
         color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
       ),
       title: Text(
@@ -433,7 +506,7 @@ class _DeviceTileState extends State<_DeviceTile> {
                 child: CircularProgressIndicator(strokeWidth: 2),
               )
             : Icon(
-                Icons.logout_rounded,
+                AppIcons.logout,
                 size: 18,
                 color: AppColors.error.withValues(alpha: 0.8),
               ),

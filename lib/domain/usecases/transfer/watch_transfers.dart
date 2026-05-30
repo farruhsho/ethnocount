@@ -13,6 +13,7 @@ class WatchTransfersUseCase {
     TransferStatus? statusFilter,
     DateTime? startDate,
     DateTime? endDate,
+    String? query,
     int limit = 50,
     Object? startAfter,
   }) {
@@ -21,6 +22,7 @@ class WatchTransfersUseCase {
       statusFilter: statusFilter,
       startDate: startDate,
       endDate: endDate,
+      query: query,
       limit: limit,
       startAfter: startAfter,
     );

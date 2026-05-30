@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/domain/entities/export_settings.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Диалог настройки экспорта: выбор колонок и лимит строк.
 class ExportDialog extends StatefulWidget {
   const ExportDialog({
@@ -57,7 +58,7 @@ class _ExportDialogState extends State<ExportDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          Icon(Icons.tune_rounded, color: Theme.of(context).colorScheme.primary),
+          Icon(AppIcons.tune, color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: AppSpacing.sm),
           Text(widget.title),
         ],

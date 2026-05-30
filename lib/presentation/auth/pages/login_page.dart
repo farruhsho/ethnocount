@@ -3,12 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:ethnocount/core/constants/app_branding.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/services/credential_storage_service.dart';
 import 'package:ethnocount/domain/repositories/auth_repository.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -206,7 +208,7 @@ class _BrandLogoRow extends StatelessWidget {
           ),
           alignment: Alignment.center,
           child: Text(
-            'E',
+            kAppMonogram,
             style: GoogleFonts.inter(
               fontSize: 19,
               fontWeight: FontWeight.w800,
@@ -222,7 +224,7 @@ class _BrandLogoRow extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'ETHNO LOGISTICS',
+              kAppDisplayName.toUpperCase(),
               style: GoogleFonts.inter(
                 fontSize: 14,
                 fontWeight: FontWeight.w700,
@@ -356,7 +358,7 @@ class _BrandHero extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 460),
             child: Text(
               'Закрытая система учёта переводов, остатков и комиссий '
-              'между филиалами Ethno Logistics. Доступ — только для '
+              'между филиалами компании. Доступ — только для '
               'авторизованных сотрудников.',
               style: TextStyle(
                 fontSize: 13.5,
@@ -389,7 +391,7 @@ class _BrandFooter extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.shield_outlined,
+          const Icon(AppIcons.shield,
               size: 13, color: AppColors.primary),
           const SizedBox(width: 6),
           Expanded(
@@ -402,7 +404,7 @@ class _BrandFooter extends StatelessWidget {
             ),
           ),
           Text(
-            '© 2026 Ethno',
+            '© ${DateTime.now().year}',
             style: GoogleFonts.jetBrainsMono(
               fontSize: 11.5,
               color: AppColors.darkTextTertiary,
@@ -607,7 +609,7 @@ class _MobileLayout extends StatelessWidget {
                       ),
                       alignment: Alignment.center,
                       child: Text(
-                        'E',
+                        kAppMonogram,
                         style: GoogleFonts.inter(
                           fontSize: 19,
                           fontWeight: FontWeight.w800,
@@ -622,7 +624,7 @@ class _MobileLayout extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'ETHNO LOGISTICS',
+                          kAppDisplayName.toUpperCase(),
                           style: GoogleFonts.inter(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
@@ -706,7 +708,7 @@ class _LoginForm extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const _ChipPill(
-              icon: Icons.fingerprint_rounded,
+              icon: AppIcons.fingerprint,
               iconColor: AppColors.primary,
               label: 'Авторизация сотрудника',
               bg: AppColors.darkCard,
@@ -736,9 +738,9 @@ class _LoginForm extends StatelessWidget {
             const SizedBox(height: 28),
             _AuthField(
               label: 'EMAIL',
-              icon: Icons.mail_outline_rounded,
+              icon: AppIcons.mail_outline,
               controller: emailCtrl,
-              hint: 'name@ethno-logistics.uz',
+              hint: 'name@company.example',
               keyboardType: TextInputType.emailAddress,
               textInputAction: TextInputAction.next,
               autofillHints: const [
@@ -752,7 +754,7 @@ class _LoginForm extends StatelessWidget {
             const SizedBox(height: 14),
             _AuthField(
               label: 'ПАРОЛЬ',
-              icon: Icons.lock_outline_rounded,
+              icon: AppIcons.lock_outline,
               controller: passwordCtrl,
               hint: 'Минимум 6 символов',
               obscure: !showPassword,
@@ -762,8 +764,8 @@ class _LoginForm extends StatelessWidget {
               suffix: IconButton(
                 icon: Icon(
                   showPassword
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined,
+                      ? AppIcons.visibility_off
+                      : AppIcons.visibility,
                   size: 18,
                   color: AppColors.darkTextTertiary,
                 ),
@@ -817,7 +819,7 @@ class _LoginForm extends StatelessWidget {
             _PrimaryGradientButton(
               onPressed: isLoading ? null : onLogin,
               isLoading: isLoading,
-              icon: Icons.arrow_forward_rounded,
+              icon: AppIcons.arrow_forward,
               label: 'Войти в систему',
             ),
             if (showSetupCallout) ...[
@@ -873,7 +875,7 @@ class _SetupCallout extends StatelessWidget {
               color: AppColors.warning.withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Icon(Icons.rocket_launch_rounded,
+            child: const Icon(AppIcons.rocket_launch,
                 size: 15, color: AppColors.warning),
           ),
           const SizedBox(width: 11),
@@ -902,7 +904,7 @@ class _SetupCallout extends StatelessWidget {
                 const SizedBox(height: 9),
                 OutlinedButton.icon(
                   onPressed: onSetup,
-                  icon: const Icon(Icons.shield_outlined,
+                  icon: const Icon(AppIcons.shield,
                       size: 14, color: AppColors.warning),
                   label: Text(
                     'Настроить систему',
@@ -1129,7 +1131,6 @@ class _ChipPill extends StatelessWidget {
     required this.bg,
     required this.borderColor,
     required this.textColor,
-    this.pulseDot = false,
   });
 
   final IconData icon;
@@ -1138,13 +1139,11 @@ class _ChipPill extends StatelessWidget {
   final Color bg;
   final Color borderColor;
   final Color textColor;
-  final bool pulseDot;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.symmetric(
-          horizontal: pulseDot ? 12 : 11, vertical: pulseDot ? 5 : 4),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
       decoration: BoxDecoration(
         color: bg,
         border: Border.all(color: borderColor),
@@ -1153,32 +1152,13 @@ class _ChipPill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (pulseDot)
-            Container(
-              width: 6,
-              height: 6,
-              margin: const EdgeInsets.only(right: 7),
-              decoration: BoxDecoration(
-                color: iconColor,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: iconColor.withValues(alpha: 0.7),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
-            )
-          else ...[
-            Icon(icon, size: 12, color: iconColor),
-            const SizedBox(width: 6),
-          ],
+          Icon(icon, size: 12, color: iconColor),
+          const SizedBox(width: 6),
           Text(
             label,
             style: TextStyle(
-              fontSize: pulseDot ? 11 : 11.5,
-              fontWeight: pulseDot ? FontWeight.w700 : FontWeight.w600,
-              letterSpacing: pulseDot ? 0.6 : 0,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
               color: textColor,
             ),
           ),
@@ -1209,7 +1189,7 @@ class _Checkbox extends StatelessWidget {
           borderRadius: BorderRadius.circular(5),
         ),
         child: checked
-            ? const Icon(Icons.check_rounded, size: 12, color: AppColors.darkBg)
+            ? const Icon(AppIcons.check, size: 12, color: AppColors.darkBg)
             : null,
       ),
     );

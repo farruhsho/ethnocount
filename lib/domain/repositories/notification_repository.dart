@@ -18,6 +18,9 @@ abstract class NotificationRepository {
   /// Mark all notifications for the given branches as read.
   Future<Either<Failure, void>> markAllAsRead(List<String> branchIds);
 
+  /// Delete a single notification (swipe-action on the notifications page).
+  Future<Either<Failure, void>> deleteNotification(String notificationId);
+
   /// Get unread notification count for a branch.
   Stream<int> watchUnreadCount(String branchId);
 }

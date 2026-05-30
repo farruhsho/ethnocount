@@ -6,6 +6,7 @@ import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/domain/entities/approval_request.dart';
 import 'package:ethnocount/domain/repositories/approval_repository.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Универсальный диалог запроса согласования у директора.
 ///
 /// Используется в местах, где accountant пытается выполнить деструктивную
@@ -102,7 +103,7 @@ class _RequestApprovalDialogState extends State<RequestApprovalDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          const Icon(Icons.shield_outlined, size: 20),
+          const Icon(AppIcons.shield, size: 20),
           const SizedBox(width: 8),
           const Expanded(child: Text('Требуется согласование')),
         ],
@@ -160,7 +161,7 @@ class _RequestApprovalDialogState extends State<RequestApprovalDialog> {
                   height: 14,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.send_rounded, size: 16),
+              : const Icon(AppIcons.send, size: 16),
           label: const Text('Отправить'),
         ),
       ],

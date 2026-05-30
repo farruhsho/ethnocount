@@ -9,6 +9,7 @@ import 'package:ethnocount/domain/entities/transfer.dart';
 import 'package:ethnocount/domain/repositories/branch_repository.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Shows a dialog to select recipient account(s) when confirming a transfer
 /// that was created without toAccountId.
 void showAcceptTransferAccountDialog(BuildContext context, Transfer t) {
@@ -103,8 +104,9 @@ void showAcceptTransferAccountDialog(BuildContext context, Transfer t) {
                       if (accountsForCur.isEmpty && accounts.isNotEmpty) ...[
                         const SizedBox(height: 8),
                         Text(
-                          'Нет счёта в валюте $expectCur. Нажмите «Исправить» на '
-                          'странице управления или выберите другой счёт ниже.',
+                          'Нет счёта в валюте $expectCur. Выберите счёт в другой '
+                          'валюте — валюта получения обновится автоматически по '
+                          'текущему курсу перевода (миграция 049).',
                           style: TextStyle(
                             fontSize: 11,
                             color: AppColors.warning,
@@ -175,7 +177,7 @@ void showAcceptTransferAccountDialog(BuildContext context, Transfer t) {
                               ),
                               if (rows.length > 1)
                                 IconButton(
-                                  icon: const Icon(Icons.remove_circle_outline,
+                                  icon: const Icon(AppIcons.remove_circle_outline,
                                       size: 20),
                                   constraints: const BoxConstraints(
                                     minWidth: 36,
@@ -191,7 +193,7 @@ void showAcceptTransferAccountDialog(BuildContext context, Transfer t) {
                       TextButton.icon(
                         onPressed: () =>
                             setState(() => rows.add(const MapEntry('', 0))),
-                        icon: const Icon(Icons.add, size: 18),
+                        icon: const Icon(AppIcons.add, size: 18),
                         label: const Text('Добавить счёт'),
                       ),
                       if (!isValid && sum > 0)
@@ -257,13 +259,13 @@ class _AccountDropdownLabel extends StatelessWidget {
   IconData get _typeIcon {
     switch (account.type) {
       case AccountType.cash:
-        return Icons.payments_rounded;
+        return AppIcons.payments;
       case AccountType.card:
-        return Icons.credit_card_rounded;
+        return AppIcons.credit_card;
       case AccountType.reserve:
-        return Icons.lock_outline_rounded;
+        return AppIcons.lock_outline;
       case AccountType.transit:
-        return Icons.local_shipping_outlined;
+        return AppIcons.local_shipping;
     }
   }
 

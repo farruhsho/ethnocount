@@ -34,6 +34,14 @@ class NotificationMarkAllAsRead extends NotificationEvent {
   List<Object?> get props => [branchIds];
 }
 
+/// Удалить одно уведомление (swipe-action на карточке).
+class NotificationDeleteRequested extends NotificationEvent {
+  final String notificationId;
+  const NotificationDeleteRequested(this.notificationId);
+  @override
+  List<Object?> get props => [notificationId];
+}
+
 // ─── State ───
 
 enum NotificationBlocStatus { initial, loading, loaded, error }
@@ -84,6 +92,7 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
     on<NotificationsLoadRequested>(_onLoad);
     on<NotificationMarkAsRead>(_onMarkRead);
     on<NotificationMarkAllAsRead>(_onMarkAllRead);
+    on<NotificationDeleteRequested>(_onDelete);
   }
 
   Future<void> _onLoad(
@@ -133,5 +142,22 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
     Emitter<NotificationState> emit,
   ) async {
     await _repository.markAllAsRead(event.branchIds);
+  }
+
+  Future<void> _onDelete(
+    NotificationDeleteRequested event,
+    Emitter<NotificationState> emit,
+  ) async {
+    // Optimistic: убираем сразу из локального стрима — Realtime прокачает
+    // изменение и переотрисует через секунду. Если delete упал на сервере,
+    // строка вернётся обратно при следующем emit.
+    final next = state.notifications
+        .where((n) => n.id != event.notificationId)
+        .toList(growable: false);
+    emit(state.copyWith(
+      notifications: next,
+      unreadCount: next.where((n) => !n.isRead).length,
+    ));
+    await _repository.deleteNotification(event.notificationId);
   }
 }

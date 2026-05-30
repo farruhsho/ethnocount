@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Convenience extensions on BuildContext.
 extension ContextX on BuildContext {
   // ─── Theme shortcuts ───
@@ -44,7 +45,7 @@ extension ContextX on BuildContext {
       SnackBar(
         content: Row(
           children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const Icon(AppIcons.check_circle, color: Colors.white, size: 20),
             const SizedBox(width: 8),
             Expanded(child: Text(message)),
           ],

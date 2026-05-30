@@ -7,6 +7,7 @@ import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/core/routing/route_names.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class TreasuryQuickActions extends StatelessWidget {
   const TreasuryQuickActions({super.key, this.compact = false});
 
@@ -18,19 +19,19 @@ class TreasuryQuickActions extends StatelessWidget {
         context.read<AuthBloc>().state.user?.canBranchTopUp ?? false;
     final actions = [
       _Action(
-        Icons.add_circle_outline_rounded,
+        AppIcons.add_circle_outline,
         'Новый перевод',
         () => context.goNamed(RouteNames.createTransfer),
         AppColors.primary,
       ),
       _Action(
-        Icons.receipt_long_rounded,
+        AppIcons.receipt_long,
         'Журнал',
         () => context.go('/ledger'),
         AppColors.secondary,
       ),
       _Action(
-        Icons.upload_file_rounded,
+        AppIcons.upload_file,
         'Импорт',
         () => context.go('/bank-import'),
         AppColors.primary,
@@ -38,14 +39,14 @@ class TreasuryQuickActions extends StatelessWidget {
       ),
       if (canBranchTopUp)
         _Action(
-          Icons.add_business_rounded,
+          AppIcons.add_business,
           'Пополнение',
           () => context.go('/transfers/topup'),
           AppColors.secondary,
           subtitle: 'филиала',
         ),
       _Action(
-        Icons.notifications_active_outlined,
+        AppIcons.notifications_active,
         'Уведомления',
         () => context.go('/notifications'),
         AppColors.warning,

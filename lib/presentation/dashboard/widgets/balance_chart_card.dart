@@ -5,6 +5,7 @@ import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 enum BalancePeriod { d7, d30, d90, ytd, all }
 
 extension on BalancePeriod {
@@ -126,7 +127,7 @@ class _BalanceChartCardState extends State<BalanceChartCard> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.show_chart_rounded,
+                        Icon(AppIcons.show_chart,
                             size: 32, color: secondary.withValues(alpha: 0.6)),
                         const SizedBox(height: 8),
                         Text(

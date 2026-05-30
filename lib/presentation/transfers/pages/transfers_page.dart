@@ -1,3 +1,5 @@
+﻿import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -18,7 +20,6 @@ import 'package:ethnocount/domain/entities/transfer_issuance.dart';
 import 'package:ethnocount/domain/repositories/transfer_repository.dart';
 import 'package:ethnocount/domain/services/server_export_service.dart';
 import 'package:ethnocount/domain/services/transfer_invoice_service.dart';
-import 'package:ethnocount/presentation/approvals/approval_guards.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
@@ -30,11 +31,36 @@ import 'package:ethnocount/presentation/common/widgets/responsive_sheet.dart';
 import 'package:ethnocount/presentation/common/widgets/export_dialog.dart';
 import 'package:ethnocount/domain/entities/export_settings.dart';
 import 'package:ethnocount/domain/entities/user.dart';
+import 'package:ethnocount/data/datasources/remote/client_remote_ds.dart';
 import 'package:ethnocount/data/datasources/remote/transfer_remote_ds.dart';
 import 'package:ethnocount/data/datasources/remote/user_remote_ds.dart';
+import 'package:ethnocount/domain/entities/client.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/presentation/transfers/widgets/accept_transfer_account_dialog.dart';
+import 'package:ethnocount/presentation/transfers/widgets/attach_transfer_to_partner_dialog.dart';
+import 'package:ethnocount/presentation/transfers/widgets/dispatch_courier_dialog.dart';
 import 'package:ethnocount/presentation/transfers/widgets/edit_transfer_dialog.dart';
+import 'package:ethnocount/presentation/transfers/widgets/transfer_filter_bar.dart';
+import 'package:ethnocount/presentation/transfers/widgets/transfer_filter_chips.dart';
+import 'package:ethnocount/presentation/transfers/widgets/transfer_row_card.dart';
+import 'package:ethnocount/presentation/transfers/widgets/transfer_status_chip.dart';
+import 'package:ethnocount/presentation/transfers/widgets/transfers_hero_header.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'package:ethnocount/core/icons/app_icons.dart';
+
+/// Card vs cash детектор: true если счёт получателя — карта. Используется
+/// чтобы пропустить курьерскую доставку для электронных переводов.
+bool _isReceiverCard(
+  Map<String, List<BranchAccount>> branchAccounts,
+  Transfer t,
+) {
+  if (t.toAccountId.isEmpty) return false;
+  final list = branchAccounts[t.toBranchId];
+  if (list == null) return false;
+  final acc = list.where((a) => a.id == t.toAccountId).firstOrNull;
+  return acc?.type == AccountType.card;
+}
 
 class TransfersPage extends StatefulWidget {
   const TransfersPage({super.key});
@@ -53,10 +79,53 @@ class _TransfersPageState extends State<TransfersPage> {
   DateTimeRange? _dateRange;
   TrinaGridStateManager? _gridStateManager;
 
+  /// Режим фильтра по партнёру:
+  ///   'all'     — показываем все переводы (по умолчанию);
+  ///   'partner' — только переводы через counterparty (viaCounterpartyId != null);
+  ///   'direct'  — только внутрифирменные (viaCounterpartyId == null).
+  String _partnerMode = 'all';
+
+  /// Локальный поиск по коду / имени / телефону. Применяется client-side
+  /// в дополнение к серверным фильтрам — чтобы не дёргать сервер на
+  /// каждый символ.
+  String _searchQuery = '';
+
+  /// Кэш партнёров {id → (name, city)} — используется в колонке «Партнёр»
+  /// таблицы переводов и в фильтр-стрипе. Тянем один раз на mount; счёт
+  /// партнёров маленький (≤50), realtime-подписка не нужна.
+  Map<String, _PartnerLite> _partners = const {};
+
   @override
   void initState() {
     super.initState();
     _loadTransfers();
+    _loadPartners();
+  }
+
+  Future<void> _loadPartners() async {
+    try {
+      final rows = await Supabase.instance.client
+          .from('counterparties')
+          .select('id,name,city')
+          .order('name');
+      if (!mounted) return;
+      final map = <String, _PartnerLite>{};
+      for (final r in rows as List) {
+        final m = Map<String, dynamic>.from(r as Map);
+        final id = m['id']?.toString();
+        if (id == null) continue;
+        map[id] = _PartnerLite(
+          name: (m['name'] ?? '').toString(),
+          city: (m['city'] as String?)?.trim().isEmpty == true
+              ? null
+              : m['city'] as String?,
+        );
+      }
+      setState(() => _partners = map);
+    } catch (_) {
+      // Партнёры могут быть недоступны (таблицы нет / RLS) — это не
+      // блокирует страницу. Колонка «Партнёр» просто покажет «—».
+    }
   }
 
   void _loadTransfers() {
@@ -66,6 +135,33 @@ class _TransfersPageState extends State<TransfersPage> {
           startDate: _dateRange?.start,
           endDate: _dateRange?.end,
         ));
+  }
+
+  /// Подгоняем client-side фильтр Trina под выбранный контакт (имя/телефон).
+  /// Применяется по любой из 4 колонок: отправитель/получатель × имя/телефон.
+  /// Это работает поверх встроенных per-column фильтров — клиент остаётся
+  /// в фокусе, можно дальше уточнить руками.
+  void _applyContactFilter(Client? c) {
+    final sm = _gridStateManager;
+    if (sm == null) return;
+    if (c == null) {
+      sm.setFilter(null);
+      return;
+    }
+    final needle = c.name.trim().toLowerCase();
+    final phoneNeedle = c.phone.replaceAll(RegExp(r'\D'), '');
+    sm.setFilter((row) {
+      String cell(String f) => row.cells[f]?.value?.toString() ?? '';
+      final sName = cell('senderName').toLowerCase();
+      final rName = cell('receiverName').toLowerCase();
+      final sPhone = cell('senderPhone').replaceAll(RegExp(r'\D'), '');
+      final rPhone = cell('receiverPhone').replaceAll(RegExp(r'\D'), '');
+      final byName = needle.isNotEmpty &&
+          (sName.contains(needle) || rName.contains(needle));
+      final byPhone = phoneNeedle.isNotEmpty &&
+          (sPhone.contains(phoneNeedle) || rPhone.contains(phoneNeedle));
+      return byName || byPhone;
+    });
   }
 
   @override
@@ -116,17 +212,38 @@ class _TransfersPageState extends State<TransfersPage> {
         floatingActionButton: isMobile && canManageTransfers
             ? FloatingActionButton.extended(
                 onPressed: () => context.goNamed(RouteNames.createTransfer),
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(AppIcons.add),
                 label: const Text('Новый перевод'),
               )
             : null,
         body: Column(
         children: [
-          // Page header
-          _buildHeader(context, canManageTransfers, canBranchTopUp),
+          // Page header вариантов:
+          //   • desktop + dark → полный hero (KPI-strip + chip-strip)
+          //   • mobile  + dark → компактный header + filter-chips
+          //                       (KPI-блок съел бы пол-экрана)
+          //   • light/legacy   → старый header + ContactPipelineRow
+          if (context.isDesktop && context.isDark) ...[
+            _buildHeroHeaderSection(context, canManageTransfers),
+            _buildHeroFilterChips(context),
+          ] else if (context.isDark) ...[
+            _buildHeader(context, canManageTransfers, canBranchTopUp),
+            _buildHeroFilterChips(context),
+          ] else ...[
+            _buildHeader(context, canManageTransfers, canBranchTopUp),
+            _ContactPipelineRow(
+              onContactSelected: _applyContactFilter,
+              statusFilter: _statusFilter,
+              onStatusSelected: (s) {
+                setState(() => _statusFilter = s);
+                _loadTransfers();
+              },
+            ),
+          ],
 
-          // Filter panel
-          FilterPanel(
+          // Legacy FilterPanel — только в light-теме. В dark (моб/деск)
+          // вместо неё уже работают TransferFilterChips сверху.
+          if (!context.isDark) FilterPanel(
             onReset: () {
               setState(() {
                 _statusFilter = null;
@@ -143,7 +260,7 @@ class _TransfersPageState extends State<TransfersPage> {
                       height: 16,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.download_rounded, size: 16),
+                  : const Icon(AppIcons.download, size: 16),
               label: Text(
                 _isExporting ? 'Загрузка...' : 'Excel',
                 style: const TextStyle(fontSize: 13),
@@ -190,14 +307,24 @@ class _TransfersPageState extends State<TransfersPage> {
           Expanded(
             child: BlocBuilder<TransferBloc, TransferBlocState>(
               builder: (context, state) {
+                // Используем общий хелпер `_visibleAndCounts` — он учитывает:
+                //   • Доступ по филиалу (бухгалтер видит только свои);
+                //   • Partner mode (все / через партнёра / свои);
+                //   • Поиск по коду/имени/телефону.
+                // Раньше тут был свой урезанный фильтр и счётчики
+                // расходились с тем, что было нарисовано в чипах.
+                final visibleTransfers = _visibleAndCounts(state).visible;
                 if (state.status == TransferBlocStatus.loading &&
-                    state.transfers.isEmpty) {
+                    visibleTransfers.isEmpty) {
                   return _buildLoadingSkeleton();
                 }
 
-                if (state.transfers.isEmpty) {
-                  final hasFilters =
-                      _statusFilter != null || _branchFilter != null || _dateRange != null;
+                if (visibleTransfers.isEmpty) {
+                  final hasFilters = _statusFilter != null ||
+                      _branchFilter != null ||
+                      _dateRange != null ||
+                      _partnerMode != 'all' ||
+                      _searchQuery.isNotEmpty;
                   return _buildEmptyState(
                     context,
                     canManageTransfers,
@@ -208,6 +335,8 @@ class _TransfersPageState extends State<TransfersPage> {
                               _statusFilter = null;
                               _branchFilter = null;
                               _dateRange = null;
+                              _partnerMode = 'all';
+                              _searchQuery = '';
                             });
                             _loadTransfers();
                           }
@@ -233,7 +362,7 @@ class _TransfersPageState extends State<TransfersPage> {
                       }
                       return _buildDesktopGrid(
                         context,
-                        state.transfers,
+                        visibleTransfers,
                         allBranches,
                         branchAccounts,
                         canManageTransfers,
@@ -248,7 +377,7 @@ class _TransfersPageState extends State<TransfersPage> {
                 );
                 return _buildMobileList(
                   context,
-                  state.transfers,
+                  visibleTransfers,
                   allBranches,
                   branchAccounts,
                   canManageTransfers,
@@ -285,19 +414,19 @@ class _TransfersPageState extends State<TransfersPage> {
             IconButton(
               tooltip: 'Принятые',
               onPressed: () => context.goNamed(RouteNames.acceptedTransfers),
-              icon: const Icon(Icons.check_circle_outline),
+              icon: const Icon(AppIcons.check_circle_outline),
             ),
             if (canBranchTopUp)
               IconButton(
                 tooltip: 'Пополнение филиала',
                 onPressed: () => context.go('/transfers/topup'),
-                icon: const Icon(Icons.add_business_rounded),
+                icon: const Icon(AppIcons.add_business),
               ),
             if (canManageTransfers)
               IconButton(
                 tooltip: 'Управление переводами',
                 onPressed: () => context.go('/transfers/manage'),
-                icon: const Icon(Icons.inbox_rounded),
+                icon: const Icon(AppIcons.inbox),
               ),
           ],
         ),
@@ -338,24 +467,24 @@ class _TransfersPageState extends State<TransfersPage> {
           const SizedBox(width: AppSpacing.sm),
           OutlinedButton.icon(
             onPressed: () => context.goNamed(RouteNames.acceptedTransfers),
-            icon: const Icon(Icons.check_circle_outline, size: 18),
+            icon: const Icon(AppIcons.check_circle_outline, size: 18),
             label: const Text('Принятые'),
           ),
           if (canBranchTopUp)
             OutlinedButton.icon(
               onPressed: () => context.go('/transfers/topup'),
-              icon: const Icon(Icons.add_business_rounded, size: 18),
+              icon: const Icon(AppIcons.add_business, size: 18),
               label: const Text('Пополнение филиала'),
             ),
           if (canManageTransfers) ...[
             OutlinedButton.icon(
               onPressed: () => context.go('/transfers/manage'),
-              icon: const Icon(Icons.inbox_rounded, size: 18),
+              icon: const Icon(AppIcons.inbox, size: 18),
               label: const Text('Управление'),
             ),
             FilledButton.icon(
               onPressed: () => context.goNamed(RouteNames.createTransfer),
-              icon: const Icon(Icons.add_rounded, size: 18),
+              icon: const Icon(AppIcons.add, size: 18),
               label: const Text('Новый перевод'),
             ),
           ],
@@ -368,6 +497,151 @@ class _TransfersPageState extends State<TransfersPage> {
   static String _userDisplay(Map<String, String> userNames, String userId) {
     final name = userNames[userId];
     return (name != null && name.isNotEmpty) ? name : '—';
+  }
+
+  // ─── Hero-layout helpers (desktop+dark, design-spec) ─────────────
+
+  /// Returns transfers the current user is allowed to see, plus the
+  /// per-status count map. Reused by hero header + filter chips so both
+  /// reflect the same access-filtered view.
+  ///
+  /// Применяет также UI-фильтры (partner mode + search) — таблица и
+  /// статус-чипы будут считать одни и те же данные, чтобы счётчики
+  /// «Ожидают: 3» не врали при включённом partner-фильтре.
+  ({List<Transfer> visible, Map<TransferStatus, int> perStatus})
+      _visibleAndCounts(TransferBlocState state) {
+    final user = context.read<AuthBloc>().state.user;
+    final allowed = accessibleBranchIds(user);
+    final accessFiltered = allowed == null
+        ? state.transfers
+        : state.transfers
+            .where((t) =>
+                allowed.contains(t.fromBranchId) ||
+                allowed.contains(t.toBranchId))
+            .toList();
+
+    final q = _searchQuery.trim().toLowerCase();
+    final needleDigits = q.replaceAll(RegExp(r'\D'), '');
+
+    bool matches(Transfer t) {
+      // Partner mode
+      if (_partnerMode == 'partner' && t.viaCounterpartyId == null) {
+        return false;
+      }
+      if (_partnerMode == 'direct' && t.viaCounterpartyId != null) {
+        return false;
+      }
+      // Search
+      if (q.isEmpty) return true;
+      final code = (t.transactionCode ?? t.id).toLowerCase();
+      if (code.contains(q)) return true;
+      final sName = (t.senderName ?? '').toLowerCase();
+      final rName = (t.receiverName ?? '').toLowerCase();
+      if (sName.contains(q) || rName.contains(q)) return true;
+      if (needleDigits.isNotEmpty) {
+        final sPhone =
+            (t.senderPhone ?? '').replaceAll(RegExp(r'\D'), '');
+        final rPhone =
+            (t.receiverPhone ?? '').replaceAll(RegExp(r'\D'), '');
+        if (sPhone.contains(needleDigits) ||
+            rPhone.contains(needleDigits)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    final visible = accessFiltered.where(matches).toList();
+    final perStatus = <TransferStatus, int>{};
+    for (final t in visible) {
+      perStatus[t.status] = (perStatus[t.status] ?? 0) + 1;
+    }
+    return (visible: visible, perStatus: perStatus);
+  }
+
+  Widget _buildHeroHeaderSection(
+      BuildContext context, bool canManageTransfers) {
+    return BlocBuilder<TransferBloc, TransferBlocState>(
+      builder: (context, state) {
+        final v = _visibleAndCounts(state);
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final todayItems =
+            v.visible.where((t) => !t.createdAt.isBefore(today)).toList();
+        // USD-volume для KPI — суммируем только USD-переводы, чтобы не
+        // тащить async FX lookup. Остальные показываем через счётчик.
+        final usdToday = todayItems
+            .where((t) => t.currency.toUpperCase() == 'USD')
+            .fold<double>(0, (sum, t) => sum + t.amount);
+        return TransfersHeroHeader(
+          kpis: TransfersKpis(
+            totalToday: todayItems.length,
+            usdToday: usdToday,
+            pendingCount: v.perStatus[TransferStatus.created] ?? 0,
+            toDeliveryCount: v.perStatus[TransferStatus.toDelivery] ?? 0,
+            deliveredCount: v.perStatus[TransferStatus.delivered] ?? 0,
+          ),
+          onCreate: () => context.goNamed(RouteNames.createTransfer),
+          onRefresh: _loadTransfers,
+          canCreate: canManageTransfers,
+        );
+      },
+    );
+  }
+
+  Widget _buildHeroFilterChips(BuildContext context) {
+    return BlocBuilder<TransferBloc, TransferBlocState>(
+      builder: (context, state) {
+        final v = _visibleAndCounts(state);
+        final user = context.read<AuthBloc>().state.user;
+        final branches = filterBranchesByAccess(
+          context.read<DashboardBloc>().state.branches,
+          user,
+        );
+        // Полная панель фильтров (status-чипы + филиал + период +
+        // partner-mode + поиск + reset). Заменила голую chip-строку.
+        return TransferFilterBar(
+          buckets: TransferFilterChips.bucketsFor(
+            totalCount: v.visible.length,
+            perStatusCount: v.perStatus,
+          ),
+          statusFilter: _statusFilter,
+          onStatusChanged: (s) {
+            setState(() => _statusFilter = s);
+            _loadTransfers();
+          },
+          branches: branches,
+          branchFilter: _branchFilter,
+          onBranchChanged: (id) {
+            setState(() => _branchFilter = id);
+            _loadTransfers();
+          },
+          dateRange: _dateRange,
+          onDateRangeChanged: (r) {
+            setState(() => _dateRange = r);
+            _loadTransfers();
+          },
+          partnerMode: _partnerMode,
+          onPartnerModeChanged: (m) {
+            setState(() => _partnerMode = m);
+          },
+          searchQuery: _searchQuery,
+          onSearchChanged: (q) {
+            setState(() => _searchQuery = q);
+          },
+          onResetAll: () {
+            setState(() {
+              _statusFilter = null;
+              _branchFilter = null;
+              _dateRange = null;
+              _partnerMode = 'all';
+              _searchQuery = '';
+            });
+            _loadTransfers();
+          },
+        );
+      },
+    );
   }
 
   Widget _buildDesktopGrid(
@@ -391,9 +665,107 @@ class _TransfersPageState extends State<TransfersPage> {
       return id;
     }
 
+    // Новый порядок колонок (по UX-запросу оператора):
+    //   1. Статус — первый и frozen, потому что это самый
+    //      «работающий» столбец: жмут на чипу — продвигается стейт-машина.
+    //   2. Код, Дата — также frozen, чтобы скролл вправо не «терял»
+    //      привязку строки.
+    //   3. Партнёр — сразу после кода, со значком ⇄ и именем counterparty,
+    //      чтобы partner-переводы было видно издалека (раньше колонки не
+    //      было совсем — оператор не мог отличить partner-payout от
+    //      внутреннего перевода).
+    //   4. Дальше — Откуда / Куда / Стороны / Суммы / Авторы.
     final columns = [
+      TrinaColumn(
+        title: 'Статус',
+        field: 'status',
+        type: TrinaColumnType.text(),
+        width: 130,
+        minWidth: 80,
+        frozen: TrinaColumnFrozen.start,
+        enableSorting: true,
+        enableFilterMenuItem: true,
+        renderer: (ctx) {
+          final value = ctx.cell.value.toString();
+          final statusEnum = TransferStatus.values
+              .where((e) => e.name == value)
+              .firstOrNull;
+          if (statusEnum == null) return Text(value);
+          final idx = ctx.rowIdx;
+          if (idx < 0 || idx >= transfers.length) {
+            return TransferStatusChip(status: statusEnum);
+          }
+          final t = transfers[idx];
+          final advance = TransferAdvanceAction.resolve(
+            context,
+            t,
+            onShowDetails: () => _showTransferDetailDialog(
+              context,
+              t,
+              branches,
+              branchAccounts,
+              userNames,
+              canManageTransfers,
+            ),
+          );
+          return Align(
+            alignment: Alignment.centerLeft,
+            child: TransferStatusChip(
+              status: statusEnum,
+              onTap: advance?.run,
+              tooltip: advance?.tooltip,
+            ),
+          );
+        },
+      ),
       FinancialColumns.text(title: 'Код', field: 'code', width: 100, frozen: true),
       FinancialColumns.text(title: 'Дата', field: 'date', width: 95),
+      // Колонка «Партнёр» с собственным рендером (chip с иконкой ⇄).
+      // value хранит имя или '—' — это даёт работать сортировке/фильтру
+      // без переопределения. Renderer добавляет иконку только когда есть
+      // партнёр, чтобы строки без партнёра не были визуально «шумными».
+      TrinaColumn(
+        title: 'Партнёр',
+        field: 'partner',
+        type: TrinaColumnType.text(),
+        width: 150,
+        minWidth: 90,
+        enableSorting: true,
+        enableFilterMenuItem: true,
+        renderer: (ctx) {
+          final v = ctx.cell.value.toString();
+          if (v.isEmpty || v == '—') {
+            return Text(
+              '—',
+              style: TextStyle(color: AppColors.darkTextTertiary),
+            );
+          }
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppColors.purple.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Icon(AppIcons.swap_horiz,
+                    size: 12, color: AppColors.purple),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  v,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
       FinancialColumns.text(title: 'Филиал отправителя', field: 'from', width: 140),
       FinancialColumns.text(title: 'Счёт отправителя', field: 'fromAccount', width: 140),
       FinancialColumns.text(title: 'Имя отправителя', field: 'senderName', width: 120),
@@ -401,13 +773,12 @@ class _TransfersPageState extends State<TransfersPage> {
       FinancialColumns.text(title: 'Филиал получателя', field: 'to', width: 140),
       FinancialColumns.text(title: 'Имя получателя', field: 'receiverName', width: 120),
       FinancialColumns.text(title: 'Телефон получателя', field: 'receiverPhone', width: 120),
-      FinancialColumns.text(title: 'Сумма', field: 'amountDisplay', width: 100),
+      FinancialColumns.text(title: 'Сумма', field: 'amountDisplay', width: 110),
       FinancialColumns.text(title: 'Валюта отправителя', field: 'fromCurrency', width: 75),
       FinancialColumns.text(title: 'Курс', field: 'rate', width: 60),
-      FinancialColumns.text(title: 'Конвертировано', field: 'convertedDisplay', width: 100),
+      FinancialColumns.text(title: 'Конвертировано', field: 'convertedDisplay', width: 110),
       FinancialColumns.text(title: 'Валюта получателя', field: 'toCurrency', width: 75),
       FinancialColumns.text(title: 'Комиссия', field: 'commissionDisplay', width: 90),
-      FinancialColumns.status(title: 'Статус', field: 'status', width: 80),
       FinancialColumns.text(title: 'Создал', field: 'createdBy', width: 85),
       FinancialColumns.text(title: 'Принял', field: 'confirmedBy', width: 85),
     ];
@@ -427,9 +798,17 @@ class _TransfersPageState extends State<TransfersPage> {
           ? '${t.commission.formatCurrencyNoDecimals()} ${t.commissionCurrency}'
           : '—';
 
+      // Имя партнёра для отображения и фильтрации/сортировки. Для
+      // не-партнёрских переводов — пустая строка (рендерер покажет «—»).
+      final partnerDisplay = (t.viaCounterpartyId != null &&
+              _partners[t.viaCounterpartyId!] != null)
+          ? _partners[t.viaCounterpartyId!]!.name
+          : '';
+
       return TrinaRow(cells: {
         'code': TrinaCell(value: t.transactionCode ?? t.id.substring(0, 8)),
         'date': TrinaCell(value: t.createdAt.fullFormatted),
+        'partner': TrinaCell(value: partnerDisplay),
         'from': TrinaCell(value: branchName(t.fromBranchId)),
         'fromAccount': TrinaCell(value: accountName(t.fromAccountId)),
         'senderName': TrinaCell(value: t.senderName ?? '—'),
@@ -452,10 +831,16 @@ class _TransfersPageState extends State<TransfersPage> {
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.sm),
       child: DesktopDataGrid(
-        gridId: 'transfers',
+        // v2 — после ввода новой колонки «Партнёр» и переноса «Статус» в
+        // начало. Старые сохранённые preferences не подходят (порядка
+        // не было), поэтому ключ сменили — у пользователей сразу
+        // отрисуется новый layout, потом можно перетащить как удобно.
+        gridId: 'transfers_v2',
         columns: columns,
         rows: rows,
-        frozenColumns: 1,
+        // Замораживаем Статус + Код + Дата — это «якорь» строки. Дальше
+        // оператор скроллит вправо и всегда видит, на какую запись смотрит.
+        frozenColumns: 3,
         showPagination: transfers.length > 50,
         onLoaded: (event) {
           _gridStateManager = event.stateManager;
@@ -484,9 +869,19 @@ class _TransfersPageState extends State<TransfersPage> {
     Map<String, List<BranchAccount>> branchAccounts,
     bool canManageTransfers,
   ) {
+    // Dark-тема: компактные карточки `TransferRowCard` из дизайн-системы
+    // (border-left по цвету статуса, branch-code pills, mono amount).
+    // Тап открывает detail-sheet с инлайн-кнопками действий (Принять /
+    // Отдать курьеру / Выдать / Изменить).
+    //
+    // Light-тема: оставлен legacy `_TransferCard` с инлайн-actions —
+    // переходить на dark-only design в светлой теме нет смысла.
+    final useDarkRows = context.isDark;
+    final branchById = <String, Branch>{for (final b in branches) b.id: b};
+
     return RefreshIndicator(
       onRefresh: () async => _loadTransfers(),
-      child: ListView.builder(
+      child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(
           AppSpacing.sm,
           AppSpacing.sm,
@@ -494,30 +889,56 @@ class _TransfersPageState extends State<TransfersPage> {
           80, // extra space so FAB never hides the last card
         ),
         itemCount: transfers.length,
+        separatorBuilder: (_, _) =>
+            SizedBox(height: useDarkRows ? 8 : 0),
         itemBuilder: (context, index) {
           final t = transfers[index];
+          if (useDarkRows) {
+            final fromB = branchById[t.fromBranchId];
+            final toB = branchById[t.toBranchId];
+            final id = (t.transactionCode != null &&
+                    t.transactionCode!.isNotEmpty)
+                ? t.transactionCode!
+                : t.id;
+            // Partner-name для бейджа: если перевод через counterparty
+            // и нам известно её имя — показываем чип «⇄ Имя». Иначе null.
+            final partnerName = t.viaCounterpartyId == null
+                ? null
+                : _partners[t.viaCounterpartyId!]?.name;
+            return TransferRowCard(
+              id: id,
+              status: t.status,
+              fromBranchCode: fromB?.code ?? '—',
+              toBranchCode: toB?.code ?? '—',
+              amount: t.amount,
+              currency: t.currency,
+              toCurrency: t.toCurrency ?? t.currency,
+              received: t.convertedAmount,
+              receiverName: t.receiverName ?? '—',
+              createdAt: t.createdAt,
+              partnerName: partnerName,
+              onTap: () => _showTransferDetailSheet(
+                context,
+                t,
+                branches,
+                branchAccounts,
+                canManageTransfers,
+              ),
+            );
+          }
           return _TransferCard(
             transfer: t,
             branches: branches,
             branchAccounts: branchAccounts,
             canManageTransfers: canManageTransfers,
-            onEdit: t.isPending && canManageTransfers
+            onEdit: t.isEditable && canManageTransfers
                 ? () => _showEditTransferDialog(context, t)
                 : null,
-            onConfirm: t.isPending
+            onConfirm: t.isCreated
                 ? () => _handleConfirmTransfer(context, t)
                 : null,
-            onReject: t.isPending
-                ? () async {
-                    final go = await context.guardRejectTransfer(
-                      t,
-                      reason: 'Отклонён',
-                    );
-                    if (!go || !context.mounted) return;
-                    context
-                        .read<TransferBloc>()
-                        .add(TransferRejectRequested(t.id, 'Отклонён'));
-                  }
+            onDispatch: t.isToDelivery && !_isReceiverCard(branchAccounts, t)
+                ? () => showDispatchCourierDialog(context, t)
                 : null,
             onDetails: () => _showTransferDetailSheet(
               context,
@@ -551,22 +972,22 @@ class _TransfersPageState extends State<TransfersPage> {
   }) {
     if (hasActiveFilters && onResetFilters != null) {
       return EmptyState(
-        icon: Icons.filter_alt_off_rounded,
+        icon: AppIcons.filter_alt_off,
         title: 'Нет переводов по фильтрам',
         subtitle:
             'Сбросьте период, статус или филиал — возможно, записи скрыты фильтром.',
         actionLabel: 'Сбросить фильтры',
-        actionIcon: Icons.filter_alt_off_rounded,
+        actionIcon: AppIcons.filter_alt_off,
         onAction: onResetFilters,
       );
     }
     return EmptyState(
-      icon: Icons.inbox_outlined,
+      icon: AppIcons.inbox,
       title: 'Переводы пока отсутствуют',
       subtitle:
           'Создайте первый перевод между филиалами или пополните счёт через «Пополнение филиала».',
       actionLabel: canManageTransfers ? 'Создать перевод' : null,
-      actionIcon: Icons.add_rounded,
+      actionIcon: AppIcons.add,
       onAction: canManageTransfers
           ? () => context.goNamed(RouteNames.createTransfer)
           : null,
@@ -579,7 +1000,6 @@ class _TransfersPageState extends State<TransfersPage> {
       builder: (ctx) => EditTransferDialog(
         transfer: t,
         onSaved: () => Navigator.of(ctx).pop(),
-        allowAmountEdit: t.isPending,
       ),
     );
   }
@@ -590,6 +1010,105 @@ class _TransfersPageState extends State<TransfersPage> {
       return;
     }
     showAcceptTransferAccountDialog(context, t);
+  }
+
+  /// Открепление перевода от партнёра. RPC detach_transfer_from_partner
+  /// (миграция 041): откат saldo + удаление counterparty_transactions +
+  /// сброс via_counterparty_id и spread_profit.
+  Future<void> _handleDetachFromPartner(
+      BuildContext context, Transfer t) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(AppIcons.warning_amber, color: AppColors.warning, size: 22),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Открепить от партнёра?')),
+          ],
+        ),
+        content: Text(
+          'Перевод ${t.transactionCode ?? ''} перестанет считаться партнёрским.\n\n'
+          'Что произойдёт:\n'
+          '• Saldo партнёра откатится назад (мы перестанем числиться должниками)\n'
+          '• Запись «paid_for_us» исчезнет из истории партнёра\n'
+          '• spread_profit обнулится\n'
+          '• Деньги на счёте отправителя НЕ затрагиваются\n\n'
+          'В amendment_history останется запись «detach_from_partner».',
+          style: const TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.warning),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(AppIcons.account_tree, size: 18),
+            label: const Text('Открепить'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await Supabase.instance.client.rpc(
+        'detach_transfer_from_partner',
+        params: {'p_transfer_id': t.id},
+      );
+      messenger.showSnackBar(SnackBar(
+        content: Text('Перевод ${t.transactionCode ?? ''} откреплён'),
+        backgroundColor: Colors.green.shade700,
+        behavior: SnackBarBehavior.floating,
+      ));
+      if (context.mounted) {
+        context.read<TransferBloc>().add(const TransfersLoadRequested());
+      }
+    } catch (e) {
+      final s = e.toString();
+      messenger.showSnackBar(SnackBar(
+        content: Text(s.contains('PGRST') || s.contains('42883')
+            ? 'RPC не найден. Примените миграцию 041.'
+            : s.contains('чужой филиал') || s.contains('Чужой')
+                ? 'Можно откреплять только переводы из своего филиала.'
+                : 'Не удалось открепить: $s'),
+        backgroundColor: AppColors.error,
+        duration: const Duration(seconds: 5),
+      ));
+    }
+  }
+
+  /// Открывает диалог «На партнёрский» — выбор партнёра + опц. дилерские
+  /// курсы. Вызывает RPC attach_transfer_to_partner.
+  Future<void> _showAttachToPartnerDialog(
+      BuildContext context, Transfer t) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final ok = await showAttachTransferToPartnerDialog(
+      context,
+      mode: AttachTransferDialogMode.knownTransfer,
+      transfer: t,
+    );
+    if (ok == true) {
+      messenger.showSnackBar(SnackBar(
+        content: const Row(
+          children: [
+            Icon(AppIcons.check_circle, color: Colors.white, size: 18),
+            SizedBox(width: 8),
+            Text('Перевод привязан к партнёру'),
+          ],
+        ),
+        backgroundColor: Colors.green.shade700,
+        behavior: SnackBarBehavior.floating,
+      ));
+      // Перерисовываем список переводов чтобы сразу подтянулась новая
+      // привязка (статус остался тот же, но via_counterparty_id появился
+      // и аналитика партнёра обновится).
+      if (context.mounted) {
+        context.read<TransferBloc>().add(const TransfersLoadRequested());
+      }
+    }
   }
 
   void _showTransferDetailSheet(
@@ -630,17 +1149,9 @@ class _TransfersPageState extends State<TransfersPage> {
                   Navigator.of(innerCtx).pop();
                   _handleConfirmTransfer(context, t);
                 },
-                onReject: () async {
+                onDispatch: () {
                   Navigator.of(innerCtx).pop();
-                  if (!context.mounted) return;
-                  final go = await context.guardRejectTransfer(
-                    t,
-                    reason: 'Отклонён',
-                  );
-                  if (!go || !context.mounted) return;
-                  context
-                      .read<TransferBloc>()
-                      .add(TransferRejectRequested(t.id, 'Отклонён'));
+                  showDispatchCourierDialog(context, t);
                 },
                 onIssueAll: () async {
                   // Полная выдача теперь идёт через тот же диалог, что и
@@ -688,6 +1199,14 @@ class _TransfersPageState extends State<TransfersPage> {
                   branchAccounts,
                   userNames,
                 ),
+                onAttachToPartner: () async {
+                  Navigator.of(innerCtx).pop();
+                  await _showAttachToPartnerDialog(context, t);
+                },
+                onDetachFromPartner: () async {
+                  Navigator.of(innerCtx).pop();
+                  await _handleDetachFromPartner(context, t);
+                },
               );
             },
           ),
@@ -723,17 +1242,9 @@ class _TransfersPageState extends State<TransfersPage> {
             Navigator.of(ctx).pop();
             _handleConfirmTransfer(context, t);
           },
-          onReject: () async {
+          onDispatch: () {
             Navigator.of(ctx).pop();
-            if (!context.mounted) return;
-            final go = await context.guardRejectTransfer(
-              t,
-              reason: 'Отклонён',
-            );
-            if (!go || !context.mounted) return;
-            context
-                .read<TransferBloc>()
-                .add(TransferRejectRequested(t.id, 'Отклонён'));
+            showDispatchCourierDialog(context, t);
           },
           onIssueAll: () async {
             // см. комментарий выше — теперь все «выдать всё/остаток» идут
@@ -779,6 +1290,14 @@ class _TransfersPageState extends State<TransfersPage> {
             branchAccounts,
             userNames,
           ),
+          onAttachToPartner: () async {
+            Navigator.of(ctx).pop();
+            await _showAttachToPartnerDialog(context, t);
+          },
+          onDetachFromPartner: () async {
+            Navigator.of(ctx).pop();
+            await _handleDetachFromPartner(context, t);
+          },
         );
         return BlocProvider.value(
           value: transferBloc,
@@ -852,7 +1371,7 @@ class _TransfersPageState extends State<TransfersPage> {
     // Pull the latest payout tranches so the invoice carries up-to-date
     // history. Soft-fail to an empty list — the invoice still renders.
     List<TransferIssuance> issuances = const [];
-    if (t.issuedAmount > 0 || t.isIssued) {
+    if (t.issuedAmount > 0 || t.isDelivered) {
       try {
         issuances =
             await sl<TransferRemoteDataSource>().fetchIssuances(t.id);
@@ -942,7 +1461,7 @@ class _TransferCard extends StatelessWidget {
     this.canManageTransfers = false,
     this.onEdit,
     this.onConfirm,
-    this.onReject,
+    this.onDispatch,
     this.onDetails,
   });
 
@@ -952,7 +1471,7 @@ class _TransferCard extends StatelessWidget {
   final bool canManageTransfers;
   final VoidCallback? onEdit;
   final VoidCallback? onConfirm;
-  final VoidCallback? onReject;
+  final VoidCallback? onDispatch;
   final VoidCallback? onDetails;
 
   String _branchName(String id) {
@@ -976,16 +1495,14 @@ class _TransferCard extends StatelessWidget {
     final recvCur = t.toCurrency ?? t.currency;
     final isCrossCurrency = sentCur != recvCur;
 
-    final (statusColor, statusLabel) = switch (t.status) {
-      TransferStatus.pending => (AppColors.warning, 'Ожидание'),
-      TransferStatus.confirmed => (AppColors.success, 'Принят'),
-      TransferStatus.issued => (Colors.teal, 'Выдан'),
-      TransferStatus.rejected => (AppColors.error, 'Отклонён'),
-      TransferStatus.cancelled => (Colors.grey, 'Отменён'),
-    };
-
     final secondaryColor =
         isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary;
+
+    final advance = TransferAdvanceAction.resolve(
+      context,
+      t,
+      onShowDetails: onDetails,
+    );
 
     final isMobile = !context.isDesktop;
     return Card(
@@ -1006,7 +1523,7 @@ class _TransferCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Header: route + status
+            // Header: route + status (tappable to advance workflow)
             Row(
               children: [
                 Expanded(
@@ -1018,20 +1535,10 @@ class _TransferCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    statusLabel,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                TransferStatusChip(
+                  status: t.status,
+                  onTap: advance?.run,
+                  tooltip: advance?.tooltip,
                 ),
               ],
             ),
@@ -1105,7 +1612,7 @@ class _TransferCard extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     child: Column(
                       children: [
-                        const Icon(Icons.arrow_forward_rounded, size: 18),
+                        const Icon(AppIcons.arrow_forward, size: 18),
                         if (isCrossCurrency)
                           Text(
                             '×${t.exchangeRate}',
@@ -1143,7 +1650,7 @@ class _TransferCard extends StatelessWidget {
             // Partial issuance progress (compact bar) — only for confirmed
             // transfers with at least one tranche issued. Keeps the card
             // glanceable while still flagging incomplete payouts.
-            if (t.isConfirmed && t.issuedAmount > 0) ...[
+            if (t.isToDelivery && t.issuedAmount > 0) ...[
               const SizedBox(height: 8),
               _CardPayoutProgress(transfer: t),
             ],
@@ -1169,10 +1676,10 @@ class _TransferCard extends StatelessWidget {
               ],
             ),
 
-            // Edit / Confirm / Reject actions. Issuance (partial or full)
-            // is intentionally surfaced only inside the detail dialog so the
-            // operator sees remaining balance and history before paying out.
-            if (t.isPending && (onEdit != null || onConfirm != null || onReject != null)) ...[
+            // Inline actions on the card. Full issuance UI остаётся в detail
+            // dialog'е, чтобы оператор видел остаток и историю выдач.
+            if ((t.isCreated || t.isToDelivery) &&
+                (onEdit != null || onConfirm != null || onDispatch != null)) ...[
               SizedBox(height: isMobile ? AppSpacing.md : AppSpacing.sm),
               Wrap(
                 spacing: 8,
@@ -1182,20 +1689,11 @@ class _TransferCard extends StatelessWidget {
                   if (onEdit != null)
                     OutlinedButton.icon(
                       onPressed: onEdit,
-                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      icon: const Icon(AppIcons.edit, size: 18),
                       label: const Text('Изменить'),
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size(0, 48),
                       ),
-                    ),
-                  if (onReject != null)
-                    TextButton(
-                      onPressed: onReject,
-                      style: TextButton.styleFrom(
-                        foregroundColor: AppColors.error,
-                        minimumSize: const Size(0, 48),
-                      ),
-                      child: const Text('Отклонить'),
                     ),
                   if (onConfirm != null)
                     FilledButton(
@@ -1203,21 +1701,35 @@ class _TransferCard extends StatelessWidget {
                       style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
                       child: const Text('Принять'),
                     ),
+                  if (onDispatch != null)
+                    FilledButton.icon(
+                      onPressed: onDispatch,
+                      icon: const Icon(AppIcons.local_shipping, size: 18),
+                      label: const Text('Отдать курьеру'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 48),
+                        backgroundColor: AppColors.info,
+                      ),
+                    ),
                 ],
               ),
             ],
-            if (t.isConfirmed) ...[
+            // Готов к выдаче: из любого пред-финального статуса.
+            // Курьерская доставка опциональна — оператор может выдать сразу
+            // из toDelivery (cash без трекинга, card-перевод) или после
+            // возврата курьера (withCourier).
+            if (t.isWithCourier || t.isToDelivery) ...[
               SizedBox(height: isMobile ? AppSpacing.md : AppSpacing.sm),
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.tonalIcon(
                   onPressed: onDetails,
-                  icon: const Icon(Icons.payments_outlined, size: 18),
+                  icon: const Icon(AppIcons.payments, size: 18),
                   label: Text(t.isPartiallyIssued
                       ? 'Продолжить выдачу'
                       : 'Открыть для выдачи'),
                   style: FilledButton.styleFrom(
-                    foregroundColor: Colors.teal,
+                    foregroundColor: AppColors.primary,
                     minimumSize: const Size(0, 48),
                   ),
                 ),
@@ -1240,7 +1752,7 @@ class _TransferCard extends StatelessWidget {
 //   • accounting figures: списание / получит / комиссия / курс
 //   • signatures (создал / принял / выдал / отклонил / отменил)
 //   • amendment history (правки до подтверждения)
-//   • actions: Скачать инвойс (Word), [Изменить], [Отклонить], [Принять], [Выдать]
+//   • actions: Скачать инвойс (Word), [Изменить], [Принять], [Отдать курьеру], [Выдать]
 
 class _TransferDetailContent extends StatelessWidget {
   const _TransferDetailContent({
@@ -1251,11 +1763,13 @@ class _TransferDetailContent extends StatelessWidget {
     required this.canManageTransfers,
     required this.onEdit,
     required this.onConfirm,
-    required this.onReject,
+    required this.onDispatch,
     required this.onIssueAll,
     required this.onIssuePartial,
     required this.onClose,
     required this.onDownloadInvoice,
+    required this.onAttachToPartner,
+    required this.onDetachFromPartner,
   });
 
   final Transfer transfer;
@@ -1265,11 +1779,13 @@ class _TransferDetailContent extends StatelessWidget {
   final bool canManageTransfers;
   final VoidCallback onEdit;
   final VoidCallback onConfirm;
-  final VoidCallback onReject;
+  final VoidCallback onDispatch;
   final VoidCallback onIssueAll;
   final VoidCallback onIssuePartial;
   final VoidCallback onClose;
   final VoidCallback onDownloadInvoice;
+  final VoidCallback onAttachToPartner;
+  final VoidCallback onDetachFromPartner;
 
   String _branchName(String id) {
     final match = branches.where((b) => b.id == id);
@@ -1327,7 +1843,7 @@ class _TransferDetailContent extends StatelessWidget {
                     ),
                     IconButton(
                       tooltip: 'Закрыть',
-                      icon: const Icon(Icons.close_rounded),
+                      icon: const Icon(AppIcons.close),
                       onPressed: onClose,
                     ),
                   ],
@@ -1372,7 +1888,7 @@ class _TransferDetailContent extends StatelessWidget {
     return ResponsiveSheetScaffold(
       title: title,
       trailing: IconButton(
-        icon: const Icon(Icons.close_rounded),
+        icon: const Icon(AppIcons.close),
         onPressed: onClose,
       ),
       child: Column(
@@ -1415,7 +1931,7 @@ class _TransferDetailContent extends StatelessWidget {
           const SizedBox(height: AppSpacing.md),
         ],
         _AmountsBlock(transfer: t),
-        if (t.isConfirmed || t.isIssued || t.issuedAmount > 0) ...[
+        if (t.isToDelivery || t.isWithCourier || t.isDelivered || t.issuedAmount > 0) ...[
           const SizedBox(height: AppSpacing.md),
           _PayoutProgressBlock(
             transfer: t,
@@ -1458,51 +1974,79 @@ class _TransferDetailContent extends StatelessWidget {
     return [
       OutlinedButton.icon(
         onPressed: onDownloadInvoice,
-        icon: const Icon(Icons.description_outlined, size: 18),
+        icon: const Icon(AppIcons.description, size: 18),
         label: const Text('Скачать инвойс'),
         style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
       ),
-      if (canManageTransfers && t.isPending)
+      // Кнопка партнёрской привязки — зависит от текущего состояния:
+      //   • не привязан → «На партнёрский» (attach)
+      //   • привязан    → «Открепить от партнёра» (detach)
+      if (canManageTransfers && !t.isPartnerTransfer)
+        OutlinedButton.icon(
+          onPressed: onAttachToPartner,
+          icon: const Icon(AppIcons.account_tree, size: 18),
+          label: const Text('На партнёрский'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.secondary,
+            side: const BorderSide(color: AppColors.secondary),
+            minimumSize: const Size(0, 44),
+          ),
+        ),
+      if (canManageTransfers && t.isPartnerTransfer)
+        OutlinedButton.icon(
+          onPressed: onDetachFromPartner,
+          icon: const Icon(AppIcons.account_tree, size: 18),
+          label: const Text('Открепить'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.warning,
+            side: const BorderSide(color: AppColors.warning),
+            minimumSize: const Size(0, 44),
+          ),
+        ),
+      if (canManageTransfers && t.isEditable)
         OutlinedButton.icon(
           onPressed: onEdit,
-          icon: const Icon(Icons.edit_outlined, size: 18),
+          icon: const Icon(AppIcons.edit, size: 18),
           label: const Text('Изменить'),
           style: OutlinedButton.styleFrom(minimumSize: const Size(0, 44)),
         ),
-      if (t.isPending) ...[
-        TextButton(
-          onPressed: onReject,
-          style: TextButton.styleFrom(
-            foregroundColor: AppColors.error,
-            minimumSize: const Size(0, 44),
-          ),
-          child: const Text('Отклонить'),
-        ),
+      if (t.isCreated)
         FilledButton(
           onPressed: onConfirm,
           style: FilledButton.styleFrom(minimumSize: const Size(0, 44)),
           child: const Text('Принять'),
         ),
-      ],
-      if (t.isConfirmed) ...[
+      // toDelivery: для cash — отдать курьеру; для card — сразу выдача.
+      if (t.isToDelivery && !_isReceiverCard(branchAccounts, t))
+        FilledButton.icon(
+          onPressed: onDispatch,
+          icon: const Icon(AppIcons.local_shipping, size: 18),
+          label: const Text('Отдать курьеру'),
+          style: FilledButton.styleFrom(
+            backgroundColor: AppColors.info,
+            minimumSize: const Size(0, 44),
+          ),
+        ),
+      // Выдача доступна из любого пред-финального статуса:
+      // toDelivery (быстрый путь — cash без курьера ИЛИ card) или
+      // withCourier (после возврата курьера).
+      if (t.isWithCourier || t.isToDelivery) ...[
         OutlinedButton.icon(
           onPressed: onIssuePartial,
-          icon: const Icon(Icons.payments_outlined, size: 18),
+          icon: const Icon(AppIcons.payments, size: 18),
           label: const Text('Выдать частично'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.teal,
-            side: const BorderSide(color: Colors.teal),
+            foregroundColor: AppColors.primary,
+            side: const BorderSide(color: AppColors.primary),
             minimumSize: const Size(0, 44),
           ),
         ),
         FilledButton.icon(
           onPressed: onIssueAll,
-          icon: const Icon(Icons.check_circle_outline, size: 18),
-          label: Text(t.isPartiallyIssued
-              ? 'Выдать остаток'
-              : 'Выдать всё'),
+          icon: const Icon(AppIcons.check_circle_outline, size: 18),
+          label: Text(t.isPartiallyIssued ? 'Выдать остаток' : 'Выдать всё'),
           style: FilledButton.styleFrom(
-            backgroundColor: Colors.teal,
+            backgroundColor: AppColors.primary,
             minimumSize: const Size(0, 44),
           ),
         ),
@@ -1561,16 +2105,10 @@ class _StatusHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = transfer;
-    final (statusColor, statusLabel) = switch (t.status) {
-      TransferStatus.pending => (AppColors.warning, 'Ожидание'),
-      TransferStatus.confirmed => (AppColors.success, 'Принят'),
-      TransferStatus.issued => (Colors.teal, 'Выдан'),
-      TransferStatus.rejected => (AppColors.error, 'Отклонён'),
-      TransferStatus.cancelled => (Colors.grey, 'Отменён'),
-    };
     final secondaryColor = context.isDark
         ? AppColors.darkTextSecondary
         : AppColors.lightTextSecondary;
+    final advance = TransferAdvanceAction.resolve(context, t);
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1594,23 +2132,57 @@ class _StatusHeader extends StatelessWidget {
                 'Создан: ${t.createdAt.fullFormatted}',
                 style: TextStyle(fontSize: 12, color: secondaryColor),
               ),
+              if (t.isPartnerTransfer) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.secondary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(100),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(AppIcons.account_tree,
+                          size: 12, color: AppColors.secondary),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Через партнёра',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.secondary,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                      if (t.spreadProfit != null && t.spreadProfit! > 0.005) ...[
+                        const SizedBox(width: 6),
+                        Icon(Icons.trending_up,
+                            size: 11, color: Colors.green.shade700),
+                        const SizedBox(width: 2),
+                        Text(
+                          '+${t.spreadProfit!.toStringAsFixed(0)} ${t.currency}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.green.shade700,
+                            fontFamily: 'JetBrains Mono',
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: statusColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Text(
-            statusLabel,
-            style: TextStyle(
-              color: statusColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+        TransferStatusChip(
+          status: t.status,
+          showIcon: true,
+          onTap: advance?.run,
+          tooltip: advance?.tooltip,
         ),
       ],
     );
@@ -1643,7 +2215,7 @@ class _PartiesBlock extends StatelessWidget {
       name: t.senderName,
       phone: t.senderPhone,
       info: t.senderInfo,
-      icon: Icons.north_east_rounded,
+      icon: AppIcons.north_east,
       accentColor: const Color(0xFFE53935),
     );
     final to = _PartyCard(
@@ -1653,11 +2225,11 @@ class _PartiesBlock extends StatelessWidget {
       name: t.receiverName,
       phone: t.receiverPhone,
       info: t.receiverInfo,
-      icon: Icons.south_west_rounded,
+      icon: AppIcons.south_west,
       accentColor: const Color(0xFF43A047),
       // Кнопка копирования телефона нужна выдающему бухгалтеру —
       // показывается, когда перевод подтверждён, но ещё не выдан.
-      copyablePhone: t.status == TransferStatus.confirmed,
+      copyablePhone: t.status == TransferStatus.toDelivery,
     );
 
     if (isMobile) {
@@ -1853,7 +2425,7 @@ class _PartyCard extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.all(4),
               child: Icon(
-                Icons.copy_rounded,
+                AppIcons.copy,
                 size: 14,
                 color: accentColor,
               ),
@@ -2060,7 +2632,7 @@ class _AmountsBlock extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Column(
                     children: [
-                      const Icon(Icons.swap_horiz_rounded, size: 18),
+                      const Icon(AppIcons.swap_horiz, size: 18),
                       Text(
                         '×${t.exchangeRate}',
                         style: TextStyle(fontSize: 10, color: secondary),
@@ -2105,6 +2677,8 @@ class _CommissionBlock extends StatelessWidget {
         return 'Внутри суммы перевода';
       case CommissionMode.toReceiver:
         return 'Сверх суммы (получателю)';
+      case CommissionMode.fromAccount:
+        return 'Со второго счёта филиала';
     }
   }
 
@@ -2185,45 +2759,36 @@ class _SignaturesBlock extends StatelessWidget {
     rows.add((
       'Создал',
       '${userResolver(t.createdBy)} • ${t.createdAt.historyFormatted}',
-      Icons.add_box_outlined,
+      AppIcons.add_box,
       Colors.blueGrey,
     ));
     if (t.confirmedAt != null) {
       rows.add((
         'Принял',
         '${userResolver(t.confirmedBy)} • ${t.confirmedAt!.historyFormatted}',
-        Icons.check_circle_outline,
+        AppIcons.check_circle_outline,
         AppColors.success,
+      ));
+    }
+    if (t.dispatchedAt != null) {
+      final courier = [
+        if (t.courierName != null && t.courierName!.isNotEmpty) t.courierName,
+        if (t.courierPhone != null && t.courierPhone!.isNotEmpty) t.courierPhone,
+      ].whereType<String>().join(' • ');
+      final tail = courier.isNotEmpty ? '\nКурьер: $courier' : '';
+      rows.add((
+        'Отдал курьеру',
+        '${userResolver(t.dispatchedBy)} • ${t.dispatchedAt!.historyFormatted}$tail',
+        AppIcons.local_shipping,
+        AppColors.info,
       ));
     }
     if (t.issuedAt != null) {
       rows.add((
         'Выдал',
         '${userResolver(t.issuedBy)} • ${t.issuedAt!.historyFormatted}',
-        Icons.payments_outlined,
-        Colors.teal,
-      ));
-    }
-    if (t.rejectedAt != null) {
-      final reason = (t.rejectionReason != null && t.rejectionReason!.trim().isNotEmpty)
-          ? '\nПричина: ${t.rejectionReason!.trim()}'
-          : '';
-      rows.add((
-        'Отклонил',
-        '${userResolver(t.rejectedBy)} • ${t.rejectedAt!.historyFormatted}$reason',
-        Icons.cancel_outlined,
-        AppColors.error,
-      ));
-    }
-    if (t.cancelledAt != null) {
-      final reason = (t.cancellationReason != null && t.cancellationReason!.trim().isNotEmpty)
-          ? '\nПричина: ${t.cancellationReason!.trim()}'
-          : '';
-      rows.add((
-        'Отменил',
-        '${userResolver(t.cancelledBy)} • ${t.cancelledAt!.historyFormatted}$reason',
-        Icons.block_outlined,
-        Colors.grey,
+        AppIcons.payments,
+        AppColors.primary,
       ));
     }
 
@@ -2292,7 +2857,7 @@ class _PayoutProgressBlock extends StatelessWidget {
 
     String label;
     Color barColor;
-    if (t.isIssued) {
+    if (t.isDelivered) {
       label = 'Полностью выдано';
       barColor = Colors.teal;
     } else if (issued > 0) {
@@ -2410,7 +2975,7 @@ class _PayoutProgressBlock extends StatelessWidget {
                                     padding: const EdgeInsets.only(top: 2),
                                     child: Row(
                                       children: [
-                                        Icon(Icons.credit_card_outlined,
+                                        Icon(AppIcons.credit_card,
                                             size: 12, color: secondary),
                                         const SizedBox(width: 4),
                                         Flexible(
@@ -2561,7 +3126,7 @@ class _CardPayoutProgress extends StatelessWidget {
       children: [
         Row(
           children: [
-            const Icon(Icons.payments_outlined, size: 14, color: Colors.teal),
+            const Icon(AppIcons.payments, size: 14, color: Colors.teal),
             const SizedBox(width: 4),
             Expanded(
               child: Text(
@@ -2690,7 +3255,7 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          const Icon(Icons.payments_outlined, color: Colors.teal),
+          const Icon(AppIcons.payments, color: Colors.teal),
           const SizedBox(width: 8),
           Expanded(child: Text('Выдача ${widget.transactionCode}')),
         ],
@@ -2839,7 +3404,7 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
                   ));
                 },
           style: FilledButton.styleFrom(backgroundColor: Colors.teal),
-          icon: const Icon(Icons.check_rounded, size: 18),
+          icon: const Icon(AppIcons.check, size: 18),
           label: const Text('Выдать'),
         ),
       ],
@@ -2857,7 +3422,7 @@ class _PartialIssueDialogState extends State<_PartialIssueDialog> {
 /// Поведение:
 ///  * Подсвечивает выбранный счёт.
 ///  * Метит красным «недостаточно средств», если введённая сумма больше
-///    баланса (если баланс известен — Map<accountId, balance>).
+///    баланса (если баланс известен — `Map<accountId, balance>`).
 ///  * Метит серым счета не той валюты — их трогать нельзя, RPC отклонит.
 ///  * Полностью клавиатурно-доступен (RadioListTile внутри).
 class _PayoutAccountPicker extends StatelessWidget {
@@ -2970,13 +3535,13 @@ class _PayoutAccountTile extends StatelessWidget {
   IconData get _typeIcon {
     switch (account.type) {
       case AccountType.cash:
-        return Icons.payments_rounded;
+        return AppIcons.payments;
       case AccountType.card:
-        return Icons.credit_card_rounded;
+        return AppIcons.credit_card;
       case AccountType.reserve:
-        return Icons.lock_outline_rounded;
+        return AppIcons.lock_outline;
       case AccountType.transit:
-        return Icons.local_shipping_outlined;
+        return AppIcons.local_shipping;
     }
   }
 
@@ -3146,13 +3711,16 @@ class _PayoutAccountTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                Radio<bool>(
-                  value: true,
-                  groupValue: selected ? true : null,
-                  onChanged: disabled
-                      ? null
-                      : (_) => onTap?.call(),
-                  visualDensity: VisualDensity.compact,
+                IgnorePointer(
+                  ignoring: disabled,
+                  child: RadioGroup<bool>(
+                    groupValue: selected ? true : null,
+                    onChanged: (_) => onTap?.call(),
+                    child: const Radio<bool>(
+                      value: true,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -3202,3 +3770,289 @@ class _QuickChip extends StatelessWidget {
     );
   }
 }
+
+/// Контактный autocomplete + горизонтальный pipeline статусов над таблицей.
+///
+/// Autocomplete тянет клиентов из БД и подсказывает по совпадению имени
+/// или телефона. Выбор клиента ставит client-side фильтр в Trina на 4
+/// колонки (отправитель/получатель × имя/телефон) — встроенные per-column
+/// фильтры Trina остаются доступны для тонкой настройки.
+class _ContactPipelineRow extends StatefulWidget {
+  const _ContactPipelineRow({
+    required this.onContactSelected,
+    required this.statusFilter,
+    required this.onStatusSelected,
+  });
+
+  final ValueChanged<Client?> onContactSelected;
+  final TransferStatus? statusFilter;
+  final ValueChanged<TransferStatus?> onStatusSelected;
+
+  @override
+  State<_ContactPipelineRow> createState() => _ContactPipelineRowState();
+}
+
+class _ContactPipelineRowState extends State<_ContactPipelineRow> {
+  Client? _selected;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final isMobile = !context.isDesktop;
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        0,
+        AppSpacing.md,
+        AppSpacing.sm,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          StreamBuilder<List<Client>>(
+            stream: sl<ClientRemoteDataSource>().watchClients(),
+            builder: (ctx, snap) {
+              final clients = snap.data ?? const <Client>[];
+              return Autocomplete<Client>(
+                displayStringForOption: (c) =>
+                    c.phone.isNotEmpty ? '${c.name} • ${c.phone}' : c.name,
+                optionsBuilder: (TextEditingValue v) {
+                  final q = v.text.trim().toLowerCase();
+                  if (q.isEmpty) return const Iterable<Client>.empty();
+                  final phoneQ = q.replaceAll(RegExp(r'\D'), '');
+                  return clients.where((c) {
+                    final n = c.name.toLowerCase();
+                    final p = c.phone.replaceAll(RegExp(r'\D'), '');
+                    return n.contains(q) ||
+                        (phoneQ.isNotEmpty && p.contains(phoneQ));
+                  }).take(15);
+                },
+                onSelected: (c) {
+                  setState(() => _selected = c);
+                  widget.onContactSelected(c);
+                },
+                fieldViewBuilder: (ctx, controller, focusNode, onSubmit) {
+                  return TextField(
+                    controller: controller,
+                    focusNode: focusNode,
+                    decoration: InputDecoration(
+                      hintText: snap.connectionState == ConnectionState.waiting
+                          ? 'Загрузка контактов…'
+                          : 'Найти клиента — имя или телефон…',
+                      prefixIcon: const Icon(AppIcons.search, size: 18),
+                      suffixIcon: (controller.text.isEmpty && _selected == null)
+                          ? null
+                          : IconButton(
+                              icon: const Icon(AppIcons.close, size: 18),
+                              tooltip: 'Сбросить',
+                              onPressed: () {
+                                controller.clear();
+                                setState(() => _selected = null);
+                                widget.onContactSelected(null);
+                              },
+                            ),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      filled: true,
+                      fillColor: (isDark ? Colors.white : Colors.black)
+                          .withValues(alpha: 0.04),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(
+                          color: isDark
+                              ? AppColors.darkBorder
+                              : AppColors.lightBorder,
+                          width: 0.5,
+                        ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide: BorderSide(
+                          color: isDark
+                              ? AppColors.darkBorder
+                              : AppColors.lightBorder,
+                          width: 0.5,
+                        ),
+                      ),
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                  );
+                },
+                optionsViewBuilder: (ctx, onSelected, options) {
+                  return Align(
+                    alignment: Alignment.topLeft,
+                    child: Material(
+                      elevation: 4,
+                      borderRadius: BorderRadius.circular(8),
+                      clipBehavior: Clip.antiAlias,
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxHeight: 280,
+                          maxWidth: 480,
+                          minWidth: 280,
+                        ),
+                        child: ListView.builder(
+                          padding: EdgeInsets.zero,
+                          shrinkWrap: true,
+                          itemCount: options.length,
+                          itemBuilder: (ctx, i) {
+                            final c = options.elementAt(i);
+                            return ListTile(
+                              dense: true,
+                              leading: const Icon(AppIcons.person_outline, size: 18),
+                              title: Text(
+                                c.name,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              subtitle: Text(
+                                [
+                                  if (c.phone.isNotEmpty) c.phone,
+                                  if (c.country.isNotEmpty) c.country,
+                                ].join(' • '),
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              trailing: c.clientCode.isNotEmpty
+                                  ? Text(
+                                      c.clientCode,
+                                      style: const TextStyle(
+                                        fontSize: 10,
+                                        fontFamily: 'JetBrains Mono',
+                                      ),
+                                    )
+                                  : null,
+                              onTap: () => onSelected(c),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+          SizedBox(height: AppSpacing.sm),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _PipelineChip(
+                  label: 'Все',
+                  color: AppColors.primary,
+                  icon: AppIcons.inbox,
+                  selected: widget.statusFilter == null,
+                  onTap: () => widget.onStatusSelected(null),
+                ),
+                const SizedBox(width: 6),
+                for (final s in TransferStatus.values) ...[
+                  _PipelineStepArrow(),
+                  const SizedBox(width: 6),
+                  _PipelineChip(
+                    label: TransferStatusStyle.of(s).label,
+                    color: TransferStatusStyle.of(s).color,
+                    icon: TransferStatusStyle.of(s).icon,
+                    selected: widget.statusFilter == s,
+                    onTap: () => widget.onStatusSelected(
+                        widget.statusFilter == s ? null : s),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                if (!isMobile) const SizedBox(width: 12),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PipelineChip extends StatelessWidget {
+  const _PipelineChip({
+    required this.label,
+    required this.color,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final Color color;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = context.isDark;
+    final bg = selected
+        ? color.withValues(alpha: 0.18)
+        : (isDark ? Colors.white : Colors.black).withValues(alpha: 0.04);
+    final border = selected
+        ? color.withValues(alpha: 0.6)
+        : (isDark ? AppColors.darkBorder : AppColors.lightBorder);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: border, width: 1),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: selected
+                      ? color
+                      : (isDark
+                          ? AppColors.darkTextSecondary
+                          : AppColors.lightTextSecondary),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PipelineStepArrow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Icon(
+      AppIcons.chevron_right,
+      size: 14,
+      color: (context.isDark
+              ? AppColors.darkTextSecondary
+              : AppColors.lightTextSecondary)
+          .withValues(alpha: 0.5),
+    );
+  }
+}
+
+
+/// Лёгкий снимок партнёра (counterparty) для быстрого поиска по id.
+/// Грузится один раз в _TransfersPageState — не тащим тяжёлую сущность
+/// `_Counterparty` из counterparties_page (она private + содержит saldo).
+class _PartnerLite {
+  const _PartnerLite({required this.name, this.city});
+  final String name;
+  final String? city;
+}
+

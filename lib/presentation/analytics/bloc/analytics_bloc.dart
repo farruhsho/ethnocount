@@ -128,9 +128,8 @@ class TransferAnalyticsModel {
   final int totalCount;
   final int pendingCount;
   final int confirmedCount;
+  final int withCourierCount;
   final int issuedCount;
-  final int rejectedCount;
-  final int cancelledCount;
   final double totalCommissions;
   final int avgProcessingMs;
 
@@ -140,9 +139,8 @@ class TransferAnalyticsModel {
     required this.totalCount,
     required this.pendingCount,
     required this.confirmedCount,
+    required this.withCourierCount,
     required this.issuedCount,
-    required this.rejectedCount,
-    required this.cancelledCount,
     required this.totalCommissions,
     required this.avgProcessingMs,
   });
@@ -162,9 +160,8 @@ class TransferAnalyticsModel {
       totalCount: (m['totalCount'] ?? 0).toInt(),
       pendingCount: (m['pendingCount'] ?? 0).toInt(),
       confirmedCount: (m['confirmedCount'] ?? 0).toInt(),
+      withCourierCount: (m['withCourierCount'] ?? 0).toInt(),
       issuedCount: (m['issuedCount'] ?? 0).toInt(),
-      rejectedCount: (m['rejectedCount'] ?? 0).toInt(),
-      cancelledCount: (m['cancelledCount'] ?? 0).toInt(),
       totalCommissions: (m['totalCommissions'] ?? 0).toDouble(),
       avgProcessingMs: (m['avgProcessingMs'] ?? 0).toInt(),
     );
@@ -322,8 +319,28 @@ class AnalyticsBloc extends Bloc<AnalyticsEvent, AnalyticsBlocState> {
     } catch (e) {
       emit(state.copyWith(
         isLoading: false,
-        errorMessage: 'Ошибка загрузки аналитики: $e',
+        errorMessage: _humanizeAnalyticsError(e),
       ));
     }
   }
+}
+
+/// Прячет технические Windows/Postgrest строки и даёт пользователю
+/// понятный текст с подсказкой что делать. «Ошибка загрузки аналитики:
+/// ClientException: Превышен таймаут семафора…» теперь превращается
+/// в «Превышен сетевой таймаут».
+String _humanizeAnalyticsError(Object e) {
+  final s = e.toString();
+  if (s.contains('Превышен таймаут') ||
+      s.contains('TimeoutException') ||
+      s.contains('semaphore') ||
+      s.contains('SocketException')) {
+    return 'Превышен сетевой таймаут. Подключение к Supabase нестабильно — '
+        'проверьте интернет/VPN и нажмите «Повторить».';
+  }
+  if (s.contains('does not exist') || s.contains('42P01')) {
+    return 'Часть таблиц аналитики отсутствует в базе. Примените свежие '
+        'миграции через «supabase db push».';
+  }
+  return 'Не удалось загрузить аналитику: $s';
 }

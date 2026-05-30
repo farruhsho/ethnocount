@@ -266,6 +266,16 @@ class AppUser extends Equatable {
   /// Creator-only: полное управление филиалами и счетами.
   bool get canManageBranches => role.isCreator;
 
+  /// Управление счетами конкретного филиала:
+  ///   • creator/director — всегда
+  ///   • accountant — только если филиал в его assignedBranchIds
+  /// Соответствует серверной проверке `private.user_can_manage_branch_account`
+  /// (миграция 048).
+  bool canManageBranchAccountIn(String branchId) {
+    if (role.isCreator || role.isDirector) return true;
+    return assignedBranchIds.contains(branchId);
+  }
+
   /// Creator или бухгалтер с правом управления переводами.
   bool get canManageTransfers => role.isCreator || permissions.canManageTransfers;
 

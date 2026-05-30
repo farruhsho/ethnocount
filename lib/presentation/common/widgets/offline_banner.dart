@@ -5,6 +5,7 @@ import 'package:ethnocount/core/constants/app_durations.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/network/connectivity_service.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Offline banner that slides in when connectivity is lost.
 class OfflineBanner extends StatelessWidget {
   const OfflineBanner({super.key});
@@ -38,7 +39,7 @@ class OfflineBanner extends StatelessWidget {
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.cloud_off_rounded,
+                        Icon(AppIcons.cloud_off,
                             size: 14, color: Colors.black87),
                         SizedBox(width: AppSpacing.xs),
                         Text(

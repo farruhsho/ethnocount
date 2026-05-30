@@ -12,6 +12,7 @@ import 'package:ethnocount/domain/repositories/branch_repository.dart';
 import 'package:ethnocount/data/datasources/remote/user_remote_ds.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class UsersPage extends StatefulWidget {
   const UsersPage({super.key});
 
@@ -97,7 +98,7 @@ class _UsersPageState extends State<UsersPage> {
               ),
               FilledButton.icon(
                 onPressed: () => _showCreateDialog(context, viewerRole),
-                icon: const Icon(Icons.person_add_rounded),
+                icon: const Icon(AppIcons.person_add),
                 label: const Text('Добавить пользователя'),
               ),
             ],
@@ -162,7 +163,7 @@ class _UsersPageState extends State<UsersPage> {
       builder: (dialogCtx) => AlertDialog(
         title: const Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: Colors.red),
+            Icon(AppIcons.warning_amber, color: Colors.red),
             SizedBox(width: 8),
             Expanded(child: Text('Удалить пользователя?')),
           ],
@@ -189,7 +190,7 @@ class _UsersPageState extends State<UsersPage> {
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: Colors.red),
             onPressed: () => Navigator.of(dialogCtx).pop(true),
-            icon: const Icon(Icons.delete_forever_rounded),
+            icon: const Icon(AppIcons.delete_forever),
             label: const Text('Удалить'),
           ),
         ],
@@ -357,13 +358,13 @@ class _UsersTable extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      icon: const Icon(AppIcons.edit, size: 18),
                       onPressed: () => onEdit(user),
                       tooltip: 'Редактировать',
                     ),
                     if (_canDelete(user))
                       IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 18),
+                        icon: const Icon(AppIcons.delete_outline, size: 18),
                         color: Colors.red,
                         onPressed: () => onDelete(user),
                         tooltip: 'Удалить',
@@ -412,7 +413,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
     return AlertDialog(
       title: const Row(
         children: [
-          Icon(Icons.person_add_rounded),
+          Icon(AppIcons.person_add),
           SizedBox(width: 8),
           Text('Новый пользователь'),
         ],
@@ -430,7 +431,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Полное имя *',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person_outline),
+                  prefixIcon: Icon(AppIcons.person_outline),
                 ),
                 validator: (v) =>
                     (v == null || v.trim().isEmpty) ? 'Введите имя' : null,
@@ -441,7 +442,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Email *',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email_outlined),
+                  prefixIcon: Icon(AppIcons.email),
                 ),
                 keyboardType: TextInputType.emailAddress,
                 validator: (v) {
@@ -457,11 +458,11 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                 decoration: InputDecoration(
                   labelText: 'Пароль *',
                   border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.lock_outline_rounded),
+                  prefixIcon: const Icon(AppIcons.lock_outline),
                   suffixIcon: IconButton(
                     icon: Icon(_obscure
-                        ? Icons.visibility_outlined
-                        : Icons.visibility_off_outlined),
+                        ? AppIcons.visibility
+                        : AppIcons.visibility_off),
                     onPressed: () => setState(() => _obscure = !_obscure),
                   ),
                 ),
@@ -478,7 +479,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Роль *',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.admin_panel_settings_outlined),
+                  prefixIcon: Icon(AppIcons.admin_panel_settings),
                 ),
                 items: [
                   const DropdownMenuItem(
@@ -514,7 +515,7 @@ class _CreateUserDialogState extends State<_CreateUserDialog> {
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white),
                 )
-              : const Icon(Icons.check_rounded),
+              : const Icon(AppIcons.check),
           label: const Text('Создать'),
         ),
       ],
@@ -626,7 +627,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
     return AlertDialog(
       title: Row(
         children: [
-          const Icon(Icons.manage_accounts_rounded),
+          const Icon(AppIcons.manage_accounts),
           const SizedBox(width: 8),
           Expanded(child: Text('Редактировать: ${widget.user.displayName}')),
         ],
@@ -643,7 +644,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Имя',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.person_outline),
+                  prefixIcon: Icon(AppIcons.person_outline),
                 ),
               ),
               const SizedBox(height: AppSpacing.md),
@@ -653,7 +654,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                 decoration: const InputDecoration(
                   labelText: 'Email',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.email_outlined),
+                  prefixIcon: Icon(AppIcons.email),
                   helperText: 'Меняется через защищённую серверную функцию',
                 ),
               ),
@@ -688,64 +689,52 @@ class _EditUserDialogState extends State<_EditUserDialog> {
               const SizedBox(height: AppSpacing.md),
               Row(
                 children: [
-                  Text('Назначенные филиалы',
+                  Text('Филиал бухгалтера',
                       style: context.textTheme.labelLarge
                           ?.copyWith(fontWeight: FontWeight.w600)),
                   if (!canEditBranches) ...[
                     const SizedBox(width: 8),
                     Tooltip(
-                      message: 'Только Creator может менять филиалы',
-                      child: Icon(Icons.lock_outline,
+                      message: 'Только Creator/Director может менять филиал',
+                      child: Icon(AppIcons.lock_outline,
                           size: 16,
                           color: Theme.of(context).colorScheme.outline),
                     ),
                   ],
-                  const Spacer(),
-                  if (canEditBranches)
-                    TextButton.icon(
-                      onPressed: () => setState(() {
-                        if (_assignedBranches.length == _allBranches.length) {
-                          _assignedBranches = [];
-                        } else {
-                          _assignedBranches =
-                              _allBranches.map((b) => b.id).toList();
-                        }
-                      }),
-                      icon: Icon(
-                        _assignedBranches.length == _allBranches.length
-                            ? Icons.deselect_outlined
-                            : Icons.select_all_outlined,
-                        size: 16,
-                      ),
-                      label: Text(
-                        _assignedBranches.length == _allBranches.length
-                            ? 'Снять все'
-                            : 'Все филиалы',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
                 ],
               ),
+              const SizedBox(height: 4),
+              Text(
+                'Бухгалтер привязан ровно к одному филиалу — операции '
+                'выполняются только из него.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
               const SizedBox(height: AppSpacing.sm),
-              ..._allBranches.map((branch) {
-                return CheckboxListTile(
-                  dense: true,
-                  title: Text(branch.name),
-                  subtitle: Text(branch.baseCurrency),
-                  value: _assignedBranches.contains(branch.id),
-                  onChanged: canEditBranches
-                      ? (checked) {
-                          setState(() {
-                            if (checked == true) {
-                              _assignedBranches.add(branch.id);
-                            } else {
-                              _assignedBranches.remove(branch.id);
-                            }
-                          });
-                        }
+              IgnorePointer(
+                ignoring: !canEditBranches,
+                child: RadioGroup<String>(
+                  groupValue: _assignedBranches.isNotEmpty
+                      ? _assignedBranches.first
                       : null,
-                );
-              }),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    setState(() => _assignedBranches = [v]);
+                  },
+                  child: Column(
+                    children: _allBranches
+                        .map((branch) => RadioListTile<String>(
+                              dense: true,
+                              title: Text(branch.name),
+                              subtitle: Text(branch.baseCurrency),
+                              value: branch.id,
+                            ))
+                        .toList(),
+                  ),
+                ),
+              ),
               const SizedBox(height: AppSpacing.md),
               _PermissionsMatrix(
                 value: _permissions,
@@ -775,7 +764,7 @@ class _EditUserDialogState extends State<_EditUserDialog> {
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white),
                 )
-              : const Icon(Icons.save_rounded),
+              : const Icon(AppIcons.save),
           label: const Text('Сохранить'),
         ),
       ],
@@ -783,6 +772,17 @@ class _EditUserDialogState extends State<_EditUserDialog> {
   }
 
   Future<void> _submit() async {
+    // Бухгалтер должен быть привязан ровно к одному филиалу — без него
+    // у него нет ни источника, ни области видимости.
+    if (_role == 'accountant' && _assignedBranches.length != 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Выберите ровно один филиал для бухгалтера'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     setState(() => _loading = true);
     try {
       final ds = sl<UserRemoteDataSource>();
@@ -874,7 +874,7 @@ class _PermissionsMatrix extends StatelessWidget {
   static final _groups = <_PermissionGroup>[
     _PermissionGroup(
       'Переводы и операции',
-      Icons.swap_horiz_rounded,
+      AppIcons.swap_horiz,
       [
         _PermissionItem(
           label: 'Видеть переводы',
@@ -924,7 +924,7 @@ class _PermissionsMatrix extends StatelessWidget {
     ),
     _PermissionGroup(
       'Справочники и аналитика',
-      Icons.dashboard_outlined,
+      AppIcons.dashboard,
       [
         _PermissionItem(
           label: 'Видеть клиентов',
@@ -980,7 +980,7 @@ class _PermissionsMatrix extends StatelessWidget {
     ),
     _PermissionGroup(
       'Чувствительные данные',
-      Icons.lock_outline,
+      AppIcons.lock_outline,
       [
         _PermissionItem(
           label: 'Видеть балансы',
@@ -1049,7 +1049,7 @@ class _PermissionsMatrix extends StatelessWidget {
               padding: const EdgeInsets.all(AppSpacing.md),
               child: Row(
                 children: [
-                  Icon(Icons.tune_rounded,
+                  Icon(AppIcons.tune,
                       size: 18, color: theme.colorScheme.primary),
                   const SizedBox(width: 8),
                   Expanded(
@@ -1090,8 +1090,8 @@ class _PermissionsMatrix extends StatelessWidget {
                     ),
                   Icon(
                     expanded
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
+                        ? AppIcons.expand_less
+                        : AppIcons.expand_more,
                   ),
                 ],
               ),

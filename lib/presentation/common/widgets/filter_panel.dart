@@ -3,6 +3,7 @@ import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Reusable filter panel for desktop pages.
 /// Displays horizontally on desktop, collapsible on mobile.
 class FilterPanel extends StatelessWidget {
@@ -38,7 +39,7 @@ class FilterPanel extends StatelessWidget {
       child: Row(
         children: [
           Icon(
-            Icons.filter_list_rounded,
+            AppIcons.filter_list,
             size: 18,
             color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
           ),
@@ -54,7 +55,7 @@ class FilterPanel extends StatelessWidget {
             const SizedBox(width: AppSpacing.sm),
             TextButton.icon(
               onPressed: onReset,
-              icon: const Icon(Icons.clear_all, size: 16),
+              icon: const Icon(AppIcons.clear_all, size: 16),
               label: const Text('Сброс', style: TextStyle(fontSize: 12)),
               style: TextButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -99,7 +100,7 @@ class FilterDropdown<T> extends StatelessWidget {
       height: 36,
       child: DropdownButtonFormField<T>(
         key: ValueKey('filter-$label-$value'),
-        value: value,
+        initialValue: value,
         isDense: true,
         isExpanded: true,
         decoration: InputDecoration(
@@ -199,7 +200,7 @@ class DateRangeFilter extends StatelessWidget {
           );
           onChanged(range);
         },
-        icon: const Icon(Icons.date_range, size: 16),
+        icon: const Icon(AppIcons.date_range, size: 16),
         label: Text(
           hasRange
               ? '${_formatShort(startDate!)} – ${_formatShort(endDate!)}'

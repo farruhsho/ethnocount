@@ -3,6 +3,7 @@ import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Unified empty state: icon + title + optional subtitle + optional action.
 class EmptyState extends StatelessWidget {
   const EmptyState({
@@ -57,7 +58,7 @@ class EmptyState extends StatelessWidget {
               const SizedBox(height: AppSpacing.lg),
               FilledButton.icon(
                 onPressed: onAction,
-                icon: Icon(actionIcon ?? Icons.add_rounded, size: 20),
+                icon: Icon(actionIcon ?? AppIcons.add, size: 20),
                 label: Text(actionLabel!),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(0, 48),

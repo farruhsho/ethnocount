@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/core/extensions/date_x.dart';
+import 'package:ethnocount/core/utils/branch_access.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
 import 'package:ethnocount/domain/repositories/transfer_repository.dart';
+import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 enum ActivityFilter { all, incoming, outgoing, transfers }
 
 extension on ActivityFilter {
@@ -55,35 +59,29 @@ class ActivityFeedCard extends StatelessWidget {
   /// Маппинг Transfer → ActivityItem (статус → иконка/цвет).
   static ActivityItem _itemFor(Transfer t) {
     final (icon, color, kind, label) = switch (t.status) {
-      TransferStatus.pending => (
-        Icons.pending_actions_rounded,
+      TransferStatus.created => (
+        AppIcons.pending_actions,
         AppColors.warning,
         ActivityFilter.transfers,
         'Перевод создан',
       ),
-      TransferStatus.confirmed => (
-        Icons.task_alt_rounded,
+      TransferStatus.toDelivery => (
+        AppIcons.task_alt,
         AppColors.secondary,
         ActivityFilter.transfers,
-        'Перевод подтверждён',
+        'К выдаче',
       ),
-      TransferStatus.issued => (
-        Icons.payments_rounded,
+      TransferStatus.withCourier => (
+        AppIcons.local_shipping,
+        AppColors.info,
+        ActivityFilter.transfers,
+        'У курьера',
+      ),
+      TransferStatus.delivered => (
+        AppIcons.payments,
         AppColors.primary,
         ActivityFilter.outgoing,
         'Выдан получателю',
-      ),
-      TransferStatus.rejected => (
-        Icons.cancel_outlined,
-        AppColors.error,
-        ActivityFilter.transfers,
-        'Отклонён',
-      ),
-      TransferStatus.cancelled => (
-        Icons.do_disturb_alt_rounded,
-        AppColors.darkTextSecondary,
-        ActivityFilter.transfers,
-        'Отменён',
       ),
     };
     return ActivityItem(
@@ -93,23 +91,32 @@ class ActivityFeedCard extends StatelessWidget {
       currency: t.currency,
       icon: icon,
       color: color,
-      time: (t.issuedAt ?? t.confirmedAt ?? t.cancelledAt ?? t.rejectedAt ?? t.createdAt),
+      time: (t.issuedAt ?? t.dispatchedAt ?? t.confirmedAt ?? t.createdAt),
       kind: kind,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final user = context.select<AuthBloc, dynamic>((b) => b.state.user);
+    final allowed = accessibleBranchIds(user); // null = creator/director
     return StreamBuilder<List<Transfer>>(
       stream: sl<TransferRepository>().watchTransfers(),
       builder: (context, snap) {
         final all = snap.data ?? const <Transfer>[];
+        // Бухгалтер видит только события, где задействован его филиал.
+        final scoped = allowed == null
+            ? all
+            : all
+                .where((t) =>
+                    allowed.contains(t.fromBranchId) ||
+                    allowed.contains(t.toBranchId))
+                .toList();
         DateTime ts(Transfer t) => t.issuedAt ??
+            t.dispatchedAt ??
             t.confirmedAt ??
-            t.cancelledAt ??
-            t.rejectedAt ??
             t.createdAt;
-        final sorted = [...all]..sort((a, b) => ts(b).compareTo(ts(a)));
+        final sorted = [...scoped]..sort((a, b) => ts(b).compareTo(ts(a)));
         final items = sorted
             .take(12)
             .map(_itemFor)

@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ethnocount/core/constants/app_colors.dart';
 import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
+import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart';
 
-/// First screen: branded splash with [assets/icons/ethno.svg].
+/// Первый экран: текстовый wordmark «Финансы».
 ///
-/// Navigation after auth is handled by GoRouter redirects (refresh when auth
-/// state changes) so process restore does not leave the user stuck here.
-/// SVG is precached in [main].
+/// Навигация после авторизации отрабатывает в GoRouter redirect'ах,
+/// поэтому даже если процесс восстановлен с этого экрана, пользователь
+/// не залипает здесь.
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
 
@@ -19,8 +19,8 @@ class SplashPage extends StatefulWidget {
 class _SplashPageState extends State<SplashPage>
     with SingleTickerProviderStateMixin {
   late final AnimationController _entranceController;
-  late final Animation<double> _logoFade;
-  late final Animation<double> _logoScale;
+  late final Animation<double> _fade;
+  late final Animation<double> _scale;
 
   @override
   void initState() {
@@ -29,15 +29,9 @@ class _SplashPageState extends State<SplashPage>
       vsync: this,
       duration: const Duration(milliseconds: 240),
     );
-    _logoFade = CurvedAnimation(
-      parent: _entranceController,
-      curve: Curves.easeOut,
-    );
-    _logoScale = Tween<double>(begin: 0.96, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _entranceController,
-        curve: Curves.easeOutCubic,
-      ),
+    _fade = CurvedAnimation(parent: _entranceController, curve: Curves.easeOut);
+    _scale = Tween<double>(begin: 0.96, end: 1.0).animate(
+      CurvedAnimation(parent: _entranceController, curve: Curves.easeOutCubic),
     );
     _entranceController.forward();
   }
@@ -85,42 +79,40 @@ class _SplashPageState extends State<SplashPage>
                     left: context.screenWidth * 0.08,
                     child: IgnorePointer(
                       child: Opacity(
-                        opacity: _logoFade.value * 0.35,
+                        opacity: _fade.value * 0.35,
                         child: Container(
                           width: 140,
                           height: 140,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            color: scheme.primary.withValues(alpha: 0.12),
+                            color:
+                                AppColors.primary.withValues(alpha: 0.12),
                           ),
                         ),
                       ),
                     ),
                   ),
                 Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Transform.scale(
-                        scale: _logoScale.value,
-                        child: Opacity(
-                          opacity: _logoFade.value,
-                          child: SvgPicture.asset(
-                            'assets/icons/ethno.svg',
-                            height: isMobile ? 72 : 64,
-                            colorFilter: ColorFilter.mode(
-                              scheme.brightness == Brightness.light
-                                  ? AppColors.primary
-                                  : AppColors.primaryLight,
-                              BlendMode.srcIn,
-                            ),
+                  child: Transform.scale(
+                    scale: _scale.value,
+                    child: Opacity(
+                      opacity: _fade.value,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          BrandWordmark(height: isMobile ? 56 : 64),
+                          SizedBox(
+                            height: isMobile ? AppSpacing.lg : AppSpacing.md,
                           ),
-                        ),
+                          const SizedBox(
+                            width: 28,
+                            height: 2.5,
+                            child: LinearProgressIndicator(),
+                          ),
+                        ],
                       ),
-                      SizedBox(
-                        height: isMobile ? AppSpacing.xl : AppSpacing.lg,
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ],

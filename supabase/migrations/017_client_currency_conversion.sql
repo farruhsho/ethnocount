@@ -166,7 +166,11 @@ CREATE OR REPLACE FUNCTION public.convert_client_currency(
   p_rate double precision,
   p_description text DEFAULT NULL
 ) RETURNS jsonb
-LANGUAGE sql SECURITY INVOKER
+-- SECURITY DEFINER is required so this wrapper can resolve and call
+-- `private.convert_client_currency` — authenticated callers have no
+-- USAGE on the `private` schema, and SECURITY INVOKER here raised
+-- `permission denied for schema private` (42501) at runtime.
+LANGUAGE sql SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$ SELECT private.convert_client_currency(
   p_client_id, p_from_currency, p_to_currency, p_amount, p_rate, p_description

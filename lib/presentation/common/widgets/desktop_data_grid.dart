@@ -7,10 +7,15 @@ import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/core/services/grid_column_preferences_service.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Professional desktop data grid for financial tables.
 /// Supports sorting, filtering, pagination, column resizing,
 /// keyboard navigation, row selection, and export.
-class DesktopDataGrid extends StatelessWidget {
+///
+/// Если задан [gridId], настройки (hidden / widths / order / sort)
+/// сохраняются per-user в Supabase и автоматически восстанавливаются
+/// при следующем открытии — даже на другом устройстве.
+class DesktopDataGrid extends StatefulWidget {
   const DesktopDataGrid({
     super.key,
     required this.columns,
@@ -23,6 +28,7 @@ class DesktopDataGrid extends StatelessWidget {
     this.showPagination = true,
     this.showColumnFilter = true,
     this.showHeader = true,
+    this.alwaysShowFilters = true,
     this.fetchLazy = false,
     this.onFetch,
     this.totalRows,
@@ -41,12 +47,53 @@ class DesktopDataGrid extends StatelessWidget {
   final bool showPagination;
   final bool showColumnFilter;
   final bool showHeader;
+
+  /// Показывать строку поиска под каждым заголовком всегда. Чтобы юзер
+  /// мог фильтровать по любой колонке без лишних кликов.
+  final bool alwaysShowFilters;
+
   final bool fetchLazy;
   final TrinaLazyPaginationFetch? onFetch;
   final int? totalRows;
   final double headerHeight;
   final double rowHeight;
   final int frozenColumns;
+
+  @override
+  State<DesktopDataGrid> createState() => _DesktopDataGridState();
+}
+
+class _DesktopDataGridState extends State<DesktopDataGrid> {
+  TrinaGridStateManager? _sm;
+
+  @override
+  void dispose() {
+    _persistPreferences();
+    super.dispose();
+  }
+
+  void _persistPreferences() {
+    final id = widget.gridId;
+    final sm = _sm;
+    if (id == null || sm == null) return;
+    final cols = sm.refColumns;
+    final widths = <String, double>{
+      for (final c in cols) c.field: c.width,
+    };
+    final order = cols.map((c) => c.field).toList();
+    final hidden = cols.where((c) => c.hide).map((c) => c.field).toList();
+    final sorted = cols.where((c) => c.sort != TrinaColumnSort.none).firstOrNull;
+    sl<GridColumnPreferencesService>().save(
+      id,
+      GridPreferencesSnapshot(
+        hidden: hidden,
+        widths: widths,
+        order: order,
+        sortField: sorted?.field,
+        sortAsc: sorted == null ? null : sorted.sort == TrinaColumnSort.ascending,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,56 +122,115 @@ class DesktopDataGrid extends StatelessWidget {
       ),
       clipBehavior: Clip.antiAlias,
       child: TrinaGrid(
-        columns: columns,
-        rows: rows,
+        columns: widget.columns,
+        rows: widget.rows,
         onLoaded: (event) {
-          if (frozenColumns > 0) {
-            for (int i = 0; i < frozenColumns && i < columns.length; i++) {
-              event.stateManager.toggleFrozenColumn(columns[i], TrinaColumnFrozen.start);
+          _sm = event.stateManager;
+          if (widget.alwaysShowFilters) {
+            event.stateManager.setShowColumnFilter(true);
+          }
+          if (widget.frozenColumns > 0) {
+            for (int i = 0; i < widget.frozenColumns && i < widget.columns.length; i++) {
+              event.stateManager
+                  .toggleFrozenColumn(widget.columns[i], TrinaColumnFrozen.start);
             }
           }
-          if (gridId != null) {
-            sl<GridColumnPreferencesService>()
-                .loadHiddenFields(gridId!)
-                .then((hidden) {
-              for (final col in columns) {
-                if (hidden.contains(col.field)) {
-                  event.stateManager.hideColumn(col, true);
+          if (widget.gridId != null) {
+            sl<GridColumnPreferencesService>().load(widget.gridId!).then((snap) {
+              if (!mounted) return;
+              _applyPreferences(event.stateManager, snap);
+            });
+          } else {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              for (final col in widget.columns) {
+                if (!col.hide) {
+                  event.stateManager.autoFitColumn(context, col);
                 }
               }
             });
           }
-          // Автоподгонка ширины колонок под контент — не нужно вручную растягивать
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!context.mounted) return;
-            for (final col in columns) {
-              if (!col.hide) {
-                event.stateManager.autoFitColumn(context, col);
-              }
-            }
-          });
-          onLoaded?.call(event);
+          widget.onLoaded?.call(event);
         },
-        onSelected: onSelected,
-        onRowDoubleTap: onRowDoubleTap,
+        onSelected: widget.onSelected,
+        onRowDoubleTap: widget.onRowDoubleTap,
         configuration: gridConfig,
         mode: TrinaGridMode.selectWithOneTap,
-        createHeader: showHeader ? (sm) => _buildGridHeader(context, sm, columns, gridId) : null,
-        createFooter: showPagination
-            ? fetchLazy
+        createHeader: widget.showHeader
+            ? (sm) => _buildGridHeader(context, sm, widget.columns, widget.gridId)
+            : null,
+        createFooter: widget.showPagination
+            ? widget.fetchLazy
                 ? (stateManager) => TrinaLazyPagination(
-                      fetch: onFetch!,
+                      fetch: widget.onFetch!,
                       initialPage: 1,
                       initialFetch: true,
                       fetchWithFiltering: true,
                       fetchWithSorting: true,
                       stateManager: stateManager,
-                      pageSizeToMove: pageSize,
+                      pageSizeToMove: widget.pageSize,
                     )
                 : (stateManager) => TrinaPagination(stateManager)
             : null,
       ),
     );
+  }
+
+  void _applyPreferences(
+    TrinaGridStateManager sm,
+    GridPreferencesSnapshot snap,
+  ) {
+    // hidden
+    for (final col in widget.columns) {
+      if (snap.hidden.contains(col.field)) {
+        sm.hideColumn(col, true);
+      }
+    }
+    // widths
+    if (snap.widths.isNotEmpty) {
+      for (final col in widget.columns) {
+        final w = snap.widths[col.field];
+        if (w != null && w > 0) {
+          sm.resizeColumn(col, w - col.width);
+        }
+      }
+    } else {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        for (final col in widget.columns) {
+          if (!col.hide) sm.autoFitColumn(context, col);
+        }
+      });
+    }
+    // order
+    if (snap.order.isNotEmpty) {
+      final byField = {for (final c in widget.columns) c.field: c};
+      final reordered = <TrinaColumn>[
+        for (final f in snap.order)
+          if (byField.containsKey(f)) byField[f]!,
+      ];
+      // Доклеиваем колонки, которых нет в saved order (на случай новой колонки).
+      for (final c in widget.columns) {
+        if (!reordered.contains(c)) reordered.add(c);
+      }
+      if (reordered.length == widget.columns.length) {
+        for (var i = 0; i < reordered.length; i++) {
+          sm.moveColumn(column: reordered[i], targetColumn: widget.columns[i]);
+        }
+      }
+    }
+    // sort
+    final f = snap.sortField;
+    if (f != null) {
+      final col = widget.columns.where((c) => c.field == f).firstOrNull;
+      if (col != null) {
+        if (snap.sortAsc == true) {
+          sm.sortAscending(col);
+        } else {
+          sm.sortDescending(col);
+        }
+      }
+    }
   }
 
   TrinaGridStyleConfig _buildStyle(bool isDark) {
@@ -151,9 +257,9 @@ class DesktopDataGrid extends StatelessWidget {
         ),
         iconColor: AppColors.darkTextSecondary,
         menuBackgroundColor: AppColors.darkCard,
-        rowHeight: rowHeight,
-        columnHeight: headerHeight,
-        columnFilterHeight: showColumnFilter ? 40 : 0,
+        rowHeight: widget.rowHeight,
+        columnHeight: widget.headerHeight,
+        columnFilterHeight: widget.showColumnFilter ? 40 : 0,
         evenRowColor: AppColors.darkBg,
         oddRowColor: AppColors.darkSurface,
       );
@@ -181,9 +287,9 @@ class DesktopDataGrid extends StatelessWidget {
       ),
       iconColor: AppColors.lightTextSecondary,
       menuBackgroundColor: AppColors.lightCard,
-      rowHeight: rowHeight,
-      columnHeight: headerHeight,
-      columnFilterHeight: showColumnFilter ? 40 : 0,
+      rowHeight: widget.rowHeight,
+      columnHeight: widget.headerHeight,
+      columnFilterHeight: widget.showColumnFilter ? 40 : 0,
       evenRowColor: AppColors.lightBg,
       oddRowColor: Colors.white,
     );
@@ -241,7 +347,7 @@ class _GridToolbar extends StatelessWidget {
           ),
           const Spacer(),
           _ToolbarButton(
-            icon: Icons.filter_list,
+            icon: AppIcons.filter_list,
             tooltip: 'Показать фильтры (Ctrl+F)',
             onPressed: () => stateManager.setShowColumnFilter(
               !stateManager.showColumnFilter,
@@ -249,7 +355,7 @@ class _GridToolbar extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           _ToolbarButton(
-            icon: Icons.view_column_outlined,
+            icon: AppIcons.view_column,
             tooltip: 'Управление колонками',
             onPressed: () => _showColumnManager(context, stateManager, allColumns, gridId),
           ),
@@ -451,12 +557,11 @@ class _StatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final (color, label) = switch (status.toLowerCase()) {
-      'pending' => (AppColors.warning, 'Ожидание'),
-      'confirmed' => (AppColors.success, 'Принят'),
-      'issued' => (Colors.teal, 'Выдан'),
-      'rejected' => (AppColors.error, 'Отклонён'),
-      'cancelled' => (Colors.grey, 'Отменён'),
+    final (color, label) = switch (status) {
+      'created' || 'pending' => (AppColors.warning, 'Создан'),
+      'toDelivery' || 'confirmed' => (AppColors.secondary, 'К выдаче'),
+      'withCourier' => (AppColors.info, 'У курьера'),
+      'delivered' || 'issued' => (AppColors.primary, 'Выдан'),
       _ => (Colors.grey, status),
     };
 

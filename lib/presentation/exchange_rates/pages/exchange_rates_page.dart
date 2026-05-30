@@ -6,6 +6,7 @@ import 'package:ethnocount/core/utils/currency_utils.dart';
 import 'package:ethnocount/domain/entities/exchange_rate.dart';
 import 'package:ethnocount/presentation/exchange_rates/bloc/exchange_rate_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class ExchangeRatesPage extends StatefulWidget {
   const ExchangeRatesPage({super.key});
 
@@ -52,7 +53,7 @@ class _ExchangeRatesPageState extends State<ExchangeRatesPage> {
             title: const Text('Курсы валют'),
             actions: [
               IconButton(
-                icon: const Icon(Icons.add_rounded),
+                icon: const Icon(AppIcons.add),
                 tooltip: 'Установить курс',
                 onPressed: () => _showSetRateDialog(context, state.currencies),
               ),
@@ -412,8 +413,10 @@ class _HistoryRateCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(Icons.currency_exchange,
-                  size: 16, color: theme.colorScheme.primary),
+              Text(
+                '${CurrencyUtils.flag(rate.fromCurrency)} → ${CurrencyUtils.flag(rate.toCurrency)}',
+                style: const TextStyle(fontSize: 16),
+              ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
@@ -435,7 +438,7 @@ class _HistoryRateCard extends StatelessWidget {
           const SizedBox(height: 6),
           Row(
             children: [
-              Icon(Icons.swap_vert_rounded, size: 12, color: secondary),
+              Icon(AppIcons.swap_vert, size: 12, color: secondary),
               const SizedBox(width: 4),
               Text('Обратный: ${rate.inverseRate.toStringAsFixed(4)}',
                   style: TextStyle(fontSize: 11, color: secondary)),
@@ -444,7 +447,7 @@ class _HistoryRateCard extends StatelessWidget {
           const SizedBox(height: 2),
           Row(
             children: [
-              Icon(Icons.schedule_rounded, size: 12, color: secondary),
+              Icon(AppIcons.schedule, size: 12, color: secondary),
               const SizedBox(width: 4),
               Expanded(
                 child: Text(dateFmt.format(rate.effectiveAt),
@@ -456,7 +459,7 @@ class _HistoryRateCard extends StatelessWidget {
             const SizedBox(height: 2),
             Row(
               children: [
-                Icon(Icons.person_outline, size: 12, color: secondary),
+                Icon(AppIcons.person_outline, size: 12, color: secondary),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text('Установил: ${rate.setBy}',

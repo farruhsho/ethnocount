@@ -10,11 +10,19 @@ class AppColors {
   static const Color primaryLight = Color(0xFF33DDBA);
   static const Color primaryDark = Color(0xFF00A67E);
   static const Color primarySurface = Color(0x1A00D1A0); // 10% opacity
+  /// Цвет правой ноты primary-gradient. Используется в hero CTA, прогресс-баре.
+  static const Color primaryAccent = Color(0xFF00A3FF);
 
   // ─── Secondary (Electric Blue) ───
   static const Color secondary = Color(0xFF4C7CF5);
   static const Color secondaryLight = Color(0xFF7DA0FF);
   static const Color secondaryDark = Color(0xFF2A5BD8);
+
+  // ─── Дополнительные branded цвета из дизайн-системы ───
+  /// Используется для transit-счетов и audit-плашек.
+  static const Color purple = Color(0xFF9B59B6);
+  /// Telegram brand — для интеграционных блоков.
+  static const Color telegram = Color(0xFF2AABEE);
 
   // ─── Semantic ───
   static const Color success = Color(0xFF00C48C);

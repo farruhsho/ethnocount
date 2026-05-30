@@ -88,7 +88,13 @@ enum CommissionMode {
   fromSender,
 
   /// Commission added to recipient: 100$ → recipient gets 101$.
-  toReceiver;
+  toReceiver,
+
+  /// Commission goes as INCOME to a separate account (any account of the
+  /// sending branch). Currency of commission is taken from that account.
+  /// Семантика: «копилка комиссий» — на выбранный счёт начисляется
+  /// заработанная сумма (CREDIT, не DEBIT). См. миграцию 032.
+  fromAccount;
 
   String get displayName {
     switch (this) {
@@ -98,6 +104,8 @@ enum CommissionMode {
         return 'Отдельно с отправителя';
       case toReceiver:
         return 'К получателю';
+      case fromAccount:
+        return 'На отдельный счёт';
     }
   }
 
@@ -109,6 +117,8 @@ enum CommissionMode {
         return 'Отдельная комиссия: отправитель платит 101\$ (100\$ + 1\$), получателю 100\$';
       case toReceiver:
         return 'Комиссия добавляется получателю (100\$ → получит 101\$)';
+      case fromAccount:
+        return 'Комиссия начисляется на выбранный счёт как доход. Валюта — этого счёта.';
     }
   }
 }
@@ -148,30 +158,35 @@ enum AccountType {
 }
 
 /// Transfer lifecycle states.
+///
+/// Workflow:
+///   created   — отправитель создал перевод (раньше `pending`)
+///   toDelivery — приёмный филиал подтвердил, готов к выдаче (раньше `confirmed`)
+///   withCourier — отправитель отдал деньги курьеру для доставки получателю
+///   delivered — получатель получил деньги (раньше `issued`)
+///
+/// Старые `rejected` / `cancelled` удалены из workflow.
 enum TransferStatus {
-  pending,
-  confirmed,
-  issued, // vidan — деньги выданы получателю
-  rejected,
-  cancelled;
+  created,
+  toDelivery,
+  withCourier,
+  delivered;
 
   String get displayName {
     switch (this) {
-      case pending:
-        return 'Ожидает';
-      case confirmed:
-        return 'Принят';
-      case issued:
+      case created:
+        return 'Создан';
+      case toDelivery:
+        return 'К выдаче';
+      case withCourier:
+        return 'У курьера';
+      case delivered:
         return 'Выдан';
-      case rejected:
-        return 'Отклонён';
-      case cancelled:
-        return 'Отменён';
     }
   }
 
-  bool get isFinal =>
-      this == confirmed || this == issued || this == rejected || this == cancelled;
+  /// Final = деньги дошли до получателя. Только `delivered` — финал.
+  bool get isFinal => this == delivered;
 }
 
 /// Double-entry ledger entry types.
@@ -244,8 +259,7 @@ enum ClientTransactionType {
 enum NotificationType {
   incomingTransfer,
   transferConfirmed,
-  transferRejected,
-  transferCancelled,
+  transferDispatched,
   transferIssued,
   transferAmended,
   systemAlert;
@@ -256,10 +270,8 @@ enum NotificationType {
         return 'Входящий перевод';
       case transferConfirmed:
         return 'Перевод подтверждён';
-      case transferRejected:
-        return 'Перевод отклонён';
-      case transferCancelled:
-        return 'Перевод отменён';
+      case transferDispatched:
+        return 'Перевод отдан курьеру';
       case transferIssued:
         return 'Перевод выдан';
       case transferAmended:

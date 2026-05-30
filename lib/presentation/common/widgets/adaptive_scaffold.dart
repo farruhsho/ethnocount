@@ -8,10 +8,11 @@ import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/extensions/context_x.dart';
 import 'package:ethnocount/domain/entities/user.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
-import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart';
+import 'package:ethnocount/presentation/common/widgets/ethno_logo.dart' show BrandWordmark;
 import 'package:ethnocount/presentation/common/widgets/offline_banner.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class NavigationIntent extends Intent {
   final int index;
   const NavigationIntent(this.index);
@@ -96,35 +97,21 @@ class _DesktopShellState extends State<_DesktopShell> {
       builder: (context, authState) {
         final user = authState.user;
         final (routes, dests) = _buildNavItems(context, user);
-        final extended = _railExpanded || context.screenWidth > AppSpacing.breakpointWidescreen;
+        final extended =
+            _railExpanded || context.screenWidth > AppSpacing.breakpointWidescreen;
+        final currentIdx = _navIndexForPath(
+            GoRouterState.of(context).uri.path, routes);
         return Scaffold(
           body: Row(
             children: [
-              NavigationRail(
+              _CustomNavRail(
                 extended: extended,
-                selectedIndex: _navIndexForPath(GoRouterState.of(context).uri.path, routes),
-                onDestinationSelected: (index) {
-                  if (index >= 0 && index < routes.length) {
-                    context.go(routes[index]);
-                  }
-                },
-                leading: Column(
-                  children: [
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
-                        child: const EthnoLogo(height: 48),
-                      ),
-                    IconButton(
-                      icon: Icon(
-                        _railExpanded ? Icons.chevron_left : Icons.chevron_right,
-                        size: 20,
-                      ),
-                      onPressed: () => setState(() => _railExpanded = !_railExpanded),
-                      tooltip: _railExpanded ? 'Свернуть меню' : 'Развернуть меню',
-                    ),
-                  ],
-                ),
+                currentIndex: currentIdx,
+                routes: routes,
                 destinations: dests,
+                user: user,
+                onToggle: () =>
+                    setState(() => _railExpanded = !_railExpanded),
               ),
               const VerticalDivider(width: 1),
               Expanded(child: widget.child),
@@ -135,68 +122,30 @@ class _DesktopShellState extends State<_DesktopShell> {
     );
   }
 
-  (List<String> routes, List<NavigationRailDestination> dests) _buildNavItems(
+  (List<String> routes, List<_NavDest> dests) _buildNavItems(
       BuildContext context, dynamic user) {
     final isCreator = user?.role.isCreator ?? false;
     final canManageUsers = user?.role.canManageUsers ?? false;
     final perms = user?.permissions ?? AccountantPermissions.all;
 
-    final all = [
-      ('/', const NavigationRailDestination(
-          icon: Icon(Icons.dashboard_outlined),
-          selectedIcon: Icon(Icons.dashboard_rounded),
-          label: Text('Обзор'))),
-      ('/transfers', const NavigationRailDestination(
-          icon: Icon(Icons.swap_horiz_outlined),
-          selectedIcon: Icon(Icons.swap_horiz_rounded),
-          label: Text('Переводы'))),
-      ('/ledger', const NavigationRailDestination(
-          icon: Icon(Icons.receipt_long_outlined),
-          selectedIcon: Icon(Icons.receipt_long_rounded),
-          label: Text('Журнал'))),
-      ('/clients', const NavigationRailDestination(
-          icon: Icon(Icons.people_outline_rounded),
-          selectedIcon: Icon(Icons.people_rounded),
-          label: Text('Клиенты'))),
-      ('/purchases', const NavigationRailDestination(
-          icon: Icon(Icons.shopping_cart_outlined),
-          selectedIcon: Icon(Icons.shopping_cart_rounded),
-          label: Text('Покупки'))),
-      ('/analytics', const NavigationRailDestination(
-          icon: Icon(Icons.analytics_outlined),
-          selectedIcon: Icon(Icons.analytics_rounded),
-          label: Text('Аналитика'))),
-      ('/exchange-rates', const NavigationRailDestination(
-          icon: Icon(Icons.currency_exchange_outlined),
-          selectedIcon: Icon(Icons.currency_exchange_rounded),
-          label: Text('Курсы'))),
-      ('/reports', const NavigationRailDestination(
-          icon: Icon(Icons.file_download_outlined),
-          selectedIcon: Icon(Icons.file_download_rounded),
-          label: Text('Отчёты'))),
-      ('/branches', const NavigationRailDestination(
-          icon: Icon(Icons.business_outlined),
-          selectedIcon: Icon(Icons.business_rounded),
-          label: Text('Филиалы'))),
-      ('/users', const NavigationRailDestination(
-          icon: Icon(Icons.admin_panel_settings_outlined),
-          selectedIcon: Icon(Icons.admin_panel_settings_rounded),
-          label: Text('Управление'))),
-      ('/approvals', const NavigationRailDestination(
-          icon: Icon(Icons.fact_check_outlined),
-          selectedIcon: Icon(Icons.fact_check_rounded),
-          label: Text('Согласования'))),
-      ('/notifications', const NavigationRailDestination(
-          icon: Icon(Icons.notifications_outlined),
-          selectedIcon: Icon(Icons.notifications_rounded),
-          label: Text('Уведомления'))),
-      ('/settings', const NavigationRailDestination(
-          icon: Icon(Icons.settings_outlined),
-          selectedIcon: Icon(Icons.settings_rounded),
-          label: Text('Настройки'))),
+    final all = <(String, _NavDest)>[
+      ('/', _NavDest(AppIcons.dashboard, 'Обзор')),
+      ('/transfers', _NavDest(AppIcons.swap_horiz, 'Переводы')),
+      ('/ledger', _NavDest(AppIcons.receipt_long, 'Журнал')),
+      ('/clients', _NavDest(AppIcons.people_outline, 'Клиенты')),
+      ('/counterparties', _NavDest(AppIcons.account_tree, 'Партнёры')),
+      ('/purchases', _NavDest(AppIcons.shopping_cart, 'Покупки')),
+      ('/analytics', _NavDest(AppIcons.analytics, 'Аналитика')),
+      ('/exchange-rates', _NavDest(AppIcons.currency_exchange, 'Курсы')),
+      ('/reports', _NavDest(AppIcons.file_download, 'Отчёты')),
+      ('/branches', _NavDest(AppIcons.business, 'Филиалы')),
+      ('/users', _NavDest(AppIcons.admin_panel_settings, 'Управление')),
+      ('/approvals', _NavDest(AppIcons.fact_check, 'Согласования')),
+      ('/notifications', _NavDest(AppIcons.notifications, 'Уведомления')),
+      ('/settings', _NavDest(AppIcons.settings, 'Настройки')),
     ];
 
-    final filtered = <(String, NavigationRailDestination)>[];
+    final filtered = <(String, _NavDest)>[];
     for (final e in all) {
       final route = e.$1;
       if (route == '/') {
@@ -206,19 +155,191 @@ class _DesktopShellState extends State<_DesktopShell> {
       if (route == '/transfers' && !perms.canTransfers && !isCreator) continue;
       if (route == '/ledger' && !perms.canLedger && !isCreator) continue;
       if (route == '/clients' && !perms.canClients && !isCreator) continue;
+      // «Партнёры» (counterparties) видит и бухгалтер тоже.
       if (route == '/purchases' && !perms.canPurchases && !isCreator) continue;
       if (route == '/analytics' && !perms.canAnalytics && !isCreator) continue;
       if (route == '/exchange-rates' && !perms.canExchangeRates && !isCreator) continue;
       if (route == '/reports' && !perms.canReports && !isCreator) continue;
       if (route == '/branches' && !perms.canBranchesView && !isCreator) continue;
       if (route == '/users' && !canManageUsers) continue;
-      // Согласования видны всем — accountant видит свои заявки,
-      // creator/director видят все и одобряют.
       filtered.add(e);
     }
     return (
       filtered.map((e) => e.$1).toList(),
       filtered.map((e) => e.$2).toList(),
+    );
+  }
+}
+
+/// Простая модель пункта навигации — иконка + лейбл. Заменяет
+/// `NavigationRailDestination` чтобы можно было рендерить в кастомном
+/// scrollable Column (стандартный NavigationRail не умеет скроллиться
+/// → переполняется при 14+ пунктах).
+class _NavDest {
+  const _NavDest(this.icon, this.label);
+  final IconData icon;
+  final String label;
+}
+
+/// Кастомный рельс навигации с:
+///  • leading: BrandWordmark + кнопка сворачивания
+///  • scrollable Expanded destinations (важно — стандартный NavigationRail
+///    не скроллится и при 14+ пунктах падает с BOTTOM OVERFLOWED)
+///  • sticky bottom _RailUserPill
+/// `extended` управляет шириной (свернут / расширен).
+class _CustomNavRail extends StatelessWidget {
+  const _CustomNavRail({
+    required this.extended,
+    required this.currentIndex,
+    required this.routes,
+    required this.destinations,
+    required this.user,
+    required this.onToggle,
+  });
+
+  final bool extended;
+  final int currentIndex;
+  final List<String> routes;
+  final List<_NavDest> destinations;
+  final AppUser? user;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final railWidth = extended ? 240.0 : 72.0;
+    return SizedBox(
+      width: railWidth,
+      child: Material(
+        color: scheme.surface,
+        child: Column(
+          children: [
+            // ── Leading: brand + toggle ──
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+              child: BrandWordmark(
+                height: 36,
+                monogramOnly: !extended,
+              ),
+            ),
+            IconButton(
+              icon: Icon(
+                extended ? AppIcons.chevron_left : AppIcons.chevron_right,
+                size: 20,
+              ),
+              onPressed: onToggle,
+              tooltip: extended ? 'Свернуть меню' : 'Развернуть меню',
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            // ── Scrollable destinations ──
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  children: [
+                    for (var i = 0; i < destinations.length; i++)
+                      _RailItem(
+                        dest: destinations[i],
+                        selected: i == currentIndex,
+                        extended: extended,
+                        onTap: () => context.go(routes[i]),
+                      ),
+                    const SizedBox(height: AppSpacing.md),
+                  ],
+                ),
+              ),
+            ),
+            // ── Bottom user pill ──
+            Padding(
+              padding: const EdgeInsets.only(
+                top: AppSpacing.sm,
+                bottom: AppSpacing.md,
+              ),
+              child: _RailUserPill(user: user, extended: extended),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Один пункт меню в кастомном рельсе. В extended-режиме — Row с иконкой
+/// и текстом; в свёрнутом — только иконка по центру (с tooltip).
+class _RailItem extends StatelessWidget {
+  const _RailItem({
+    required this.dest,
+    required this.selected,
+    required this.extended,
+    required this.onTap,
+  });
+  final _NavDest dest;
+  final bool selected;
+  final bool extended;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final fg = selected ? scheme.primary : scheme.onSurfaceVariant;
+    final bg =
+        selected ? scheme.primary.withValues(alpha: 0.12) : Colors.transparent;
+    if (!extended) {
+      // Свёрнутый режим — только иконка-капсула, центрирована.
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+            horizontal: 12, vertical: 3),
+        child: Tooltip(
+          message: dest.label,
+          child: Material(
+            color: bg,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(14),
+              child: SizedBox(
+                height: 40,
+                child: Center(child: Icon(dest.icon, size: 22, color: fg)),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    // Расширенный режим — иконка + лейбл.
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm, vertical: 2),
+      child: Material(
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Icon(dest.icon, size: 20, color: fg),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(
+                    dest.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13.5,
+                      fontWeight:
+                          selected ? FontWeight.w800 : FontWeight.w500,
+                      color: fg,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -333,8 +454,8 @@ class _MobileBottomBar extends StatelessWidget {
             children: [
               Expanded(
                 child: _NavSlot(
-                  icon: Icons.dashboard_outlined,
-                  selectedIcon: Icons.dashboard_rounded,
+                  icon: AppIcons.dashboard,
+                  selectedIcon: AppIcons.dashboard,
                   label: 'Главная',
                   selected: currentIndex == 0,
                   onTap: () => onSelect(0),
@@ -342,8 +463,8 @@ class _MobileBottomBar extends StatelessWidget {
               ),
               Expanded(
                 child: _NavSlot(
-                  icon: Icons.swap_horiz_outlined,
-                  selectedIcon: Icons.swap_horiz_rounded,
+                  icon: AppIcons.swap_horiz,
+                  selectedIcon: AppIcons.swap_horiz,
                   label: 'Переводы',
                   selected: currentIndex == 1,
                   onTap: () => onSelect(1),
@@ -356,8 +477,8 @@ class _MobileBottomBar extends StatelessWidget {
               ),
               Expanded(
                 child: _NavSlot(
-                  icon: Icons.receipt_long_outlined,
-                  selectedIcon: Icons.receipt_long_rounded,
+                  icon: AppIcons.receipt_long,
+                  selectedIcon: AppIcons.receipt_long,
                   label: 'Журнал',
                   selected: currentIndex == 3,
                   onTap: () => onSelect(3),
@@ -365,8 +486,8 @@ class _MobileBottomBar extends StatelessWidget {
               ),
               Expanded(
                 child: _NavSlot(
-                  icon: Icons.menu_rounded,
-                  selectedIcon: Icons.menu_rounded,
+                  icon: AppIcons.menu,
+                  selectedIcon: AppIcons.menu,
                   label: 'Ещё',
                   selected: currentIndex == 4,
                   onTap: () => onSelect(4),
@@ -499,7 +620,7 @@ class _CenterFab extends StatelessWidget {
               width: 56,
               height: 56,
               child: Icon(
-                Icons.add_rounded,
+                AppIcons.add,
                 color: scheme.onPrimary,
                 size: 30,
               ),
@@ -536,47 +657,47 @@ Future<void> _showMoreSheet(
   final items = <_MoreDestination>[
     if (perms.canPurchases || isCreator)
       const _MoreDestination(
-        icon: Icons.shopping_cart_outlined,
+        icon: AppIcons.shopping_cart,
         label: 'Покупки',
         route: '/purchases',
       ),
     if (perms.canAnalytics || isCreator)
       const _MoreDestination(
-        icon: Icons.analytics_outlined,
+        icon: AppIcons.analytics,
         label: 'Аналитика',
         route: '/analytics',
       ),
     if (perms.canExchangeRates || isCreator)
       const _MoreDestination(
-        icon: Icons.currency_exchange_outlined,
+        icon: AppIcons.currency_exchange,
         label: 'Курсы',
         route: '/exchange-rates',
       ),
     if (perms.canReports || isCreator)
       const _MoreDestination(
-        icon: Icons.file_download_outlined,
+        icon: AppIcons.file_download,
         label: 'Отчёты',
         route: '/reports',
       ),
     if (perms.canBranchesView || isCreator)
       const _MoreDestination(
-        icon: Icons.business_outlined,
+        icon: AppIcons.business,
         label: 'Филиалы',
         route: '/branches',
       ),
     if (canManageUsers)
       const _MoreDestination(
-        icon: Icons.admin_panel_settings_outlined,
+        icon: AppIcons.admin_panel_settings,
         label: 'Управление',
         route: '/users',
       ),
     const _MoreDestination(
-      icon: Icons.notifications_outlined,
+      icon: AppIcons.notifications,
       label: 'Уведомления',
       route: '/notifications',
     ),
     const _MoreDestination(
-      icon: Icons.settings_outlined,
+      icon: AppIcons.settings,
       label: 'Настройки',
       route: '/settings',
     ),
@@ -668,7 +789,7 @@ Future<void> _showMoreSheet(
               if (hasAccount) const SizedBox(height: AppSpacing.md),
               Row(
                 children: [
-                  const EthnoLogo(height: 24),
+                  const BrandWordmark(height: 22, monogramOnly: true),
                   const SizedBox(width: AppSpacing.sm),
                   Text(
                     'Разделы',
@@ -819,5 +940,287 @@ void _onMobileTap(
         roleLabel: roleLabel,
       ));
       break;
+  }
+}
+
+/// Карточка пользователя в подвале desktop NavigationRail.
+///
+/// Показывает: аватар-инициалы, имя, роль и (для бухгалтера) название
+/// прикреплённого филиала. Online-точка на аватаре. По тапу — меню
+/// «Настройки / Выйти». Свёрнутая (когда rail collapsed) — только аватар
+/// с tooltip-ом, на котором собрано всё.
+class _RailUserPill extends StatelessWidget {
+  const _RailUserPill({required this.user, required this.extended});
+
+  final AppUser? user;
+  final bool extended;
+
+  Future<void> _openMenu(BuildContext ctx, String email) async {
+    final box = ctx.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final overlay = Overlay.of(ctx).context.findRenderObject() as RenderBox;
+    final target = box.localToGlobal(Offset.zero, ancestor: overlay);
+    final selected = await showMenu<String>(
+      context: ctx,
+      position: RelativeRect.fromLTRB(
+        target.dx + box.size.width,
+        target.dy - 60,
+        target.dx + box.size.width + 260,
+        target.dy + 60,
+      ),
+      items: [
+        PopupMenuItem(
+          value: 'settings',
+          child: ListTile(
+            dense: true,
+            leading: const Icon(AppIcons.settings, size: 18),
+            title: const Text('Настройки'),
+            subtitle: email.isEmpty ? null : Text(email),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'logout',
+          child: ListTile(
+            dense: true,
+            leading: Icon(AppIcons.logout, size: 18, color: Colors.redAccent),
+            title: Text('Выйти', style: TextStyle(color: Colors.redAccent)),
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ],
+    );
+    if (!ctx.mounted) return;
+    switch (selected) {
+      case 'settings':
+        ctx.go('/settings');
+        break;
+      case 'logout':
+        ctx.read<AuthBloc>().add(const AuthSignOutRequested());
+        break;
+    }
+  }
+
+  Widget _avatar(BuildContext context, String initial, {double size = 40}) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            scheme.primary,
+            scheme.primary.withValues(alpha: 0.7),
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: scheme.primary.withValues(alpha: 0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        initial,
+        style: TextStyle(
+          color: scheme.onPrimary,
+          fontWeight: FontWeight.w800,
+          fontSize: size * 0.42,
+          letterSpacing: 0.3,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final name = user?.displayName.trim() ?? '';
+    final email = user?.email.trim() ?? '';
+    final role = user?.role.displayNameRu ?? '';
+
+    final initial = (name.isNotEmpty
+            ? name
+            : (email.isNotEmpty ? email : '?'))
+        .characters
+        .first
+        .toUpperCase();
+
+    if (!extended) {
+      return Builder(
+        builder: (ctx) => Tooltip(
+          message: name.isNotEmpty
+              ? '$name${role.isEmpty ? '' : ' · $role'}'
+                  '${email.isEmpty ? '' : '\n$email'}'
+              : email,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => _openMenu(ctx, email),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: _avatar(context, initial),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return BlocBuilder<DashboardBloc, DashboardState>(
+      buildWhen: (a, b) => a.branches != b.branches,
+      builder: (ctx, _) {
+        final branchLabel = _branchLabel(ctx, user);
+        final roleLabel = role;
+        final primary = name.isNotEmpty ? name : (email.isNotEmpty ? email : 'Без имени');
+        final showEmailLine = name.isNotEmpty && email.isNotEmpty;
+
+        return InkWell(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          onTap: () => _openMenu(ctx, email),
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.sm,
+              AppSpacing.sm,
+              AppSpacing.sm,
+              AppSpacing.sm,
+            ),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  scheme.surfaceContainerHigh.withValues(alpha: 0.85),
+                  scheme.surfaceContainerHighest.withValues(alpha: 0.55),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+              border: Border.all(
+                color: scheme.outline.withValues(alpha: 0.18),
+                width: 0.6,
+              ),
+            ),
+            // NavigationRail.trailing получает Column без bounded width,
+            // поэтому Row здесь обязан быть mainAxisSize.min — а внутри
+            // только Flexible (Expanded внутри Row(min) даёт MISSING
+            // constraints и валит hit-test всего Scaffold, включая FAB).
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _avatar(context, initial, size: 38),
+                const SizedBox(width: AppSpacing.sm),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        primary,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.1,
+                          height: 1.15,
+                        ),
+                      ),
+                      if (roleLabel.isNotEmpty || branchLabel.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (roleLabel.isNotEmpty)
+                              _RoleBadge(label: roleLabel, color: scheme.primary),
+                            if (roleLabel.isNotEmpty && branchLabel.isNotEmpty)
+                              const SizedBox(width: 4),
+                            if (branchLabel.isNotEmpty)
+                              Flexible(
+                                child: Text(
+                                  branchLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                      if (showEmailLine) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w500,
+                            color: scheme.onSurfaceVariant
+                                .withValues(alpha: 0.75),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Icon(AppIcons.menu,
+                    size: 14, color: scheme.onSurfaceVariant),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Только имя филиала (без роли) — роль показываем как отдельный badge.
+  String _branchLabel(BuildContext context, AppUser? u) {
+    if (u == null) return '';
+    if (u.role.isCreator || u.role.isDirector) return 'все филиалы';
+    if (u.assignedBranchIds.isEmpty) return 'без филиала';
+    final all = context.read<DashboardBloc>().state.branches;
+    final byId = {for (final b in all) b.id: b};
+    final names = u.assignedBranchIds
+        .map((id) => byId[id]?.name)
+        .whereType<String>()
+        .toList();
+    if (names.isEmpty) return 'филиал не загружен';
+    return names.length > 2
+        ? '${names.take(2).join(', ')} +${names.length - 2}'
+        : names.join(', ');
+  }
+}
+
+class _RoleBadge extends StatelessWidget {
+  const _RoleBadge({required this.label, required this.color});
+  final String label;
+  final Color color;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 9.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.3,
+          color: color,
+        ),
+      ),
+    );
   }
 }

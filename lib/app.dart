@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:ethnocount/core/constants/app_branding.dart';
 import 'package:ethnocount/core/di/injection.dart';
 import 'package:ethnocount/core/routing/app_router.dart';
 import 'package:ethnocount/core/routing/auth_router_refresh.dart';
@@ -16,6 +17,7 @@ import 'package:ethnocount/presentation/exchange_rates/bloc/exchange_rate_bloc.d
 import 'package:ethnocount/presentation/ledger/bloc/ledger_bloc.dart';
 import 'package:ethnocount/presentation/notifications/bloc/notification_bloc.dart';
 import 'package:ethnocount/presentation/settings/bloc/theme_cubit.dart';
+import 'package:ethnocount/presentation/settings/bloc/user_prefs_cubit.dart';
 import 'package:ethnocount/presentation/transfers/bloc/transfer_bloc.dart'
     show TransferBloc, TransferBlocState, TransferBlocStatus;
 
@@ -40,6 +42,7 @@ class EthnoCountApp extends StatelessWidget {
         ),
         BlocProvider(create: (_) => sl<NotificationBloc>()),
         BlocProvider(create: (_) => ThemeCubit()),
+        BlocProvider(create: (_) => UserPrefsCubit()),
       ],
       child: BlocListener<AuthBloc, AuthState>(
         listenWhen: (prev, curr) =>
@@ -171,7 +174,7 @@ class _RootMaterialAppState extends State<_RootMaterialApp>
       return const SizedBox.shrink();
     }
     return MaterialApp.router(
-      title: 'Ethno Logistics',
+      title: kAppDisplayName,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: widget.themeMode,

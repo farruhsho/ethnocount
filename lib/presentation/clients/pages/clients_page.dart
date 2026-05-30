@@ -11,11 +11,13 @@ import 'package:ethnocount/domain/entities/client.dart';
 import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/clients/bloc/client_bloc.dart';
 import 'package:ethnocount/presentation/clients/widgets/client_detail_screen.dart';
+import 'package:ethnocount/presentation/clients/widgets/clients_list_pane.dart';
 import 'package:ethnocount/presentation/clients/widgets/convert_currency_dialog.dart';
 import 'package:ethnocount/presentation/common/widgets/empty_state.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 import 'package:ethnocount/core/utils/branch_access.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class ClientsPage extends StatefulWidget {
   const ClientsPage({super.key});
 
@@ -59,6 +61,13 @@ class _ClientsPageState extends State<ClientsPage> {
         }
       },
       builder: (context, state) {
+        if (context.isDesktop && context.isDark) {
+          return _DesktopHeroLayout(
+            state: state,
+            selected: _selected,
+            onSelect: (c) => setState(() => _selected = c),
+          );
+        }
         if (context.isDesktop) {
           return _DesktopLayout(
             state: state,
@@ -142,6 +151,110 @@ Widget _balancePill(BuildContext context, Client client, ClientBalance? balance)
   );
 }
 
+// ─── Desktop hero (dark, design-spec list pane) ───
+
+class _DesktopHeroLayout extends StatelessWidget {
+  const _DesktopHeroLayout({
+    required this.state,
+    required this.selected,
+    required this.onSelect,
+  });
+
+  final ClientBlocState state;
+  final Client? selected;
+  final ValueChanged<Client> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = context.watch<AuthBloc>().state.user;
+    final allBranches =
+        filterBranchesByAccess(context.watch<DashboardBloc>().state.branches, user);
+    final allowed = accessibleBranchIds(user); // null = creator/director
+    final clients = state.clients
+        .where((c) =>
+            allowed == null ||
+            c.branchId == null ||
+            allowed.contains(c.branchId))
+        .toList();
+
+    // Sum of USD balances only (no async FX) — safe lower bound for the
+    // "USD-экв." mini-stat tile.
+    double totalUsd = 0;
+    for (final c in clients) {
+      final bal = state.balancesByClientId[c.id];
+      if (bal == null) continue;
+      final usdInWallet = bal.balancesByCurrency['USD'];
+      if (usdInWallet != null) {
+        totalUsd += usdInWallet;
+      } else if (bal.currency == 'USD') {
+        totalUsd += bal.balance;
+      }
+    }
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(
+          width: 380,
+          child: ClientsListPane(
+            clients: clients,
+            balances: state.balancesByClientId,
+            selectedId: selected?.id,
+            onSelect: onSelect,
+            canCreate: true,
+            onCreate: () => _showCreateDialog(context),
+            totalUsdEquivalent: totalUsd,
+          ),
+        ),
+        Expanded(
+          child: Container(
+            color: AppColors.darkBg,
+            child: selected == null
+                ? _emptyDetail(context)
+                : _ClientDetailPanel(
+                    client: selected!,
+                    branches: allBranches,
+                    state: state,
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _emptyDetail(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xxl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(AppIcons.person_outline,
+                size: 48, color: AppColors.darkTextDisabled),
+            const SizedBox(height: 14),
+            Text(
+              'Выберите клиента',
+              style: context.textTheme.titleMedium?.copyWith(
+                color: AppColors.darkTextSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Слева — список ваших контрагентов с балансами и фильтрами.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.darkTextTertiary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _DesktopLayout extends StatelessWidget {
   const _DesktopLayout({
     required this.state,
@@ -162,10 +275,15 @@ class _DesktopLayout extends StatelessWidget {
     final user = context.watch<AuthBloc>().state.user;
     final branches =
         filterBranchesByAccess(context.watch<DashboardBloc>().state.branches, user);
+    final allowed = accessibleBranchIds(user); // null = creator/director
     final q = search.toLowerCase().trim();
     final qDigits = search.replaceAll(RegExp(r'[^\d]'), '');
     final filtered = state.clients
-        .where((c) => _matchesClientSearch(c, search, q, qDigits))
+        .where((c) =>
+            (allowed == null ||
+                c.branchId == null ||
+                allowed.contains(c.branchId)) &&
+            _matchesClientSearch(c, search, q, qDigits))
         .toList();
 
     return Padding(
@@ -178,37 +296,151 @@ class _DesktopLayout extends StatelessWidget {
           _SearchBar(onChanged: onSearchChanged),
           const SizedBox(height: AppSpacing.md),
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Client table
-                Expanded(
-                  flex: 3,
-                  child: _ClientTable(
+            // Master-detail: пока никого не выбрано — список занимает всю
+            // ширину; как только пользователь выбрал клиента, между списком
+            // и detail-панелью появляется draggable-divider — оператор сам
+            // настраивает удобную ширину колонки (см. [_ResizableMasterDetail]).
+            child: selected == null
+                ? _ClientTable(
                     clients: filtered,
                     branches: branches,
                     balancesByClientId: state.balancesByClientId,
                     selected: selected,
                     onSelect: onSelect,
                     isLoading: state.status == ClientBlocStatus.loading,
+                    compact: false,
+                  )
+                : _ResizableMasterDetail(
+                    master: _ClientTable(
+                      clients: filtered,
+                      branches: branches,
+                      balancesByClientId: state.balancesByClientId,
+                      selected: selected,
+                      onSelect: onSelect,
+                      isLoading: state.status == ClientBlocStatus.loading,
+                      compact: true,
+                    ),
+                    detail: _ClientDetailPanel(
+                      client: selected!,
+                      branches: branches,
+                      state: state,
+                    ),
                   ),
-                ),
-                const SizedBox(width: AppSpacing.lg),
-                // Detail panel
-                SizedBox(
-                  width: 340,
-                  child: selected != null
-                      ? _ClientDetailPanel(
-                          client: selected!,
-                          branches: branches,
-                          state: state,
-                        )
-                      : const _EmptyDetailPanel(),
-                ),
-              ],
-            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Master-detail с draggable-divider'ом. Оператор сам ставит удобную
+/// ширину левой колонки; значение хранится в state виджета (живёт пока
+/// открыт экран клиентов — для большего нужен UserPrefs).
+class _ResizableMasterDetail extends StatefulWidget {
+  const _ResizableMasterDetail({
+    required this.master,
+    required this.detail,
+  });
+
+  final Widget master;
+  final Widget detail;
+
+  @override
+  State<_ResizableMasterDetail> createState() => _ResizableMasterDetailState();
+}
+
+class _ResizableMasterDetailState extends State<_ResizableMasterDetail> {
+  static const double _minMaster = 280;
+  static const double _minDetail = 420;
+  static const double _initial = 380;
+  static const double _handleWidth = 12;
+
+  double _masterWidth = _initial;
+  bool _hovering = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxWidth = constraints.maxWidth;
+        final maxMaster = (maxWidth - _minDetail - _handleWidth)
+            .clamp(_minMaster, double.infinity);
+        final width = _masterWidth.clamp(_minMaster, maxMaster);
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SizedBox(width: width, child: widget.master),
+            _DragHandle(
+              width: _handleWidth,
+              active: _hovering || _dragging,
+              onHoverChanged: (h) => setState(() => _hovering = h),
+              onDragStart: () => setState(() => _dragging = true),
+              onDragEnd: () => setState(() => _dragging = false),
+              onDragDelta: (dx) {
+                setState(() {
+                  _masterWidth =
+                      (_masterWidth + dx).clamp(_minMaster, maxMaster);
+                });
+              },
+              onResetTap: () => setState(() => _masterWidth = _initial),
+            ),
+            Expanded(child: widget.detail),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _DragHandle extends StatelessWidget {
+  const _DragHandle({
+    required this.width,
+    required this.active,
+    required this.onHoverChanged,
+    required this.onDragStart,
+    required this.onDragEnd,
+    required this.onDragDelta,
+    required this.onResetTap,
+  });
+
+  final double width;
+  final bool active;
+  final ValueChanged<bool> onHoverChanged;
+  final VoidCallback onDragStart;
+  final VoidCallback onDragEnd;
+  final ValueChanged<double> onDragDelta;
+  final VoidCallback onResetTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeColumn,
+      onEnter: (_) => onHoverChanged(true),
+      onExit: (_) => onHoverChanged(false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) => onDragStart(),
+        onHorizontalDragEnd: (_) => onDragEnd(),
+        onHorizontalDragCancel: onDragEnd,
+        onHorizontalDragUpdate: (d) => onDragDelta(d.delta.dx),
+        onDoubleTap: onResetTap, // двойной клик = вернуть дефолт
+        child: SizedBox(
+          width: width,
+          child: Center(
+            child: Container(
+              width: 4,
+              decoration: BoxDecoration(
+                color: active
+                    ? scheme.primary.withValues(alpha: 0.7)
+                    : scheme.outline.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -230,17 +462,22 @@ class _MobileLayout extends StatelessWidget {
     final user = context.watch<AuthBloc>().state.user;
     final branches =
         filterBranchesByAccess(context.watch<DashboardBloc>().state.branches, user);
+    final allowed = accessibleBranchIds(user); // null = creator/director
     final q = search.toLowerCase().trim();
     final qDigits = search.replaceAll(RegExp(r'[^\d]'), '');
     final filtered = state.clients
-        .where((c) => _matchesClientSearch(c, search, q, qDigits))
+        .where((c) =>
+            (allowed == null ||
+                c.branchId == null ||
+                allowed.contains(c.branchId)) &&
+            _matchesClientSearch(c, search, q, qDigits))
         .toList();
 
     return Scaffold(
       appBar: AppBar(title: const Text('Клиенты')),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showCreateDialog(context),
-        icon: const Icon(Icons.person_add_rounded),
+        icon: const Icon(AppIcons.person_add),
         label: const Text('Добавить'),
       ),
       body: Column(
@@ -253,7 +490,7 @@ class _MobileLayout extends StatelessWidget {
             child: filtered.isEmpty &&
                     state.status != ClientBlocStatus.loading
                 ? const EmptyState(
-                    icon: Icons.people_outline_rounded,
+                    icon: AppIcons.people_outline,
                     title: 'Клиенты не найдены',
                     subtitle:
                         'Нет клиентов по текущему поиску. Очистите запрос или добавьте нового клиента.',
@@ -369,7 +606,7 @@ class _Header extends StatelessWidget {
         ),
         FilledButton.icon(
           onPressed: () => _showCreateDialog(context),
-          icon: const Icon(Icons.person_add_rounded),
+          icon: const Icon(AppIcons.person_add),
           label: const Text('Добавить клиента'),
         ),
       ],
@@ -391,7 +628,7 @@ class _SearchBar extends StatelessWidget {
         onChanged: onChanged,
         decoration: InputDecoration(
           hintText: 'Поиск по имени, коду, телефону...',
-          prefixIcon: const Icon(Icons.search_rounded, size: 20),
+          prefixIcon: const Icon(AppIcons.search, size: 20),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
           ),
@@ -413,6 +650,7 @@ class _ClientTable extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.isLoading,
+    this.compact = false,
   });
 
   final List<Client> clients;
@@ -421,6 +659,10 @@ class _ClientTable extends StatelessWidget {
   final Client? selected;
   final ValueChanged<Client> onSelect;
   final bool isLoading;
+
+  /// Когда detail-панель открыта — таблица сжимается в вертикальный список
+  /// карточек, влезающий в 380 px колонку.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -433,7 +675,7 @@ class _ClientTable extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.people_outline,
+            Icon(AppIcons.people_outline,
                 size: 48,
                 color: context.isDark
                     ? AppColors.darkTextSecondary
@@ -446,6 +688,98 @@ class _ClientTable extends StatelessWidget {
                       : AppColors.lightTextSecondary,
                 )),
           ],
+        ),
+      );
+    }
+
+    if (compact) {
+      return Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          side: BorderSide(
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ListView.separated(
+          itemCount: clients.length,
+          separatorBuilder: (_, _) => Divider(
+            height: 1,
+            color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.15),
+          ),
+          itemBuilder: (ctx, i) {
+            final client = clients[i];
+            final isSelected = selected?.id == client.id;
+            final balance = balancesByClientId[client.id];
+            return Material(
+              color: isSelected
+                  ? Theme.of(context).colorScheme.primaryContainer
+                      .withValues(alpha: 0.4)
+                  : Colors.transparent,
+              child: InkWell(
+                onTap: () => onSelect(client),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor:
+                            AppColors.primary.withValues(alpha: 0.15),
+                        child: Text(
+                          client.name.isEmpty ? '?' : client.name[0].toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: AppColors.primary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              client.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _shortBalanceSummary(client, balance),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontFamily: 'JetBrains Mono',
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Icon(
+                        AppIcons.chevron_right,
+                        size: 16,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       );
     }
@@ -692,44 +1026,6 @@ class _ClientDetailPanelState extends State<_ClientDetailPanel> {
 
 }
 
-class _EmptyDetailPanel extends StatelessWidget {
-  const _EmptyDetailPanel();
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-        side: BorderSide(
-          color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.2),
-        ),
-      ),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.person_search_rounded,
-                size: 48,
-                color: context.isDark
-                    ? AppColors.darkTextSecondary
-                    : AppColors.lightTextSecondary),
-            const SizedBox(height: AppSpacing.md),
-            Text(
-              'Выберите клиента',
-              style: context.textTheme.bodyMedium?.copyWith(
-                color: context.isDark
-                    ? AppColors.darkTextSecondary
-                    : AppColors.lightTextSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 // ─── Client Actions (Deposit / Debit) ───
 
 class _ClientActions extends StatelessWidget {
@@ -749,7 +1045,7 @@ class _ClientActions extends StatelessWidget {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () => _showOperationDialog(context, isDeposit: true),
-            icon: const Icon(Icons.add_circle_outline_rounded, size: 16),
+            icon: const Icon(AppIcons.add_circle_outline, size: 16),
             label: const Text('Пополнить'),
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.green,
@@ -764,7 +1060,7 @@ class _ClientActions extends StatelessWidget {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () => _showOperationDialog(context, isDeposit: false),
-            icon: const Icon(Icons.remove_circle_outline_rounded, size: 16),
+            icon: const Icon(AppIcons.remove_circle_outline, size: 16),
             label: const Text('Списать'),
             style: OutlinedButton.styleFrom(
               foregroundColor: Colors.red,
@@ -786,7 +1082,7 @@ class _ClientActions extends StatelessWidget {
                       initialFrom: _initialFrom(),
                     )
                 : null,
-            icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+            icon: const Icon(AppIcons.swap_horiz, size: 16),
             label: const Text('Обмен'),
             style: OutlinedButton.styleFrom(
               padding: compactPadding,
@@ -899,19 +1195,208 @@ class _DesktopWalletsBlock extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          for (var i = 0; i < wallets.length; i++) ...[
-            _DesktopWalletRow(
+          // При большом количестве валют переключаемся на 2-колоночную
+          // сетку — иначе блок съедает 300-400px и для истории операций
+          // ниже остаётся слишком мало места для скролла. Порог 3
+          // подобран эмпирически: 2 валюты в одну колонку читаются
+          // комфортно, 3+ уже стоят дороже скролла.
+          if (wallets.length <= 2)
+            for (var i = 0; i < wallets.length; i++) ...[
+              _DesktopWalletRow(
+                client: client,
+                balance: balance,
+                wallet: wallets[i],
+              ),
+              if (i < wallets.length - 1)
+                Divider(
+                  height: 14,
+                  color: scheme.outline.withValues(alpha: 0.15),
+                ),
+            ]
+          else
+            _DesktopWalletsGrid(
               client: client,
               balance: balance,
-              wallet: wallets[i],
+              wallets: wallets,
             ),
-            if (i < wallets.length - 1)
-              Divider(
-                height: 14,
-                color: scheme.outline.withValues(alpha: 0.15),
-              ),
-          ],
         ],
+      ),
+    );
+  }
+}
+
+/// Compact 2-column grid used when a client has 3+ wallets — keeps the
+/// balances visible without eating the transaction history's scroll area.
+class _DesktopWalletsGrid extends StatelessWidget {
+  const _DesktopWalletsGrid({
+    required this.client,
+    required this.balance,
+    required this.wallets,
+  });
+  final Client client;
+  final ClientBalance? balance;
+  final List<_DesktopWallet> wallets;
+
+  @override
+  Widget build(BuildContext context) {
+    // IntrinsicHeight + CrossAxisAlignment.stretch требовали bounded
+    // высоты от parent; в Column на дисплее с tx-историей это могло
+    // схлопывать сетку в 0px. Переходим на простой Row(start) + фикс
+    // высоту 50 на ячейку — гарантированно рендерится.
+    const cellHeight = 50.0;
+    final cells = <Widget>[];
+    for (var i = 0; i < wallets.length; i += 2) {
+      final left = wallets[i];
+      final right = i + 1 < wallets.length ? wallets[i + 1] : null;
+      cells.add(Padding(
+        padding: EdgeInsets.only(bottom: i + 2 >= wallets.length ? 0 : 8),
+        child: SizedBox(
+          height: cellHeight,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _DesktopWalletCompact(
+                  client: client,
+                  balance: balance,
+                  wallet: left,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: right == null
+                    ? const SizedBox.shrink()
+                    : _DesktopWalletCompact(
+                        client: client,
+                        balance: balance,
+                        wallet: right,
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: cells,
+    );
+  }
+}
+
+/// Compressed wallet row: smaller badge, no "Кошелёк X" label (currency
+/// code in the badge is enough), amount right-aligned. Designed to fit
+/// two-per-row in the wallets grid.
+class _DesktopWalletCompact extends StatelessWidget {
+  const _DesktopWalletCompact({
+    required this.client,
+    required this.balance,
+    required this.wallet,
+  });
+  final Client client;
+  final ClientBalance? balance;
+  final _DesktopWallet wallet;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final isNeg = wallet.amount < -0.0049;
+    final color = isNeg ? AppColors.error : AppColors.primary;
+    final canConvert = wallet.amount > 0.0049;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: canConvert
+            ? () => showConvertCurrencyDialog(
+                  context: context,
+                  client: client,
+                  balance: balance,
+                  initialFrom: wallet.currency,
+                )
+            : null,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 7, 8, 7),
+          decoration: BoxDecoration(
+            color: scheme.surface.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: scheme.outline.withValues(alpha: 0.12),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  wallet.currency,
+                  style: TextStyle(
+                    fontFamily: 'JetBrains Mono',
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        if (wallet.isPrimary)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary
+                                  .withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(100),
+                            ),
+                            child: Text(
+                              'ОСН',
+                              style: TextStyle(
+                                fontSize: 8.5,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.4,
+                                color: AppColors.primary,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    Text(
+                      '${wallet.amount.toStringAsFixed(2)} ${wallet.currency}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontFamily: 'JetBrains Mono',
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: isNeg ? AppColors.error : scheme.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (canConvert)
+                Icon(
+                  AppIcons.swap_horiz,
+                  size: 14,
+                  color: scheme.onSurfaceVariant,
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1020,7 +1505,7 @@ class _DesktopWalletRow extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               IconButton(
-                icon: const Icon(Icons.swap_horiz_rounded, size: 16),
+                icon: const Icon(AppIcons.swap_horiz, size: 16),
                 tooltip: canConvert
                     ? 'Конвертировать ${wallet.currency} в другую валюту'
                     : 'Нет средств для конвертации',
@@ -1101,8 +1586,8 @@ class _TransactionDialogState extends State<_TransactionDialog> {
           children: [
             Icon(
               widget.isDeposit
-                  ? Icons.add_circle_outline_rounded
-                  : Icons.remove_circle_outline_rounded,
+                  ? AppIcons.add_circle_outline
+                  : AppIcons.remove_circle_outline,
               color: color,
             ),
             const SizedBox(width: 8),
@@ -1133,11 +1618,11 @@ class _TransactionDialogState extends State<_TransactionDialog> {
               ),
               const SizedBox(height: AppSpacing.md),
               DropdownButtonFormField<String>(
-                value: _opCurrency,
+                initialValue: _opCurrency,
                 decoration: const InputDecoration(
                   labelText: 'Валюта операции',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.currency_exchange_outlined),
+                  prefixIcon: Icon(AppIcons.currency_exchange),
                 ),
                 items: opts
                     .map((c) =>
@@ -1297,7 +1782,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.send_rounded, size: 18,
+                  const Icon(AppIcons.send, size: 18,
                       color: Color(0xFF2AABEE)),
                   const SizedBox(width: 6),
                   Expanded(
@@ -1311,13 +1796,13 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
                   ),
                   if (hasChatId && !_editing)
                     _StatusPill(
-                      icon: Icons.check_circle_rounded,
+                      icon: AppIcons.check_circle,
                       text: 'подключено',
                       color: Colors.green,
                     )
                   else if (!hasChatId && !_editing)
                     _StatusPill(
-                      icon: Icons.power_off_rounded,
+                      icon: AppIcons.power_off,
                       text: 'не привязано',
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
@@ -1344,7 +1829,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
       children: [
         Row(
           children: [
-            const Icon(Icons.chat_bubble_outline_rounded, size: 16),
+            const Icon(AppIcons.chat_bubble_outline, size: 16),
             const SizedBox(width: 6),
             Expanded(
               child: SelectableText(
@@ -1368,7 +1853,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
                     : () => context.read<ClientBloc>().add(
                           ClientTelegramTestRequested(client.id),
                         ),
-                icon: const Icon(Icons.send_outlined, size: 18),
+                icon: const Icon(AppIcons.send, size: 18),
                 label: const Text('Тест'),
               ),
             ),
@@ -1380,7 +1865,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
                       _ctrl.text = client.telegramChatId ?? '';
                       setState(() => _editing = true);
                     },
-              icon: const Icon(Icons.edit_outlined, size: 18),
+              icon: const Icon(AppIcons.edit, size: 18),
               tooltip: 'Изменить',
             ),
             const SizedBox(width: 4),
@@ -1388,7 +1873,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
               onPressed: isOperating
                   ? null
                   : () => _confirmAndUnlink(context, client),
-              icon: const Icon(Icons.link_off_rounded, size: 18),
+              icon: const Icon(AppIcons.link_off, size: 18),
               tooltip: 'Отвязать',
               style: IconButton.styleFrom(foregroundColor: Colors.red),
             ),
@@ -1409,7 +1894,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
                 _ctrl.text = '';
                 setState(() => _editing = true);
               },
-        icon: const Icon(Icons.add_link_rounded, size: 18),
+        icon: const Icon(AppIcons.add_link, size: 18),
         label: const Text('Привязать Telegram-группу'),
       ),
     );
@@ -1437,7 +1922,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
           keyboardType: TextInputType.text,
           decoration: const InputDecoration(
             hintText: '-1001234567890',
-            prefixIcon: Icon(Icons.chat_bubble_outline_rounded, size: 18),
+            prefixIcon: Icon(AppIcons.chat_bubble_outline, size: 18),
             border: OutlineInputBorder(),
             isDense: true,
           ),
@@ -1469,7 +1954,7 @@ class _TelegramSettingsBlockState extends State<_TelegramSettingsBlock> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white),
                       )
-                    : const Icon(Icons.save_outlined, size: 18),
+                    : const Icon(AppIcons.save, size: 18),
                 label: const Text('Сохранить'),
               ),
             ),
@@ -1599,10 +2084,10 @@ class _TransactionTile extends StatelessWidget {
             children: [
               Icon(
                 isConv
-                    ? Icons.swap_horiz_rounded
+                    ? AppIcons.swap_horiz
                     : (isDeposit
-                        ? Icons.arrow_downward_rounded
-                        : Icons.arrow_upward_rounded),
+                        ? AppIcons.arrow_downward
+                        : AppIcons.arrow_upward),
                 color: color,
                 size: 18,
               ),
@@ -1673,7 +2158,7 @@ class _TransactionTile extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.person_outline_rounded,
+                    Icon(AppIcons.person_outline,
                         size: 12, color: secondary),
                     const SizedBox(width: 2),
                     Text(tx.createdByName ?? '—'),
@@ -1682,7 +2167,7 @@ class _TransactionTile extends StatelessWidget {
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.access_time_rounded,
+                    Icon(AppIcons.access_time,
                         size: 12, color: secondary),
                     const SizedBox(width: 2),
                     Text(_fmtDate(tx.createdAt)),
@@ -1762,7 +2247,7 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
       child: AlertDialog(
         title: const Row(
           children: [
-            Icon(Icons.person_add_rounded),
+            Icon(AppIcons.person_add),
             SizedBox(width: 8),
             Text('Новый клиент'),
           ],
@@ -1780,7 +2265,7 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
                   decoration: const InputDecoration(
                     labelText: 'Полное имя *',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.person_outline_rounded),
+                    prefixIcon: Icon(AppIcons.person_outline),
                   ),
                   validator: (v) =>
                       (v == null || v.trim().isEmpty) ? 'Введите имя' : null,
@@ -1796,7 +2281,7 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
                             padding: const EdgeInsets.all(12),
                             child: CountryBadge(match: _detectedCountry!, size: 24),
                           )
-                        : const Icon(Icons.phone_outlined),
+                        : const Icon(AppIcons.phone),
                     suffixIcon: _detectedCountry != null
                         ? Padding(
                             padding: const EdgeInsets.only(right: 12),
@@ -1836,7 +2321,7 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
                             padding: const EdgeInsets.all(12),
                             child: CountryBadge(match: _detectedCountry!, size: 24),
                           )
-                        : const Icon(Icons.flag_outlined),
+                        : const Icon(AppIcons.flag),
                     helperText: _detectedCountry != null
                         ? 'Определено по номеру телефона'
                         : null,
@@ -1856,14 +2341,14 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
                   )
                 else
                   DropdownButtonFormField<String>(
-                    value: effectiveBranchId != null &&
+                    initialValue: effectiveBranchId != null &&
                             branches.any((b) => b.id == effectiveBranchId)
                         ? effectiveBranchId
                         : null,
                     decoration: const InputDecoration(
                       labelText: 'Филиал *',
                       border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.account_tree_outlined),
+                      prefixIcon: Icon(AppIcons.account_tree),
                     ),
                     items: branches
                         .map((b) => DropdownMenuItem(
@@ -1879,11 +2364,11 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
                 const SizedBox(height: AppSpacing.sm),
                 DropdownButtonFormField<String>(
                   key: ValueKey('client-curr-$_currency'),
-                  value: _currency,
+                  initialValue: _currency,
                   decoration: const InputDecoration(
                     labelText: 'Основная валюта *',
                     border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.currency_exchange_outlined),
+                    prefixIcon: Icon(AppIcons.currency_exchange),
                   ),
                   items: _currencies
                       .map((c) => DropdownMenuItem(
@@ -1916,7 +2401,7 @@ class _CreateClientDialogState extends State<_CreateClientDialog> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white),
                       )
-                    : const Icon(Icons.check_rounded),
+                    : const Icon(AppIcons.check),
                 label: const Text('Создать'),
               );
             },

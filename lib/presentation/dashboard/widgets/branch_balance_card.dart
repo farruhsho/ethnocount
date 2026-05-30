@@ -3,6 +3,7 @@ import 'package:ethnocount/core/constants/app_spacing.dart';
 import 'package:ethnocount/core/utils/currency_utils.dart';
 import 'package:ethnocount/domain/entities/branch.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 /// Card showing a branch's balance by currency and account count.
 class BranchBalanceCard extends StatelessWidget {
   final Branch branch;
@@ -93,7 +94,7 @@ class BranchBalanceCard extends StatelessWidget {
                     ),
                   ),
                     Icon(
-                      Icons.chevron_right,
+                      AppIcons.chevron_right,
                       size: 20,
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
                     ),

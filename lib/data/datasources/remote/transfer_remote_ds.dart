@@ -19,6 +19,7 @@ class TransferRemoteDataSource {
     TransferStatus? statusFilter,
     DateTime? startDate,
     DateTime? endDate,
+    String? query,
     int limit = 50,
     int offset = 0,
   }) {
@@ -29,6 +30,7 @@ class TransferRemoteDataSource {
       statusFilter: statusFilter,
       startDate: startDate,
       endDate: endDate,
+      query: query,
       limit: limit,
       offset: offset,
     ).then((list) {
@@ -49,6 +51,7 @@ class TransferRemoteDataSource {
               statusFilter: statusFilter,
               startDate: startDate,
               endDate: endDate,
+              query: query,
               limit: limit,
               offset: offset,
             ).then((list) {
@@ -70,23 +73,45 @@ class TransferRemoteDataSource {
     TransferStatus? statusFilter,
     DateTime? startDate,
     DateTime? endDate,
+    String? query,
     int limit = 50,
     int offset = 0,
   }) async {
-    var query = _client.from('transfers').select();
+    var q = _client.from('transfers').select();
     if (branchId != null) {
-      query = query.eq('from_branch_id', branchId);
+      q = q.eq('from_branch_id', branchId);
     }
     if (statusFilter != null) {
-      query = query.eq('status', statusFilter.name);
+      q = q.eq('status', statusFilter.name);
     }
     if (startDate != null) {
-      query = query.gte('created_at', startDate.toIso8601String());
+      q = q.gte('created_at', startDate.toIso8601String());
     }
     if (endDate != null) {
-      query = query.lte('created_at', endDate.toIso8601String());
+      q = q.lte('created_at', endDate.toIso8601String());
     }
-    final data = await query
+    final search = query?.trim() ?? '';
+    if (search.isNotEmpty) {
+      final esc = search.replaceAll(',', ' ').replaceAll('%', '');
+      final like = '%$esc%';
+      final filters = <String>[
+        'transaction_code.ilike.$like',
+        'sender_name.ilike.$like',
+        'sender_phone.ilike.$like',
+        'sender_info.ilike.$like',
+        'receiver_name.ilike.$like',
+        'receiver_phone.ilike.$like',
+        'receiver_info.ilike.$like',
+        'description.ilike.$like',
+      ];
+      final asNum = double.tryParse(esc.replaceAll(' ', ''));
+      if (asNum != null) {
+        filters.add('amount.eq.$asNum');
+        filters.add('converted_amount.eq.$asNum');
+      }
+      q = q.or(filters.join(','));
+    }
+    final data = await q
         .order('created_at', ascending: false)
         .range(offset, offset + limit - 1);
     return (data as List).map((m) => _mapTransfer(m)).toList();
@@ -160,6 +185,59 @@ class TransferRemoteDataSource {
     );
   }
 
+  /// Поиск контактов из истории переводов: совпадение по части телефона ИЛИ
+  /// по части ФИО. Возвращает до [limit] последних уникальных контактов для
+  /// выпадающего списка автозаполнения.
+  ///
+  /// [side] = 'sender' ищет в `sender_*`, 'receiver' — в `receiver_*`.
+  Future<List<TransferContactSnapshot>> searchContacts({
+    required String query,
+    required String side,
+    int limit = 8,
+  }) async {
+    final q = query.trim();
+    if (q.length < 2) return const [];
+    final col = side == 'sender' ? 'sender_phone' : 'receiver_phone';
+    final nameCol = side == 'sender' ? 'sender_name' : 'receiver_name';
+    final infoCol = side == 'sender' ? 'sender_info' : 'receiver_info';
+
+    // Подготовка pattern:
+    //  • экранируем % и _ для ilike (это wildcards в LIKE)
+    //  • убираем символы, которые ломают PostgREST `.or()` синтаксис:
+    //    запятая = разделитель фильтров, скобки/кавычки = маркеры. Без
+    //    этой санитизации поиск по «Иванов, С.» падает на 400.
+    final sanitized = q.replaceAll(RegExp(r'[,()"\\\\]'), ' ').trim();
+    if (sanitized.length < 2) return const [];
+    final escaped =
+        sanitized.replaceAll('%', r'\%').replaceAll('_', r'\_');
+    final pattern = '%$escaped%';
+
+    // Берём с запасом, потом дедуплицируем по телефону на клиенте.
+    final data = await _client
+        .from('transfers')
+        .select('$col, $nameCol, $infoCol, currency, created_at')
+        .or('$col.ilike.$pattern,$nameCol.ilike.$pattern')
+        .order('created_at', ascending: false)
+        .limit(limit * 4);
+
+    final seen = <String>{};
+    final out = <TransferContactSnapshot>[];
+    for (final row in (data as List)) {
+      final m = Map<String, dynamic>.from(row as Map);
+      final phone = (m[col] as String?)?.trim() ?? '';
+      if (phone.isEmpty) continue;
+      if (!seen.add(phone)) continue;
+      out.add(TransferContactSnapshot(
+        phone: phone,
+        name: (m[nameCol] as String?)?.trim(),
+        info: (m[infoCol] as String?)?.trim(),
+        currency: m['currency'] as String?,
+      ));
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
   /// Create transfer via PostgreSQL RPC (atomic).
   Future<Map<String, dynamic>> createTransfer({
     required String fromBranchId,
@@ -174,6 +252,7 @@ class TransferRemoteDataSource {
     required double commissionValue,
     required String commissionCurrency,
     String commissionMode = 'fromSender',
+    String? commissionAccountId,
     required String idempotencyKey,
     String? description,
     String? clientId,
@@ -183,6 +262,9 @@ class TransferRemoteDataSource {
     String? receiverName,
     String? receiverPhone,
     String? receiverInfo,
+    double? buyRate,
+    double? sellRate,
+    String? baseCurrency,
   }) async {
     final result = await _client.rpc('create_transfer', params: {
       'p_from_branch_id': fromBranchId,
@@ -206,6 +288,11 @@ class TransferRemoteDataSource {
       'p_receiver_name': receiverName,
       'p_receiver_phone': receiverPhone,
       'p_receiver_info': receiverInfo,
+      'p_commission_account_id': commissionAccountId,
+      'p_buy_rate': ?buyRate,
+      'p_sell_rate': ?sellRate,
+      if (baseCurrency != null && baseCurrency.isNotEmpty)
+        'p_base_currency': baseCurrency,
     });
     return Map<String, dynamic>.from(result as Map);
   }
@@ -225,14 +312,17 @@ class TransferRemoteDataSource {
     return Map<String, dynamic>.from(result as Map);
   }
 
-  /// Reject transfer via PostgreSQL RPC.
-  Future<Map<String, dynamic>> rejectTransfer(
-    String transferId,
-    String reason,
-  ) async {
-    final result = await _client.rpc('reject_transfer', params: {
+  /// Mark transfer as dispatched to courier — sender branch operation.
+  /// Moves status from `toDelivery` → `withCourier`.
+  Future<Map<String, dynamic>> dispatchToCourier(
+    String transferId, {
+    String? courierName,
+    String? courierPhone,
+  }) async {
+    final result = await _client.rpc('dispatch_transfer_to_courier', params: {
       'p_transfer_id': transferId,
-      'p_reason': reason,
+      'p_courier_name': courierName,
+      'p_courier_phone': courierPhone,
     });
     return Map<String, dynamic>.from(result as Map);
   }
@@ -315,18 +405,6 @@ class TransferRemoteDataSource {
     return controller.stream;
   }
 
-  /// Cancel transfer via PostgreSQL RPC (atomic refund + ledger credit).
-  Future<Map<String, dynamic>> cancelTransfer(
-    String transferId, {
-    String reason = '',
-  }) async {
-    final result = await _client.rpc('cancel_transfer', params: {
-      'p_transfer_id': transferId,
-      'p_reason': reason,
-    });
-    return Map<String, dynamic>.from(result as Map);
-  }
-
   /// Update transfer metadata and/or amount (pending only).
   /// Amount changes are routed through `update_transfer_amount` RPC for atomicity.
   /// Other metadata updates use plain REST (no balance impact).
@@ -375,6 +453,65 @@ class TransferRemoteDataSource {
     }
   }
 
+  /// Полная замена финансов pending (created) перевода через
+  /// `replace_pending_transfer` RPC. Атомарно: refund старого debit,
+  /// debit с нового счёта в новой валюте/комиссии, перерасчёт converted_amount.
+  Future<Map<String, dynamic>> replacePendingTransfer({
+    required String transferId,
+    String? fromAccountId,
+    double? amount,
+    String? currency,
+    String? toCurrency,
+    double? exchangeRate,
+    String? commissionType,
+    double? commissionValue,
+    String? commissionCurrency,
+    String? commissionMode,
+    String? toAccountId,
+    String? description,
+    String? clientId,
+    String? senderName,
+    String? senderPhone,
+    String? senderInfo,
+    String? receiverName,
+    String? receiverPhone,
+    String? receiverInfo,
+    String? amendmentNote,
+    String? commissionAccountId,
+    double? buyRate,
+    double? sellRate,
+    String? baseCurrency,
+  }) async {
+    final result = await _client.rpc('replace_pending_transfer', params: {
+      'p_transfer_id': transferId,
+      'p_from_account_id': fromAccountId,
+      'p_amount': amount,
+      'p_currency': currency,
+      'p_to_currency': toCurrency,
+      'p_exchange_rate': exchangeRate,
+      'p_commission_type': commissionType,
+      'p_commission_value': commissionValue,
+      'p_commission_currency': commissionCurrency,
+      'p_commission_mode': commissionMode,
+      'p_to_account_id': toAccountId,
+      'p_description': description,
+      'p_client_id': clientId,
+      'p_sender_name': senderName,
+      'p_sender_phone': senderPhone,
+      'p_sender_info': senderInfo,
+      'p_receiver_name': receiverName,
+      'p_receiver_phone': receiverPhone,
+      'p_receiver_info': receiverInfo,
+      'p_amendment_note': amendmentNote,
+      'p_commission_account_id': commissionAccountId,
+      'p_buy_rate': ?buyRate,
+      'p_sell_rate': ?sellRate,
+      if (baseCurrency != null && baseCurrency.isNotEmpty)
+        'p_base_currency': baseCurrency,
+    });
+    return Map<String, dynamic>.from(result as Map);
+  }
+
   Transfer _mapTransfer(Map<String, dynamic> data) {
     return Transfer(
       id: data['id'] ?? '',
@@ -400,6 +537,9 @@ class TransferRemoteDataSource {
         (e) => e.name == (data['commission_mode'] ?? 'fromSender'),
         orElse: () => CommissionMode.fromSender,
       ),
+      commissionAccountId: (data['commission_account_id'] as String?)?.isEmpty == true
+          ? null
+          : data['commission_account_id'] as String?,
       description: data['description'],
       clientId: data['client_id'],
       senderName: data['sender_name'],
@@ -408,26 +548,52 @@ class TransferRemoteDataSource {
       receiverName: data['receiver_name'],
       receiverPhone: data['receiver_phone'],
       receiverInfo: data['receiver_info'],
-      status: TransferStatus.values.firstWhere(
-        (e) => e.name == data['status'],
-        orElse: () => TransferStatus.pending,
-      ),
+      status: _parseStatus(data['status']),
       createdBy: data['created_by'] ?? '',
       confirmedBy: data['confirmed_by'],
+      dispatchedBy: data['dispatched_by'],
+      courierName: data['courier_name'],
+      courierPhone: data['courier_phone'],
       issuedBy: data['issued_by'],
-      rejectedBy: data['rejected_by'],
-      rejectionReason: data['rejection_reason'],
-      cancelledBy: data['cancelled_by'],
-      cancellationReason: data['cancellation_reason'],
       idempotencyKey: data['idempotency_key'] ?? '',
       createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
       confirmedAt: data['confirmed_at'] != null ? DateTime.tryParse(data['confirmed_at']) : null,
+      dispatchedAt: data['dispatched_at'] != null ? DateTime.tryParse(data['dispatched_at']) : null,
       issuedAt: data['issued_at'] != null ? DateTime.tryParse(data['issued_at']) : null,
-      rejectedAt: data['rejected_at'] != null ? DateTime.tryParse(data['rejected_at']) : null,
-      cancelledAt: data['cancelled_at'] != null ? DateTime.tryParse(data['cancelled_at']) : null,
       amendmentHistory: TransferAmendmentEntry.listFromJson(data['amendment_history']),
       issuedAmount: (data['issued_amount'] ?? 0).toDouble(),
+      viaCounterpartyId: (data['via_counterparty_id'] as String?)?.isEmpty == true
+          ? null
+          : data['via_counterparty_id'] as String?,
+      buyRate: (data['buy_rate'] as num?)?.toDouble(),
+      sellRate: (data['sell_rate'] as num?)?.toDouble(),
+      baseCurrency: data['base_currency'] as String?,
+      spreadProfit: (data['spread_profit'] as num?)?.toDouble(),
     );
+  }
+
+  /// Понимает и новые, и старые имена статусов из БД.
+  /// Старые `pending`, `confirmed`, `issued` маппятся на новые `created`,
+  /// `toDelivery`, `delivered` пока миграция не применена везде.
+  TransferStatus _parseStatus(dynamic raw) {
+    final name = (raw ?? '').toString();
+    switch (name) {
+      case 'created':
+      case 'pending':
+        return TransferStatus.created;
+      case 'toDelivery':
+      case 'to_delivery':
+      case 'confirmed':
+        return TransferStatus.toDelivery;
+      case 'withCourier':
+      case 'with_courier':
+        return TransferStatus.withCourier;
+      case 'delivered':
+      case 'issued':
+        return TransferStatus.delivered;
+      default:
+        return TransferStatus.created;
+    }
   }
 
   List<TransferPart>? _parseTransferParts(dynamic raw) {

@@ -13,6 +13,7 @@ import 'package:ethnocount/presentation/auth/bloc/auth_bloc.dart';
 import 'package:ethnocount/presentation/bank_import/bloc/bank_import_bloc.dart';
 import 'package:ethnocount/presentation/dashboard/bloc/dashboard_bloc.dart';
 
+import 'package:ethnocount/core/icons/app_icons.dart';
 class BankImportPage extends StatefulWidget {
   const BankImportPage({super.key});
 
@@ -76,7 +77,7 @@ class _BankImportPageState extends State<BankImportPage> {
       appBar: AppBar(
         title: const Text('Импорт из банка'),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(AppIcons.arrow_back),
           onPressed: () => context.go('/ledger'),
         ),
       ),
@@ -133,7 +134,7 @@ class _BankImportPageState extends State<BankImportPage> {
                           decoration: const InputDecoration(
                             labelText: 'Банк (опционально)',
                             hintText: 'Сбербанк, Альфа-Банк...',
-                            prefixIcon: Icon(Icons.account_balance),
+                            prefixIcon: Icon(AppIcons.account_balance),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -141,7 +142,7 @@ class _BankImportPageState extends State<BankImportPage> {
                           onPressed: state.status == BankImportStatus.importing
                               ? null
                               : _pickFile,
-                          icon: const Icon(Icons.upload_file),
+                          icon: const Icon(AppIcons.upload_file),
                           label: const Text('Выбрать файл'),
                         ),
                       ],
@@ -173,10 +174,10 @@ class _BankImportPageState extends State<BankImportPage> {
                           ),
                           const SizedBox(height: 16),
                           DropdownButtonFormField<String>(
-                            value: _selectedBranchId,
+                            initialValue: _selectedBranchId,
                             decoration: const InputDecoration(
                               labelText: 'Филиал',
-                              prefixIcon: Icon(Icons.business),
+                              prefixIcon: Icon(AppIcons.business),
                             ),
                             items: branches
                                 .map((b) => DropdownMenuItem(
@@ -193,10 +194,10 @@ class _BankImportPageState extends State<BankImportPage> {
                           ),
                           const SizedBox(height: 12),
                           DropdownButtonFormField<String>(
-                            value: _selectedAccountId,
+                            initialValue: _selectedAccountId,
                             decoration: const InputDecoration(
                               labelText: 'Счёт/карта',
-                              prefixIcon: Icon(Icons.credit_card),
+                              prefixIcon: Icon(AppIcons.credit_card),
                             ),
                             items: accounts
                                 .map((a) => DropdownMenuItem(
@@ -212,7 +213,7 @@ class _BankImportPageState extends State<BankImportPage> {
                             decoration: const InputDecoration(
                               labelText: 'Категория (опционально)',
                               hintText: 'Например: Закупки, Аренда',
-                              prefixIcon: Icon(Icons.category_outlined),
+                              prefixIcon: Icon(AppIcons.category),
                             ),
                           ),
                           const SizedBox(height: 20),
@@ -228,7 +229,7 @@ class _BankImportPageState extends State<BankImportPage> {
                                     height: 20,
                                     child: CircularProgressIndicator(strokeWidth: 2),
                                   )
-                                : const Icon(Icons.check),
+                                : const Icon(AppIcons.check),
                             label: Text(
                               state.status == BankImportStatus.importing
                                   ? 'Импорт...'

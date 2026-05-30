@@ -155,6 +155,8 @@ String _commissionModeRu(CommissionMode m) {
       return 'Внутри суммы перевода';
     case CommissionMode.toReceiver:
       return 'Сверх суммы (получателю)';
+    case CommissionMode.fromAccount:
+      return 'Со второго счёта филиала';
   }
 }
 
@@ -210,7 +212,7 @@ String _renderDocumentXml(_InvoiceParams p) {
   }
 
   // Issuance progress and history (partial payouts).
-  if (t.issuedAmount > 0 || p.issuances.isNotEmpty || t.isIssued) {
+  if (t.issuedAmount > 0 || p.issuances.isNotEmpty || t.isDelivered) {
     body.write(_p('Выдача получателю', bold: true, size: 26));
     body.write(_issuanceSummaryTable(t));
     if (p.issuances.isNotEmpty) {
@@ -378,26 +380,21 @@ List<(String, String)> _signatureRows(_InvoiceParams p, Transfer t) {
       '${_user(p, t.createdBy)}    ${_fmtDateTime(t.createdAt)}'));
 
   if (t.confirmedAt != null) {
-    rows.add(('Подтвердил (принял)',
+    rows.add(('Подтвердил (к выдаче)',
         '${_user(p, t.confirmedBy)}    ${_fmtDateTime(t.confirmedAt!)}'));
+  }
+  if (t.dispatchedAt != null) {
+    final courier = [
+      if (t.courierName != null && t.courierName!.isNotEmpty) t.courierName,
+      if (t.courierPhone != null && t.courierPhone!.isNotEmpty) t.courierPhone,
+    ].whereType<String>().join(' • ');
+    final suffix = courier.isNotEmpty ? '    Курьер: $courier' : '';
+    rows.add(('Отдал курьеру',
+        '${_user(p, t.dispatchedBy)}    ${_fmtDateTime(t.dispatchedAt!)}$suffix'));
   }
   if (t.issuedAt != null) {
     rows.add(('Выдал получателю',
         '${_user(p, t.issuedBy)}    ${_fmtDateTime(t.issuedAt!)}'));
-  }
-  if (t.rejectedAt != null) {
-    final reason = (t.rejectionReason != null && t.rejectionReason!.trim().isNotEmpty)
-        ? '    Причина: ${t.rejectionReason!.trim()}'
-        : '';
-    rows.add(('Отклонил',
-        '${_user(p, t.rejectedBy)}    ${_fmtDateTime(t.rejectedAt!)}$reason'));
-  }
-  if (t.cancelledAt != null) {
-    final reason = (t.cancellationReason != null && t.cancellationReason!.trim().isNotEmpty)
-        ? '    Причина: ${t.cancellationReason!.trim()}'
-        : '';
-    rows.add(('Отменил',
-        '${_user(p, t.cancelledBy)}    ${_fmtDateTime(t.cancelledAt!)}$reason'));
   }
   return rows;
 }
