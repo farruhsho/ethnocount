@@ -1,0 +1,66 @@
+\chapter*{Conclusions and Recommendations}
+\addcontentsline{toc}{chapter}{Conclusions and Recommendations}
+\label{chap:conclusions}
+
+\section*{Confirmation of the Research Tasks}
+\addcontentsline{toc}{section}{Confirmation of the Research Tasks}
+The six tasks stated in the Introduction have been completed in full.
+
+\begin{enumerate}[leftmargin=1.2cm]
+  \item The literature on double-entry bookkeeping in software, multi-user financial applications, cross-platform mobile frameworks and Backend-as-a-Service platforms has been reviewed, and the research gap has been articulated in operational terms: no surveyed system simultaneously preserves the three-balance-domain accounting model with per-currency partner saldo, enforces atomicity through database stored procedures and combines Row-Level Security with a Director-mediated approval workflow (Chapter~\ref{chap:litreview}, section~\ref{sec:gap}).
+  \item The work has been framed within Design Science Research; four iterations of the DSR cycle have been documented; and the data sources used to elicit requirements --- semi-structured interviews, structured observation across four working sessions, and the existing spreadsheet treated as a tacit specification --- have been described (Chapter~\ref{chap:litreview}, section~\ref{sec:dsr}).
+  \item The functional and non-functional requirements have been derived; the eight-entity domain model has been designed around the three-balance-domain principle, with a ninth supporting entity (\texttt{PendingApproval}) materialising the approval workflow (Chapter~\ref{chap:methodology}, sections~\ref{sec:requirements} and~\ref{sec:domainmodel}).
+  \item The PostgreSQL schema and the Row-Level Security policy set have been specified; the three domain invariants $I_1$ (double-entry), $I_2$ (tenant isolation) and $I_3$ (idempotency) have been formalised and tied to concrete database mechanisms; and the Director-mediated approval workflow has been designed (Chapter~\ref{chap:methodology}, sections~\ref{sec:schema}--\ref{sec:approval}).
+  \item The platform has been implemented across approximately 70\,000 lines of Dart and 1\,800 lines of PL/pgSQL distributed across 15 tables and 66 numbered, idempotent migrations; the atomic idempotent transfer engine, the per-currency partner-saldo subsystem and the dark-fintech design language have been documented (Chapter~\ref{chap:implementation}, sections~\ref{sec:stack}--\ref{sec:design}).
+  \item The platform has been evaluated through unit, BLoC, widget and integration tests, through controlled performance measurements on a Windows desktop and a mid-range Android device, and through a two-week parallel-use trial with the target operator; the remaining limitations have been stated honestly (Chapter~\ref{chap:implementation}, sections~\ref{sec:testing}--\ref{sec:limits}).
+\end{enumerate}
+
+\section*{Validation of the Hypothesis}
+\addcontentsline{toc}{section}{Validation of the Hypothesis}
+The hypothesis stated in the Introduction --- that combining Flutter (with the BLoC pattern) as the cross-platform user-interface layer and Supabase (PostgreSQL with Row-Level Security and stored procedures) as the backend permits the implementation of a three-balance-domain treasury platform that is free of reconciliation errors, responsive at sub-300-millisecond median interaction latency, and maintainable by a single developer over a multi-month evolution cycle --- is supported by the evidence presented.
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item \emph{Correctness.} The two-week parallel-use trial recorded zero platform-introduced reconciliation errors against 187 transfers; three errors surfaced were in the spreadsheet, not the platform, and the platform's parallel record made them visible for the first time (section~\ref{sec:uat}).
+  \item \emph{Responsiveness.} Median interaction latency stays under the 300-millisecond target on both reference devices for every measured action, including the partner-mediated transfer with its additional saldo update (section~\ref{sec:perf}).
+  \item \emph{Maintainability.} The platform has been carried by a single developer through 66 numbered idempotent migrations and across the four DSR iterations without irreparable drift between client and server; the trunk has been continuously deployable throughout (sections~\ref{sec:schema} and~\ref{sec:tradeoffs}).
+\end{itemize}
+
+\section*{Achievement of the Aim}
+\addcontentsline{toc}{section}{Achievement of the Aim}
+The aim of the study --- to design, implement and evaluate a production-grade, cross-platform treasury and money-transfer platform tailored to small multi-branch currency-exchange networks, demonstrably capable of replacing the spreadsheet-and-paper workflow of a representative operator --- has been achieved. All non-functional targets stated in Table~\ref{tab:nonfunc} are satisfied at the time of writing, and the platform has been adopted by the target operator for daily use. The source code is publicly released at \url{https://github.com/farruhsho/ethnocount} for academic review and independent inspection of the claims made above.
+
+\section*{Scientific Contribution}
+\addcontentsline{toc}{section}{Scientific Contribution}
+The thesis contributes three concrete artefacts to the state of the art.
+
+\begin{enumerate}[leftmargin=1.2cm]
+  \item An explicit three-balance-domain accounting model with per-currency partner saldo expressed in a relational schema, in which the saldo is stored as a JSONB attribute keyed by ISO currency code and updated only in the currency of the underlying transfer. The model resolves a class of reconciliation pathologies that a USD-collapsed saldo cannot detect, and it does so without sacrificing query performance acceptable for daily branch operations.
+  \item A Director-mediated approval workflow that captures a before-snapshot of the affected row at request time, allowing the Director to compare the before and proposed states explicitly. The workflow turns the audit log into a structural by-product of the authorisation mechanism rather than a separately maintained side channel, and it gives the Accountant a usable path through which to propose retroactive corrections.
+  \item A demonstration that a single developer, using Flutter + BLoC + Supabase, can carry a treasury platform of non-trivial scope (15 tables, 66 migrations, approximately 70\,000 lines of Dart) from concept to an operator-accepted system within the time-frame of a Bachelor's thesis. The combination of stack choices is offered as a documented, reproducible reference for similar projects in adjacent niches.
+\end{enumerate}
+
+\section*{Practical and Theoretical Value}
+\addcontentsline{toc}{section}{Practical and Theoretical Value}
+The \emph{practical value} of the work is the open-source release of a cross-platform, multi-branch, multi-currency treasury platform that is immediately usable by the niche of small currency-exchange networks the thesis was written for. The platform is in daily use by the target operator at the time of submission, and its design choices are documented in sufficient detail to be adapted to adjacent niches without re-deriving them from first principles.
+
+The \emph{theoretical value} is the demonstration that a three-balance-domain accounting model can be expressed relationally without collapsing into a base currency, that atomicity and idempotency in a multi-table financial write can be guaranteed at the database layer rather than the application layer, and that a small but consequential authorisation primitive (the snapshot at request time) can turn a Director's approval queue into a forensic record without additional bookkeeping. The combination is unusual in the surveyed literature and the thesis argues that it deserves further exploration.
+
+\section*{Limitations and Future Work}
+\addcontentsline{toc}{section}{Limitations and Future Work}
+Three limitations carry over from Chapter~\ref{chap:implementation} and shape the direction for future work. The acceptance trial covered two weeks and one operator; a longitudinal multi-operator field study would produce stronger evidence than a parallel-use observation can. The bank-statement-import path and the automatic exchange-rate ingestion are absent; both are ergonomic gaps rather than correctness ones, but their absence is felt every morning by the operator. Offline writes are refused rather than queued; the trade-off is defensible on safety grounds but does not exhaust the design space.
+
+Five directions of future work follow naturally from these limitations.
+
+\begin{itemize}[leftmargin=1.2cm]
+  \item A \emph{pending-partner-payout} state between \emph{created} and \emph{delivered} for partner-mediated transfers, with an explicit confirmation step that finalises the saldo update.
+  \item A partial-payout primitive for the case in which a partner pays out a fraction of the requested amount and the residual stays open against the saldo.
+  \item An exchange-rate ingestion subsystem that draws daily quotations from an external feed, with an operator-override path that keeps the manual workflow available.
+  \item An asynchronous offline write queue with strong ordering guarantees, evaluated against the safety risk that the present design deliberately avoids.
+  \item A formal verification of the atomicity and idempotency properties of the stored-procedure layer, complementing the empirical integration tests of section~\ref{sec:testing}.
+\end{itemize}
+
+A broader research direction worth naming explicitly is a multi-tenant generalisation in which several independent operators share the same Supabase project under stricter Row-Level Security isolation. The current single-tenant deployment already exercises the RLS policy set against role-based isolation within one operator's data; lifting that boundary to inter-operator isolation, while preserving the small-operator focus of the original design, would extend the contribution to cooperative networks of several exchange offices.
+
+\section*{Closing Remark}
+\addcontentsline{toc}{section}{Closing Remark}
+Beyond its technical content, the work demonstrates that a single Bachelor-level engineer, working with contemporary open-source tooling and a managed Backend-as-a-Service platform, can deliver a treasury platform that is genuinely usable in a real business rather than a pedagogical artefact. The author hopes that the open release of \emph{Ethnocount} will be a useful starting point for further academic and practical work on software tools for the long tail of small, informal, multi-currency businesses that mainstream financial software has so far chosen to ignore.

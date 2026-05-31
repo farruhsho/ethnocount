@@ -1,0 +1,134 @@
+\chapter{Domain Context, Literature Review and Research Methodology}
+\label{chap:litreview}
+
+This chapter does three things. It paints the operational picture of the trade the platform is built for, so that the engineering decisions of the later chapters can be read in context. It then surveys the literature the work is built on, grouped around the four themes most relevant to the task at hand --- double-entry bookkeeping inside software, multi-user financial applications, cross-platform mobile frameworks and Backend-as-a-Service platforms. It closes by stating the research methodology, naming the research gap and listing the criteria against which the work is judged.
+
+\section{The Operational Picture of a Small Currency-Exchange Network}
+\label{sec:domain}
+
+Small currency-exchange offices in the post-Soviet region are usually family businesses with two to a dozen branches scattered across cities and countries. The branch is the working unit: it has a till, a card reader or two, a Wi-Fi connection that occasionally drops, and an operator who deals with walk-in customers in cash. The same office almost invariably also handles inbound and outbound money transfers --- labour migrants sending earnings home, traders settling invoices, parents wiring tuition to children studying abroad. These transfers rarely travel through the SWIFT-and-correspondent-bank channels of retail finance. Instead, they hop along chains of informal \emph{partner} offices in the destination country, settled later through a running ledger that is, in the field, often a piece of paper. The author's pre-thesis interviews touched a network with branches in Uzbekistan, Russia, Kazakhstan, Kyrgyzstan, Turkey, the United Arab Emirates and China, and the same shape repeated everywhere: one branch issues a transfer in cash; a partner abroad pays the recipient in another currency; the two offices each adjust their running saldo with each other, in the currency of the transfer, with a dealer-mode rate that captures the spread that is, in practice, the operator's profit.
+
+A single transaction touches three accounting layers at once. The first is the operator's own till and card balances --- the cash that physically lives in the branch and the funds available on the operator's settlement card. The second is the partner saldo: a running debt with the partner office, denominated, crucially, in several currencies simultaneously, because the same partner may receive a payout in Russian roubles today and a payout in Turkish liras tomorrow. The third is the recurring client's wallet, where a long-standing customer may keep a positive balance in dollars and a different positive balance in dirhams, drawn down as transfers are dispatched. Off-the-shelf software --- 1C, QuickBooks, Wave --- collapses these three layers into a single, single-currency ledger and absorbs the foreign-exchange differences into a generic \emph{exchange rate variation} account. For a business whose entire revenue model is the spread between currencies, this collapse hides the very signal the operator needs to see.
+
+The errors that emerge from this mismatch are not theoretical. During the requirements-elicitation phase of the project, the operator described several incidents in which a missing column in the spreadsheet, an unsigned partner adjustment, or a transfer recorded twice because of a flaky connection on the operator's phone, produced a multi-thousand-US-dollar discrepancy that took weeks of forensic scrolling to reconcile. One of these incidents directly motivated the introduction of the idempotency key on transfer creation described in Chapter~\ref{chap:implementation}; another motivated the dedicated approval workflow on Accountant edits described in Chapter~\ref{chap:methodology}.
+
+A second feature of the trade that shaped the design is its role structure. A typical network has a Creator (the founder, who owns the data and the credentials), one or more Directors (trusted managers who can see across all branches) and Accountants attached to specific branches (operators who run the day-to-day work but whose access to other branches' data is restricted). Sensitive operations such as deleting a transfer or modifying a client record cannot be left at the Accountant's discretion without compromising audit trails; equally, requiring the Director to log in for every correction would paralyse the workflow. The natural answer is a two-step protocol in which the Accountant \emph{proposes} a change, the system captures the before-state, and the Director approves or rejects from a single screen. This is the approval workflow that section~\ref{sec:approval} formalises and that Chapter~\ref{chap:implementation} implements as a PL/pgSQL RPC.
+
+\section{Double-Entry Bookkeeping in Software Systems}
+\label{sec:doubleentry}
+
+Double-entry bookkeeping is rarely cited in computer-science papers, but it is the silent backbone of nearly every accounting system in commercial use. The convention, codified in print by Luca Pacioli in 1494 \cite{pacioli1494} but considerably older in practice, records every economic event as two equal and opposite entries: a debit on one account, a credit on another, summing to zero. The invariant is mechanical, which is precisely the point --- a third party can detect arithmetic errors in a ledger by simple summation, without needing to understand the business it describes. The discipline survives in modern software, although the paired entries are usually generated automatically and hidden from the user interface.
+
+In the software-engineering literature the relevance of double-entry has been argued repeatedly. Fowler, in \emph{Patterns of Enterprise Application Architecture}, names the \emph{Accounting Transaction} pattern as a near-universal building block for financial systems and warns explicitly against the naive shortcut of updating two balance rows in sequence without a wrapping transactional boundary \cite{fowler2002}. The warning is borne out in practice: a sizeable share of the financial-software incidents documented in industrial post-mortems trace back to this exact failure mode, a row updated and the program crashed before the matching row was touched. Event-sourcing literature generalises the discipline further: each business event is recorded as an immutable fact in an append-only log, and balance views are derived as projections \cite{wesner2018,fowler2017event}. The approach has the secondary virtue of producing an audit trail by construction.
+
+The platform described in this thesis adopts a hybrid posture. The fundamental store is an append-only \texttt{ledger\_entries} table in PostgreSQL, mirroring the event-sourcing tradition; balance rows are kept denormalised in dedicated tables for fast lookup. The atomicity of the dual write is enforced at the database layer through stored procedures that wrap both writes inside an implicit transaction, so that the schema preserves the double-entry invariant by construction rather than by trust in the application layer.
+
+\section{Multi-User Financial Applications: A Brief State of the Art}
+\label{sec:soa}
+
+A review of consumer-facing mobile applications for shared finances exposes a sharp bifurcation. At one end sit informal expense-splitters --- Splitwise being the canonical example --- which prioritise frictionless peer-to-peer reconciliation among friends and intentionally avoid currency-level rigour \cite{splitwise2024}. At the other end sit small-business accounting suites such as Wave, Zoho Books and QuickBooks, which implement formal double-entry but presume a stable single-currency operating environment and a trained bookkeeper at the keyboard \cite{quickbooks2024}. Between these two extremes the academic literature on cross-border remittance networks, in particular the World Bank \emph{Migration and Remittances Factbook} series \cite{ratha2016}, documents the operational practices of intermediary settlement networks but does not produce a generalised software framework for them.
+
+Enterprise treasury management systems --- SAP Treasury, Kyriba \cite{kyriba2023} --- do cover the multi-currency multi-branch scenario natively, but they are priced and scoped for organisations several orders of magnitude larger than the target of this work, and their adoption curve is the territory of trained corporate treasury teams, not branch operators. The niche the present platform aims at therefore sits in a genuinely unoccupied region of the design space: small (two to a dozen branches), multi-currency, multi-tenant by role rather than by company, designed to be used by branch personnel under time pressure with walk-in clients waiting at the counter.
+
+Table~\ref{tab:soa} compares the platforms reviewed in this section along the dimensions that mattered for the gap analysis: collaboration model, multi-currency support, partner-mediated transfer support, role-based authorisation and target operator profile.
+
+{\singlespacing
+\begin{table}[h]
+  \caption{Representative existing systems compared against the niche of this thesis}
+  \label{tab:soa}
+  \centering
+  \begin{tabular}{lcccc}
+    \toprule
+    \textbf{System}      & \textbf{Multi-cur.} & \textbf{Partner saldo} & \textbf{Role-based} & \textbf{Target}\\
+    \midrule
+    Splitwise            & limited             & ---                    & ---                  & peers\\
+    Wave / Zoho Books    & limited             & ---                    & partial              & small biz\\
+    QuickBooks           & yes (collapsed)     & ---                    & yes                  & SMEs\\
+    1C: Accounting       & yes (collapsed)     & ---                    & yes                  & trained accountant\\
+    SAP Treasury, Kyriba & yes                 & yes (corporate)        & yes                  & enterprise\\
+    \textbf{Ethnocount}  & \textbf{yes (per-cur.)} & \textbf{yes (per-cur.)} & \textbf{yes} & \textbf{small exchange}\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+}
+
+The conclusion is that no surveyed system simultaneously preserves the three-balance-domain accounting model with per-currency partner saldo \emph{and} targets the operational profile of a small exchange network with branch-level Accountants and a Director who oversees them. This is the gap the platform fills.
+
+\section{Cross-Platform Mobile Frameworks}
+\label{sec:crossplatform}
+
+Two waves dominate the cross-platform mobile space at the time of writing. The first, exemplified by React Native and Cordova, executes JavaScript through a bridge to native UI components: the developer writes once in a JavaScript dialect, and the framework instantiates platform-native widgets at runtime. The second, represented by Flutter, ships its own rendering engine and draws every pixel itself, so the application looks and behaves identically on every platform at the cost of bundling roughly twenty megabytes of engine code. The trade-offs are well-documented in the literature, including the often-cited comparative study by Heitk{\"o}tter, Hanschke and Majchrzak \cite{heitkotter2013}, which is now slightly dated on specifics but still correct on the underlying axes: developer productivity, platform fidelity, accessibility and the size of the runtime.
+
+For the present project the choice fell on Flutter for three reasons that are pragmatic rather than ideological. The first is that the same Dart codebase targets Android, iOS and the three desktop platforms simultaneously, with Windows in particular non-negotiable: the network's branches run on Windows desktops, and a web-only client was not acceptable. The second is that the Dart language is statically typed with sound null-safety, which catches a meaningful fraction of the bugs that would otherwise surface only in production. The third, more subjective but no less important for a single-developer project, is that Flutter's hot reload --- which redraws the user interface in under a second after a source change --- makes the iterative-incremental development rhythm of section~\ref{sec:dsr} tractable.
+
+Table~\ref{tab:frameworks} compares the candidates considered.
+
+{\singlespacing
+\begin{table}[h]
+  \caption{Cross-platform mobile frameworks considered at project start}
+  \label{tab:frameworks}
+  \centering
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Dimension}         & \textbf{Flutter} & \textbf{React Native} & \textbf{Kotlin Multipl.}\\
+    \midrule
+    Android / iOS              & stable           & stable                & stable\\
+    Windows desktop            & stable           & experimental          & via shared logic only\\
+    macOS / Linux desktop      & stable           & experimental          & limited\\
+    Type system                & sound nulls      & TypeScript optional   & sound nulls\\
+    Hot reload                 & sub-second       & sub-second            & slower\\
+    Single-author velocity     & high             & medium                & medium\\
+    Default look on Windows    & matches design   & off                   & native\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+}
+
+\section{Backend-as-a-Service Platforms}
+\label{sec:baas}
+
+Backend-as-a-Service platforms emerged in the early 2010s as a way for small development teams to skip the operational burden of running their own application servers. Firebase pioneered the category, with a proprietary document store, opinionated security rules and a generous free tier; Supabase, launched in 2020 \cite{copplestone2024}, set itself apart by exposing a full PostgreSQL database directly to the developer rather than a custom document layer. Supabase retains the queryability, the transactional guarantees and the strong type system of PostgreSQL, while wrapping them in managed services for authentication (GoTrue), automatic REST-and-RPC exposure (PostgREST), real-time logical replication over WebSockets (Realtime), object storage and edge functions.
+
+The choice between the two for the present platform was, in the end, not difficult. The business semantics require that the dual write of a transfer (the source debit and the destination credit) be atomic, and the natural way to express atomicity over multiple table writes is a database transaction wrapped in a stored procedure --- not a custom security-rule DSL that cannot easily express cross-document constraints. Firebase Cloud Functions can wrap multiple Firestore writes in a single batched commit, but cross-document transactional behaviour in Firestore is intentionally bounded for scalability reasons \cite{firebase2024}, and the multi-table joins that the reporting screens of the platform rely on (transfers joined with branches joined with counterparties joined with currencies) are awkward to express against a document store. PostgreSQL handles those joins natively in single-millisecond time.
+
+Brewer's CAP theorem \cite{brewer2000} reminds the architect that any distributed system must in the limit choose two out of consistency, availability and partition-tolerance. The platform under discussion prioritises consistency for write operations --- a transfer either succeeds end-to-end or has no visible effect --- and pays for that choice by refusing offline writes (section~\ref{sec:offline}). The decision is appropriate to the domain: a missed read while the network is down is mildly inconvenient; a write that the operator believes succeeded but did not produce a row in \texttt{transfers} would be a financial incident.
+
+\section{Clean Architecture, Domain-Driven Design and the BLoC Pattern}
+\label{sec:cleanarch}
+
+The architectural vocabulary of the work is borrowed from two sources. Evans' \emph{Domain-Driven Design} \cite{evans2003} contributes the discipline of treating the business domain as a separately identifiable, pure-Dart core --- entities, value objects, repositories as interfaces --- around which the framework-bound layers orbit. Martin's \emph{Clean Architecture} \cite{martin2017} contributes the layering and the dependency rule: source dependencies point only inward, from outer concrete layers (presentation, data) toward the abstract domain core. The combination is not aesthetic but operational. It makes the domain entities unit-testable in isolation, without a Flutter test environment; it lets the backend (Supabase) be substituted with a mock implementation in tests without touching the BLoCs; and it ensures that when Flutter releases a breaking change in its widget library, the change touches only the presentation layer rather than rippling through the entire codebase.
+
+The presentation layer uses the BLoC (Business Logic Component) pattern \cite{flutter2024bloc}, in which every screen is driven by a small state machine whose inputs are typed \emph{Events} and whose outputs are typed \emph{States}. BLoC was preferred over Provider or Riverpod for two pragmatic reasons. The first is that the explicit Event--State model maps cleanly onto the transactional discipline that financial operations demand: every operator action corresponds to an Event, every visible screen configuration corresponds to a State, and the developer cannot accidentally update part of the screen without producing the matching Event. The second is testability --- events and states are pure values, exercised in isolation through the \texttt{bloc\_test} package, without requiring a widget tree.
+
+\section{Research Methodology}
+\label{sec:dsr}
+
+The work is framed within Design Science Research (DSR) as formulated by Hevner, March, Park and Ram \cite{hevner2004}. DSR posits that knowledge in engineering disciplines is produced through the construction of artifacts whose behaviour answers a defined research question. The artifact in this thesis is the Ethnocount platform itself; the knowledge contribution is the documented set of design decisions that allowed the three-balance-domain model to be expressed in a relational schema and operated atomically under the operational and authorisation constraints of the trade.
+
+The DSR cycle used here proceeded through four iterations. In each iteration a focused sub-problem was identified --- per-currency partner saldo in one iteration, the approval workflow in another, the balance-guard triggers in a third, AML/KYC foundations in a fourth --- a candidate design was implemented, the design was evaluated against the criteria stated in the hypothesis, and the lessons learned informed the next iteration. The iterations were not strictly sequential: several earlier decisions were revisited when later iterations exposed their limits. Migration~047 of the production schema, for example, replaced a USD-collapsed partner saldo with the per-currency JSONB model only after iteration three had shown the original collapse to hide real exposure when the same partner had simultaneous debts in three currencies (the trigger event was described by the operator during an interview between iterations two and three).
+
+The day-to-day work inside each iteration followed an iterative-incremental engineering rhythm closer in spirit to disciplined Agile than to ceremonial Scrum. A single developer worked through a backlog organised around vertical slices: every slice delivered a coherent feature end-to-end, from the migration through the stored procedure and the BLoC to the screen the operator would actually use. Slices were kept small enough to keep the trunk continuously deployable, and database migrations were numbered, idempotent SQL files that could be replayed in any environment. Source control was Git; every commit referenced the slice it implemented. Code review was self-administered with the help of the Dart analyser configured for strong null-safety and the Supabase advisor for the database layer. A short handoff document was kept current at all times in case the project needed to be passed to another developer --- a discipline that, although not used in anger, was helpful in surfacing implicit assumptions.
+
+\paragraph{Data sources.}
+The functional requirements were elicited from three complementary sources. The first was a series of semi-structured interviews with the operator running the existing spreadsheet workflow, covering the activities of a typical day, the kinds of errors the operator had experienced and the data items currently kept in the operator's head rather than in any artifact. The second source was structured observation: the author sat with the operator across four working sessions, watching the spreadsheet being filled in real time and noting moments of hesitation, rework or branched logic. The third source was the existing spreadsheet itself, treated as a tacit specification --- column names, conditional formats and hand-written notes in the margin were all carefully reverse-engineered into entity attributes.
+
+\paragraph{Evaluation methods.}
+The evaluation, reported in Chapter~\ref{chap:implementation}, combines four complementary methods. Automated unit and widget tests verify the correctness of the pure-Dart logic and the rendering of the most safety-critical screens under controlled state. Integration tests against a dedicated Supabase staging project verify the behaviour of stored procedures and Row-Level Security policies, including the atomicity properties claimed in the hypothesis. Performance measurements are taken on a representative Windows desktop and a mid-range Android device, instrumented through chronometers around the most frequent user actions. Finally, a User Acceptance Test was conducted with the operator over two weeks of parallel use, during which both the spreadsheet and the platform were updated with the same operational data and reconciled at the end of each week.
+
+\paragraph{Ethical considerations.}
+The interviews and the acceptance trial involved a single business and were conducted under explicit consent. No client-identifying data is included in this thesis; where examples appear, names, phone numbers and account numbers are illustrative placeholders. The codebase contains no hard-coded credentials, and the staging Supabase project used for evaluation was destroyed at the conclusion of the trial. The thesis acknowledges the regulatory complexity of remittance services in some jurisdictions and explicitly limits its scope to the operational dimension of the business rather than its legal one.
+
+\section{Research Gap, Hypothesis and Success Criteria}
+\label{sec:gap}
+
+Synthesising the literature reviewed in this chapter with the operational picture of section~\ref{sec:domain}, the research gap can be stated precisely: there is no published or off-the-shelf system that simultaneously (i)~preserves the three-balance-domain accounting model with per-currency partner saldo, (ii)~enforces atomicity and idempotency of multi-table transfer creation through database-level stored procedures rather than application-level checks, and (iii)~combines Row-Level Security with a Director-mediated approval workflow that lets branch Accountants do their work while protecting multi-branch integrity. The hypothesis stated in the Introduction is that a Flutter + BLoC client on a Supabase backend is a sufficient technology stack to close this gap within the engineering envelope of a single bachelor-level developer.
+
+The success criteria against which the rest of the thesis is judged are three. \emph{Correctness} requires that the platform exhibit zero platform-introduced reconciliation errors during the two-week parallel-use trial. \emph{Responsiveness} requires sub-300-millisecond median interaction latency on the reference hardware. \emph{Maintainability} requires that the platform be carried, by a single developer, through a multi-month evolution cycle without irreparable drift between the client and the server schema --- operationalised in this work as: every commit must land on a green build, and every schema change must arrive as a numbered, idempotent migration file.
+
+\section{Chapter Summary}
+\label{sec:ch1summary}
+
+The chapter has done four things. It described the operational picture of the small currency-exchange networks the platform is built for, with its three accounting layers, its Creator/Director/Accountant role structure and its tolerance for hand-held devices on flaky networks. It surveyed the literature relevant to the engineering task --- double-entry bookkeeping in software, multi-user financial applications, cross-platform frameworks, Backend-as-a-Service platforms, and the architectural vocabulary of Clean Architecture, Domain-Driven Design and the BLoC pattern. It framed the work within Design Science Research, described the iterative-incremental development rhythm and the four data sources used for requirements elicitation. And it formalised the research gap and the three success criteria against which the rest of the work is assessed.
+
+\noindent\textbf{Conclusions for Chapter~1.}
+No surveyed system simultaneously preserves the three-balance-domain accounting model with per-currency partner saldo, enforces atomicity through database stored procedures, and combines Row-Level Security with a Director-mediated approval workflow. The hypothesis is that the combination of Flutter (with BLoC) and Supabase (PostgreSQL with RLS and stored procedures) is sufficient to close this gap inside the engineering envelope of a single bachelor-level developer. The next chapter derives the requirements, designs the domain model and specifies the database schema and the RLS policy set against which that hypothesis will be tested.

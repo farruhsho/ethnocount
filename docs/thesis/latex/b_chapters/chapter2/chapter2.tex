@@ -1,0 +1,346 @@
+\chapter{System Analysis and Architecture Design}
+\label{chap:methodology}
+
+The previous chapter framed the problem and the research methodology. The present chapter turns the abstract gap into a system. It begins with the catalogue of functional and non-functional requirements derived from the elicitation activities of section~\ref{sec:dsr}; it proceeds through the domain model, the Clean Architecture pattern, the PostgreSQL schema and the Row-Level Security policy set; and it closes with the design of the Director-mediated approval workflow that turns out to be the central authorisation primitive of the platform.
+
+\section{Functional and Non-Functional Requirements}
+\label{sec:requirements}
+
+\subsection{Functional requirements}
+\label{ssec:func}
+
+The functional requirements were derived from the three data sources of section~\ref{sec:dsr} --- the operator interviews, the four working-session observations and the existing spreadsheet treated as a tacit specification --- and refined across the four iterations of the DSR cycle. Table~\ref{tab:func} lists the principal requirements with stable identifiers that are referenced from the implementation chapter.
+
+{\singlespacing
+\begin{longtable}{p{1.3cm}p{12.5cm}}
+  \caption{Functional requirements (principal items)}
+  \label{tab:func}\\
+  \toprule
+  \textbf{ID}  & \textbf{Requirement}\\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{ID}  & \textbf{Requirement}\\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  FR-01 & The system shall authenticate users by email and password and load their role and assigned-branches list immediately after sign-in.\\
+  FR-02 & The system shall present, on a dashboard, the per-currency balances of every branch the user is authorised to see.\\
+  FR-03 & The system shall let an authorised user create a money transfer in one of three modes: own-branch only; partner-mediated (the transfer travels through an intermediary partner); and dealer mode (with explicit buy/sell rates for the spread).\\
+  FR-04 & The system shall accept an idempotency key on every transfer-creation request and reject any duplicate request carrying the same key.\\
+  FR-05 & The system shall maintain a per-currency running saldo with every intermediary partner, updated atomically whenever a partner-mediated transfer is created or detached.\\
+  FR-06 & The system shall maintain a per-client multi-currency wallet (ClientBalance) and shall record every wallet movement as an immutable ledger entry.\\
+  FR-07 & The system shall allow the Creator and the Director to administer the catalogues of branches, branch accounts, partners, clients, commissions and exchange rates.\\
+  FR-08 & The system shall restrict an Accountant's visibility to the branches listed in the user's assigned-branch-ids attribute.\\
+  FR-09 & The system shall route Accountant-initiated modifications of transfers, clients or accounts through a pending-approvals workflow that captures a before-snapshot of the affected row.\\
+  FR-10 & The system shall present the Director with a single screen on which the before- and after- states of each pending approval are visible side by side, and on which the Director can approve or reject.\\
+  FR-11 & The system shall send real-time notifications to relevant users when a transfer is created, modified, deleted or approved/rejected.\\
+  FR-12 & The system shall log every modification of a sensitive entity (transfer, client, account, partner) to an audit trail that records the actor, the timestamp and the before/after states.\\
+  FR-13 & The system shall produce per-currency reconciliation reports between the operator's book and the partner's book over a chosen period.\\
+\end{longtable}
+}
+
+\subsection{Non-functional requirements}
+\label{ssec:nonfunc}
+
+The non-functional requirements (Table~\ref{tab:nonfunc}) translate the hypothesis of section~\ref{sec:gap} into measurable engineering targets. They are referenced again in the evaluation section of Chapter~\ref{chap:implementation}.
+
+{\singlespacing
+\begin{table}[h]
+  \caption{Non-functional requirements}
+  \label{tab:nonfunc}
+  \centering
+  \begin{tabular}{p{1.3cm}p{6cm}p{6cm}}
+    \toprule
+    \textbf{ID}  & \textbf{Property}        & \textbf{Target}\\
+    \midrule
+    NFR-01 & Median interaction latency      & $\leq$ 300\,ms on reference hardware\\
+    NFR-02 & Cross-tenant data leakage       & Zero rows under integration tests\\
+    NFR-03 & Atomicity of transfer creation  & All-or-nothing across all affected tables\\
+    NFR-04 & Idempotency of write operations & Server rejects duplicate idempotency key\\
+    NFR-05 & Cross-platform reach            & Android, iOS, Windows, macOS, Linux\\
+    NFR-06 & Single-developer maintainability & Continuously deployable trunk; numbered idempotent migrations\\
+    NFR-07 & Audit completeness              & Every sensitive change recorded with actor and before/after states\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+}
+
+\section{Domain Model: Eight Entities Around Three Balance Domains}
+\label{sec:domainmodel}
+
+The central architectural commitment of the platform is to express the three accounting layers as three distinct sets of entities, linked by atomic stored procedures rather than collapsed into a common base-currency ledger. Eight entities carry this model:
+
+\begin{description}
+  \item[\texttt{Branch}.] A physical or notional office. Identified by a UUID. Carries a name, a city, a country, a default currency and a creator-owned flag.
+  \item[\texttt{BranchAccount}.] A till or settlement card associated with a branch. Carries a denominated currency and a running balance. The canonical store for the operator's own funds.
+  \item[\texttt{Counterparty}.] An intermediary partner office, typically abroad. Carries a name, a contact channel and the central attribute of the platform: a \texttt{saldo\_by\_currency} JSONB object keyed by ISO currency code.
+  \item[\texttt{CounterpartyTransaction}.] An immutable event that mutates a counterparty's saldo: a \texttt{paid\_for\_us} when the partner has paid out a transfer on the operator's behalf, a \texttt{paid\_for\_them} when the operator has paid out a transfer on the partner's behalf, a \texttt{settlement} when one party has wired cash to the other to zero out the running saldo.
+  \item[\texttt{Client}.] A recurring customer. Carries name, identification (passport or equivalent), KYC notes, and a link to a \texttt{ClientBalance}.
+  \item[\texttt{ClientBalance}.] A multi-currency wallet owned by a client. The wallet's per-currency totals are derived from the immutable \texttt{ClientTransaction} stream.
+  \item[\texttt{Transfer}.] The principal entity of the platform. Carries a source account, a destination account or partner, source and destination amounts, source and destination currencies, an exchange rate, a status and an idempotency key. Optionally linked to a counterparty through the \texttt{via\_counterparty\_id} attribute.
+  \item[\texttt{LedgerEntry}.] An immutable, append-only fact about a value movement. Every Transfer produces one or more LedgerEntries; so does every settlement; so does every wallet movement.
+\end{description}
+
+A ninth supporting entity --- \texttt{PendingApproval} --- materialises the Director-mediated approval workflow. It carries the proposed change, a snapshot of the affected row at the moment of request, and an outcome (approved, rejected, withdrawn).
+
+Figure~\ref{fig:erd} sketches the relationships and cardinalities at a high level. The principal observation is that the three balance domains do not share rows: a \texttt{BranchAccount} row is never reused as a \texttt{ClientBalance}, even though the underlying schema could in principle express it; the conceptual separation is enforced by the foreign-key directions and by the stored-procedure interfaces.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+    entity/.style={draw, rounded corners, fill=blue!5, minimum width=2.5cm, minimum height=0.7cm, font=\small},
+    auxentity/.style={draw, rounded corners, fill=gray!5, minimum width=2.5cm, minimum height=0.7cm, font=\small\itshape},
+    every node/.style={font=\small},
+    >=Stealth,
+    node distance=8mm and 14mm
+  ]
+    \node[entity] (branch) {Branch};
+    \node[entity, right=of branch] (account) {BranchAccount};
+    \node[entity, below=of branch] (transfer) {Transfer};
+    \node[entity, left=of branch] (cp) {Counterparty};
+    \node[entity, below=of cp] (cptx) {CPTransaction};
+    \node[entity, right=of account] (client) {Client};
+    \node[entity, below=of client] (cbal) {ClientBalance};
+    \node[entity, below=of transfer] (ledger) {LedgerEntry};
+    \node[auxentity, below=of cptx] (pa) {PendingApproval};
+    \draw[->] (account) -- node[above, font=\tiny]{1..n} (branch);
+    \draw[->] (transfer) -- node[right, font=\tiny]{src} (branch);
+    \draw[->] (transfer) -- node[below, font=\tiny]{via 0..1} (cp);
+    \draw[->] (transfer) -- (ledger);
+    \draw[->] (cptx) -- (cp);
+    \draw[->] (cbal) -- (client);
+    \draw[->] (pa) -- (transfer);
+  \end{tikzpicture}
+  \caption{High-level entity--relationship sketch of the domain. Three balance domains (own funds, partner saldo, client wallet) are kept on separate axes and linked only by Transfer.}
+  \label{fig:erd}
+\end{figure}
+
+\section{Architectural Pattern: Clean Architecture with BLoC}
+\label{sec:cleanarch2}
+
+The application follows a Clean-Architecture variant adapted to Flutter, structured as four layers (Figure~\ref{fig:arch}). The \emph{domain} layer holds pure-Dart entities, value objects (\texttt{Money}, \texttt{CurrencyCode}, \texttt{ExchangeRate}) and repository interfaces; it has no dependency on Flutter, Supabase or Hive. The \emph{data} layer contains repository implementations, remote data sources backed by the Supabase Dart client, and DTO serialisers. The \emph{presentation} layer hosts BLoCs and screens. The \emph{core} layer collects cross-cutting helpers --- the get\_it container that wires the dependency graph, the GoRouter route table, the AppIcons facade that abstracts away the icon-pack identifiers, the currency-tier utility, the network connectivity probe.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+    layer/.style={draw, rounded corners, fill=blue!5, minimum width=11cm, minimum height=0.9cm, font=\small},
+    every node/.style={font=\small},
+    node distance=1.5mm
+  ]
+    \node[layer, fill=blue!10] (pres) {\textbf{Presentation} \;---\; BLoC, Widgets, GoRouter, Theme};
+    \node[layer, fill=blue!5,  below=of pres] (data) {\textbf{Data} \;---\; Repository impls, Supabase data sources, DTOs};
+    \node[layer, fill=blue!2,  below=of data] (domain) {\textbf{Domain} \;---\; Entities, Value Objects, Repository interfaces, Use cases};
+    \node[layer, fill=gray!8,  below=of domain] (core) {\textbf{Core} \;---\; get\_it DI, GoRouter, AppIcons facade, currency tier, network};
+    \draw[->] (pres.east) ++(0.4,0) -- ++(0,-3.1) node[midway, right, font=\scriptsize, align=left]{dependency\\direction};
+  \end{tikzpicture}
+  \caption{High-level architecture: dependencies always point inward toward the pure-Dart Domain layer.}
+  \label{fig:arch}
+\end{figure}
+
+The BLoC pattern was chosen, as section~\ref{sec:cleanarch} discussed, because the explicit Event--State model maps cleanly onto the transactional discipline of financial operations. Within the presentation layer, an additional pattern emerged across iterations: \emph{shared widgets} for cross-screen blocks (the dealer-rates block, the partner-saldo preview, the currency picker), grouped under \texttt{lib/presentation/common/widgets/} and reused by the transfer-creation screen, the partner-card screen and the attach dialog. This avoided the divergence that would otherwise creep in between two surfaces that conceptually do the same thing.
+
+Figure~\ref{fig:bloc} sketches the BLoC flow for the Transfers feature: the screen dispatches Events to a TransfersBloc, the BLoC consults the TransferRepository (which in turn consults the SupabaseTransferDataSource and the local cache), and the BLoC emits a sequence of States that the screen renders.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+    node distance=4mm and 10mm,
+    box/.style={draw, rounded corners, minimum width=2.7cm, minimum height=0.7cm, font=\small},
+    >=Stealth
+  ]
+    \node[box, fill=blue!10] (screen) {Screen};
+    \node[box, fill=yellow!20, right=of screen] (bloc) {TransfersBloc};
+    \node[box, fill=blue!5,   right=of bloc] (repo) {Repository};
+    \node[box, fill=blue!3,   right=of repo] (ds) {DataSource};
+    \node[box, fill=gray!10,  right=of ds] (sb) {Supabase};
+    \draw[->] (screen) -- node[above, font=\tiny]{Event} (bloc);
+    \draw[->] (bloc) -- (repo);
+    \draw[->] (repo) -- (ds);
+    \draw[->] (ds) -- (sb);
+    \draw[->] (bloc.south) ++(0,-0.05) to[bend right=20] node[below, font=\tiny]{State} (screen.south);
+  \end{tikzpicture}
+  \caption{Per-feature BLoC flow: Events flow toward the backend, States flow back to the screen.}
+  \label{fig:bloc}
+\end{figure}
+
+\section{Database Schema and Domain Invariants}
+\label{sec:schema}
+
+The PostgreSQL schema is currently expressed across 15 tables and 66 numbered, idempotent migrations. The principal tables are \texttt{users}, \texttt{branches}, \texttt{branch\_accounts}, \texttt{counterparties}, \texttt{counterparty\_transactions}, \texttt{clients}, \texttt{client\_balances}, \texttt{client\_transactions}, \texttt{transfers}, \texttt{ledger\_entries}, \texttt{commissions}, \texttt{exchange\_rates}, \texttt{pending\_approvals}, \texttt{notifications} and \texttt{audit\_log}.
+
+Three domain invariants govern the schema:
+
+\begin{description}
+  \item[$I_1$ (double-entry).] Every transfer produces exactly two matching ledger entries: a credit on the source account in the source currency, a debit on the destination account in the destination currency. Both entries are inserted inside the same database transaction, or neither is.
+  \item[$I_2$ (tenant isolation).] For every row $r$ in a tenant-scoped table $T$ (transfers, clients, accounts, partners, etc.), $r$ is visible to user $u$ if and only if $r.\text{branch\_id}$ is contained in the user's branch set --- itself the union of all branches for Creator/Director and the user's \texttt{assigned\_branch\_ids} for Accountant.
+  \item[$I_3$ (idempotency).] Every transfer-creation request carries a client-supplied UUID, stored in the \texttt{idempotency\_key} column. A UNIQUE partial index on this column rejects any duplicate request at the database layer.
+\end{description}
+
+Listing~\ref{lst:transfers} shows the principal columns of the \texttt{transfers} table. The partial index on \texttt{idempotency\_key} excludes \texttt{NULL} so that legacy rows from before the introduction of the key are not in scope.
+
+\begin{lstlisting}[language=SQL,caption={The \texttt{transfers} table (principal columns)},label={lst:transfers}]
+CREATE TABLE transfers (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id       UUID NOT NULL REFERENCES branches(id),
+  via_cp_id       UUID REFERENCES counterparties(id),
+  src_account_id  UUID NOT NULL REFERENCES branch_accounts(id),
+  dst_account_id  UUID REFERENCES branch_accounts(id),
+  src_currency    TEXT NOT NULL,
+  dst_currency    TEXT NOT NULL,
+  src_amount      NUMERIC(20,4) NOT NULL CHECK (src_amount > 0),
+  dst_amount      NUMERIC(20,4) NOT NULL CHECK (dst_amount > 0),
+  rate            NUMERIC(20,10) NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'delivered',
+  idempotency_key UUID,
+  created_by      UUID NOT NULL REFERENCES users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  amendment_history JSONB NOT NULL DEFAULT '[]'::jsonb
+);
+
+CREATE UNIQUE INDEX transfers_idem_uk
+  ON transfers(idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+\end{lstlisting}
+
+A sanity check that turned out to be operationally important guards the \texttt{client\_transactions} amount: a CHECK constraint rejects amounts outside the half-open interval $(0, 10^{12}]$, which excludes both negative values and pathological large ones. The constraint was introduced after a real incident in which a malformed input produced a row with an amount of $\approx 10^{61}$ US dollars and broke the rendering layer; the constraint now treats the rendering crash as a database-level rejection.
+
+\section{Multi-Tenant Security: Row-Level Security}
+\label{sec:rls}
+
+The security model is enforced at the database layer through PostgreSQL Row-Level Security. Three roles are recognised. A \emph{Creator} (the founder) holds unconditional read and write access to every row in the project. A \emph{Director} sees data from all branches and can administer the catalogues of partners, accounts, commissions and exchange rates. An \emph{Accountant} sees only the branches listed in the user's \texttt{assigned\_branch\_ids} attribute and can write only against those branches; modifications to existing rows are channelled through the approval workflow of section~\ref{sec:approval}.
+
+Listing~\ref{lst:rls} shows the principal RLS policies on the \texttt{transfers} table. The pattern --- a SELECT policy parameterised on the user's branch set and a separate WITH CHECK policy on the role --- is the canonical shape used across all tenant tables in the schema.
+
+\begin{lstlisting}[language=SQL,caption={Row-Level Security policies on \texttt{transfers}},label={lst:rls}]
+ALTER TABLE transfers ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY transfers_select_visible
+  ON transfers
+  FOR SELECT
+  USING (
+       (SELECT role FROM users WHERE id = auth.uid())
+         IN ('creator', 'director')
+    OR branch_id = ANY(
+         (SELECT assigned_branch_ids FROM users WHERE id = auth.uid())
+       )
+  );
+
+CREATE POLICY transfers_insert_branch_authorised
+  ON transfers
+  FOR INSERT
+  WITH CHECK (
+    branch_id = ANY(
+      (SELECT assigned_branch_ids FROM users WHERE id = auth.uid())
+    )
+    OR (SELECT role FROM users WHERE id = auth.uid())
+         IN ('creator', 'director')
+  );
+
+-- Direct UPDATE and DELETE are not granted to Accountants;
+-- they go through the approval workflow (see Section 2.7).
+\end{lstlisting}
+
+The threat model the policies have to defend against is straightforward but deserves stating. A malicious or simply confused client may forge any \texttt{branch\_id} in any request, replay any operation, attempt to mutate a row not belonging to its branch set, or read rows belonging to other branches. Under the RLS regime, none of these can succeed by accident: the PostgreSQL query planner rewrites every query to add the policy predicate, so a SELECT against a transfer outside the user's branch set returns zero rows rather than an authorisation error, and an INSERT or UPDATE that violates the WITH CHECK predicate raises an error before any row is touched. Cross-tenant leakage thus becomes a structural property of the query plan, not a runtime check that the application layer might forget.
+
+\section{The Director-Mediated Approval Workflow}
+\label{sec:approval}
+
+The approval workflow is, in the author's judgement, the most novel architectural primitive of the platform. The problem it solves is concrete. An Accountant attached to the Tashkent branch realises, while reconciling the day's takings, that yesterday's transfer ID T-2156 had the wrong destination currency. Letting the Accountant simply correct the row would compromise the audit trail and would tempt the Director to monitor every Accountant action defensively. Requiring the Director to log in personally for every correction would, in turn, paralyse the workflow. The approval workflow is the synthesis: the Accountant \emph{proposes} a correction, the system captures the row's current state as a snapshot, the Director receives a notification and approves or rejects from a dedicated screen on which the before-state and the after-state are visible side by side.
+
+Figure~\ref{fig:approval} sketches the state machine. The transitions are guarded by separate stored procedures (\texttt{request\_approval}, \texttt{approve}, \texttt{reject}, \texttt{withdraw}), each of which checks the actor's role through the RLS-aware \texttt{auth.uid()} hook.
+
+\begin{figure}[h]
+  \centering
+  \begin{tikzpicture}[
+    state/.style={draw, rounded corners, fill=blue!8, minimum width=2.5cm, minimum height=0.8cm, font=\small},
+    terminal/.style={draw, rounded corners, fill=gray!10, minimum width=2.5cm, minimum height=0.8cm, font=\small},
+    node distance=10mm and 18mm, >=Stealth
+  ]
+    \node[state] (req) {requested};
+    \node[terminal, above right=of req] (app) {approved};
+    \node[terminal, right=of req] (with) {withdrawn};
+    \node[terminal, below right=of req] (rej) {rejected};
+    \draw[->] (req) -- node[above, font=\tiny]{Director} (app);
+    \draw[->] (req) -- node[above, font=\tiny]{Accountant} (with);
+    \draw[->] (req) -- node[below, font=\tiny]{Director} (rej);
+  \end{tikzpicture}
+  \caption{The PendingApproval state machine: a request originates from an Accountant and terminates in one of three states.}
+  \label{fig:approval}
+\end{figure}
+
+The snapshot captured at request time is the part that gives the workflow its forensic value. Without it, the Director would have to reason about the proposed change in the abstract; with it, the Director sees the two states explicitly and the after-state highlights only the columns that the Accountant proposed to change. The snapshot is stored as a JSONB column on \texttt{pending\_approvals}, which keeps the schema flexible across different sensitive tables (transfers, clients, accounts) without requiring a fresh column per entity.
+
+A consequence of channeling all sensitive Accountant edits through this workflow is that the audit log effectively writes itself: the \texttt{audit\_log} table receives an entry for every approved request, with actor, timestamp, the proposed change and the originally captured before-state. The author found, over the course of the project, that this side-effect saved more debugging time than any other single design choice.
+
+\section{Cross-Currency Quoting and Currency Tiers}
+\label{sec:currency}
+
+A small but consequential design question is the direction in which the operator should enter exchange rates. In a pair such as Uzbek som / Russian rouble, should the operator type \emph{1 RUB = X UZS} or \emph{1 UZS = X RUB}? The choice matters because it changes the precision of the entered number and the orientation of every preview on the screen. The platform answers the question by assigning every supported currency a numeric \emph{tier}: the lower the tier, the stronger the currency. When two currencies are compared, the stronger one (lower tier) becomes the base and the weaker one becomes the quoted unit. Table~\ref{tab:tiers} reproduces the principal tiers in use.
+
+{\singlespacing
+\begin{table}[h]
+  \caption{Currency tier map (excerpt)}
+  \label{tab:tiers}
+  \centering
+  \begin{tabular}{lcl}
+    \toprule
+    \textbf{Tier} & \textbf{Code} & \textbf{Currency}\\
+    \midrule
+    1 & USD & US dollar\\
+    1 & EUR & Euro\\
+    1 & GBP & Pound sterling\\
+    2 & AED & UAE dirham\\
+    2 & CNY & Chinese yuan\\
+    3 & TRY & Turkish lira\\
+    3 & RUB & Russian rouble\\
+    4 & KZT & Kazakh tenge\\
+    4 & KGS & Kyrgyz som\\
+    5 & UZS & Uzbek som\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+}
+
+The \texttt{quotePair(a, b)} helper, exposed as a pure-Dart function in \texttt{lib/core/utils/currency\_tier.dart}, always returns the stronger side first; the rest of the user interface --- transfer form, partner-attach dialog, dealer-rates block --- relies on this single source of truth so that the operator never has to mentally invert a quote. An equivalent SQL view is used inside stored procedures for the rare cases where the server has to display a rate without re-entering it.
+
+\section{Architectural Trade-offs}
+\label{sec:tradeoffs}
+
+The principal architectural decisions of the platform are summarised in Table~\ref{tab:tradeoffs}, with the chief alternative considered and the rationale for the chosen option. Several of these decisions were re-litigated mid-project; the column \emph{Iteration} records the iteration of the DSR cycle in which the decision settled.
+
+{\singlespacing
+\begin{longtable}{p{4cm}p{4cm}p{5cm}p{0.8cm}}
+  \caption{Architectural trade-offs}
+  \label{tab:tradeoffs}\\
+  \toprule
+  \textbf{Decision}                              & \textbf{Alternative}              & \textbf{Rationale}                                                 & \textbf{Iter.}\\
+  \midrule
+  \endfirsthead
+  \toprule
+  \textbf{Decision}                              & \textbf{Alternative}              & \textbf{Rationale}                                                 & \textbf{Iter.}\\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  Flutter + Dart                                 & React Native, KMP                & Same Dart code on 5 platforms; sound nulls; sub-second hot reload. & 1\\
+  Supabase (PostgreSQL + RLS)                    & Firebase                         & RLS expressivity; multi-table transactions; PL/pgSQL.             & 1\\
+  BLoC + Cubit                                   & Provider, Riverpod               & Explicit Event--State model; testability; mature ecosystem.        & 1\\
+  Per-currency partner saldo (JSONB)             & USD-collapsed saldo              & Hides genuine exposure when partner has debts in 3 currencies.    & 3\\
+  Director-mediated approval workflow            & Direct accountant writes         & Preserves audit trail; protects multi-branch integrity.           & 2\\
+  Idempotency key on transfer creation           & Server-issued ETag               & Works through retries; UUID generated client-side; zero RTT.      & 1\\
+  Refuse offline writes                          & Outbox + replay                  & Financial semantics make refuse safer than reorder.               & 2\\
+  Sanity caps on client amounts                  & Trust the client                 & A real input produced 10$^{61}$\,USD before the cap.              & 3\\
+  Snapshot at request time                       & Snapshot at approval time        & Captures Accountant's intent against actual state at the time.    & 2\\
+  Numbered idempotent migrations                 & Hand-rolled DB changes           & Replayable across staging and production; single source of truth. & 1\\
+  AppIcons facade over lucide\_icons\_flutter    & Direct icon use                   & Prevents accidental Material icons; one place to swap packs.     & 1\\
+\end{longtable}}
+
+\section{Chapter Summary}
+\label{sec:ch2summary}
+
+The chapter has done five things. It catalogued the functional and non-functional requirements derived from interviews, observation and the existing spreadsheet workflow. It described the eight-entity domain model and explained why the three balance domains are kept on separate axes. It situated the application inside a Clean-Architecture variant with BLoC at the presentation layer and core utilities collected in their own cross-cutting layer. It specified the PostgreSQL schema, the three domain invariants and the Row-Level Security policy set that enforces tenant isolation by query-plan rewriting. And it designed the Director-mediated approval workflow that protects multi-branch integrity while preserving Accountant usability.
+
+\noindent\textbf{Conclusions for Chapter~2.}
+The three-balance-domain accounting model can be expressed in a relational schema, with the per-currency partner saldo encoded as a JSONB attribute keyed by ISO currency code. The atomicity, idempotency and tenant-isolation invariants ($I_1$, $I_2$, $I_3$) can be enforced at the database layer through transactions, UNIQUE partial indexes and Row-Level Security policies. The Director-mediated approval workflow gives the operator a structured way to channel sensitive Accountant edits while preserving the audit trail. Chapter~3 turns this design into running code and reports the empirical evaluation that judges it against the success criteria of section~\ref{sec:gap}.

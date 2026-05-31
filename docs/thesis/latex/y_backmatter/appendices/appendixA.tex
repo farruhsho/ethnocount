@@ -1,0 +1,167 @@
+\chapter{Database Schema (DDL Excerpt)}
+\label{chap:appendixA}
+
+This appendix reproduces the core data definition language for the \emph{Ethnocount} schema. The complete migration set (currently 66 numbered, idempotent \texttt{.sql} files) is published with the source code at \url{https://github.com/farruhsho/ethnocount}. Indices, foreign-key constraints and Row-Level Security policies that are not essential to the architectural argument of the thesis are elided for brevity; the principal RLS policy is reproduced in Chapter~\ref{chap:methodology}, Listing~\ref{lst:rls}.
+
+\begin{lstlisting}[language=SQL,caption={Branches, users and branch accounts},label={lst:branches-ddl}]
+CREATE TYPE user_role AS ENUM ('creator', 'director', 'accountant');
+
+CREATE TABLE users (
+  id                  UUID PRIMARY KEY DEFAULT auth.uid(),
+  email               TEXT NOT NULL UNIQUE,
+  full_name           TEXT NOT NULL,
+  role                user_role NOT NULL,
+  assigned_branch_ids UUID[] NOT NULL DEFAULT '{}',
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE branches (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        TEXT NOT NULL,
+  city        TEXT NOT NULL,
+  country     TEXT NOT NULL,
+  base_ccy    CHAR(3) NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by  UUID NOT NULL REFERENCES users(id)
+);
+
+CREATE TABLE branch_accounts (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id   UUID NOT NULL REFERENCES branches(id),
+  name        TEXT NOT NULL,
+  ccy         CHAR(3) NOT NULL,
+  balance     NUMERIC(20,4) NOT NULL DEFAULT 0,
+  is_card     BOOLEAN NOT NULL DEFAULT false
+);
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQL,caption={Counterparties and per-currency saldo},label={lst:cp-ddl}]
+CREATE TABLE counterparties (
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name               TEXT NOT NULL,
+  city               TEXT,
+  country            TEXT,
+  contact            TEXT,
+  saldo_by_currency  JSONB NOT NULL DEFAULT '{}'::jsonb,
+  exposure_limit     NUMERIC(20,4),
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TYPE cp_tx_kind AS ENUM (
+  'paid_for_us', 'paid_for_them', 'settlement'
+);
+
+CREATE TABLE counterparty_transactions (
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cp_id         UUID NOT NULL REFERENCES counterparties(id),
+  branch_id     UUID NOT NULL REFERENCES branches(id),
+  kind          cp_tx_kind NOT NULL,
+  ccy           CHAR(3) NOT NULL,
+  amount        NUMERIC(20,4) NOT NULL,
+  rate          NUMERIC(20,10),
+  linked_xfer   UUID,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by    UUID NOT NULL REFERENCES users(id)
+);
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQL,caption={Clients and per-client multi-currency wallet},label={lst:client-ddl}]
+CREATE TABLE clients (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id   UUID NOT NULL REFERENCES branches(id),
+  full_name   TEXT NOT NULL,
+  passport    TEXT,
+  phone       TEXT,
+  kyc_status  TEXT NOT NULL DEFAULT 'unverified'
+);
+
+CREATE TABLE client_balances (
+  client_id   UUID PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+  totals      JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE TABLE client_transactions (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id   UUID NOT NULL REFERENCES clients(id),
+  branch_id   UUID NOT NULL REFERENCES branches(id),
+  ccy         CHAR(3) NOT NULL,
+  amount      NUMERIC(20,4) NOT NULL
+                CHECK (amount > 0 AND amount <= 1e12),
+  direction   TEXT NOT NULL CHECK (direction IN ('in','out')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by  UUID NOT NULL REFERENCES users(id)
+);
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQL,caption={Transfers, ledger entries and approvals},label={lst:transfers-ddl}]
+CREATE TABLE transfers (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id         UUID NOT NULL REFERENCES branches(id),
+  via_cp_id         UUID REFERENCES counterparties(id),
+  src_account_id   UUID NOT NULL REFERENCES branch_accounts(id),
+  dst_account_id   UUID REFERENCES branch_accounts(id),
+  src_currency      CHAR(3) NOT NULL,
+  dst_currency      CHAR(3) NOT NULL,
+  src_amount        NUMERIC(20,4) NOT NULL CHECK (src_amount > 0),
+  dst_amount        NUMERIC(20,4) NOT NULL CHECK (dst_amount > 0),
+  rate              NUMERIC(20,10) NOT NULL,
+  spread_profit     NUMERIC(20,4) NOT NULL DEFAULT 0,
+  status            TEXT NOT NULL DEFAULT 'delivered',
+  idempotency_key   UUID,
+  created_by        UUID NOT NULL REFERENCES users(id),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  amendment_history JSONB NOT NULL DEFAULT '[]'::jsonb
+);
+
+CREATE UNIQUE INDEX transfers_idem_uk
+  ON transfers(idempotency_key)
+  WHERE idempotency_key IS NOT NULL;
+
+CREATE TYPE ledger_side AS ENUM ('debit','credit');
+
+CREATE TABLE ledger_entries (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id   UUID NOT NULL REFERENCES branches(id),
+  account_id  UUID NOT NULL REFERENCES branch_accounts(id),
+  ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  amount      NUMERIC(20,4) NOT NULL,
+  ccy         CHAR(3) NOT NULL,
+  side        ledger_side NOT NULL,
+  xfer_id     UUID REFERENCES transfers(id),
+  note        TEXT,
+  created_by  UUID NOT NULL REFERENCES users(id)
+);
+
+CREATE INDEX ledger_branch_ts_idx
+  ON ledger_entries(branch_id, ts DESC);
+
+CREATE TABLE pending_approvals (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  branch_id       UUID NOT NULL REFERENCES branches(id),
+  entity          TEXT NOT NULL,
+  entity_id       UUID NOT NULL,
+  proposed_change JSONB NOT NULL,
+  before_snapshot JSONB NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'requested',
+  requested_by    UUID NOT NULL REFERENCES users(id),
+  requested_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_by     UUID REFERENCES users(id),
+  resolved_at     TIMESTAMPTZ
+);
+\end{lstlisting}
+
+\begin{lstlisting}[language=SQL,caption={Audit log},label={lst:audit-ddl}]
+CREATE TABLE audit_log (
+  id          BIGSERIAL PRIMARY KEY,
+  ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  actor       UUID NOT NULL REFERENCES users(id),
+  entity      TEXT NOT NULL,
+  entity_id   UUID NOT NULL,
+  action      TEXT NOT NULL,
+  before_state JSONB,
+  after_state  JSONB
+);
+
+CREATE INDEX audit_entity_idx ON audit_log(entity, entity_id);
+CREATE INDEX audit_actor_ts_idx ON audit_log(actor, ts DESC);
+\end{lstlisting}

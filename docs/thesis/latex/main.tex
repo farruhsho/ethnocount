@@ -1,0 +1,108 @@
+\documentclass{rnu-thesis}
+
+\usepackage[protrusion]{microtype}
+
+% --- Algorithms (float + pseudocode)
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,shapes.symbols,fit,calc,matrix,graphs}
+\tikzset{>=Stealth}
+
+% --- Code listings without external deps
+\lstset{
+  basicstyle=\ttfamily\small,
+  numbers=left,
+  numbersep=6pt,
+  frame=single,
+  breaklines=true,
+  tabsize=2,
+  float=htbp,
+  captionpos=t
+}
+
+% --- Bibliography via biblatex ---
+\usepackage[backend=biber,style=ieee,sorting=nty,maxbibnames=99]{biblatex}
+\addbibresource{x_bibliography/references.bib}
+
+% ====== Thesis metadata ======
+\setthesisinfoLV
+  {Starpplatformu kases un naudas pārvedumu platformas ,,Ethnocount'' projektēšana un izstrāde nelielām valūtas maiņas tīkliem, izmantojot Flutter un Supabase}% LV Title
+  {Farruhs Muzrabovs}% LV Student
+  {Dr.sc.ing., prof. Jeļena Čaiko}% LV Supervisor
+  {42484 Informācijas sistēmas (bak.)}% LV Study programme
+  {Dabaszinātņu un datortehnoloģiju katedra}% LV Department
+  {2026}% Year
+
+\setthesisinfoEN
+  {Design and Implementation of a Cross-Platform Treasury and Money-Transfer Platform (``Ethnocount'') for Small Currency-Exchange Networks Using Flutter and Supabase}% EN Title
+  {Farruh Muzrabov}% EN Student
+  {Dr.sc.ing., Prof. Jelena Chayko}% EN Supervisor
+  {42484 Information Systems (BSc)}% EN Study programme
+  {Department of Natural Sciences and Computer Engineering}% EN Department
+  {2026}% Year
+
+% ====== Manual thesis scope ======
+\setthesisscope
+  {74}% Total pages
+  {11}% Total tables
+  {8}% Total figures
+  {0}% Total algorithms
+  {12}% Total listings
+  {2}% Total annexes
+  {20}% Total references
+
+\begin{document}
+
+\input{a_frontmatter/title_page_lv}
+\clearpage
+\input{a_frontmatter/title_page_en}
+\clearpage
+
+\pagenumbering{arabic}
+
+% ===== Abstracts & Keywords =====
+\input{a_frontmatter/abstract_lv}
+\input{a_frontmatter/abstract_en}
+\input{a_frontmatter/keywords}
+
+% ===== Table of Contents (and optional lists) =====
+\tableofcontents
+
+\clearpage
+\begingroup\let\addcontentsline\relax\listoffigures\endgroup
+
+\clearpage
+\begingroup\let\addcontentsline\relax\listoftables\endgroup
+
+\clearpage
+\begingroup\let\addcontentsline\relax\listofalgorithms\endgroup
+
+\clearpage
+\begingroup\let\addcontentsline\relax\lstlistoflistings\endgroup
+\clearpage
+
+% ===== Chapters =====
+\input{b_chapters/a_introduction/introduction}
+
+\input{b_chapters/chapter1/chapter1}
+\input{b_chapters/chapter2/chapter2}
+\input{b_chapters/chapter3/chapter3}
+
+% ===== Conclusions =====
+\input{b_chapters/x_conclusions/conclusions}
+
+% ===== Literature =====
+\printbibliography[heading=bibintoc,title=Literature]
+
+% ===== Appendices =====
+\appendix
+\input{y_backmatter/appendices/appendixA}
+\input{y_backmatter/appendices/appendixB}
+
+% ===== Declarations & Acknowledgments =====
+\input{y_backmatter/declaration}
+\input{y_backmatter/acknowledgments}
+
+\end{document}

@@ -1,0 +1,62 @@
+\unchapter{Introduction}
+
+\noindent\textbf{Topicality of the problem.}
+Cross-border remittances handled by small currency-exchange offices form a sector that hardly anyone outside the trade thinks about, and yet it moves a non-trivial share of the labour-migrant economy of the post-Soviet space. The World Bank's \emph{Migration and Remittances Factbook} repeatedly placed countries such as Uzbekistan, Kyrgyzstan and Tajikistan among the world's top recipients of remittances measured as a share of gross domestic product \cite{ratha2016}, and a sizeable portion of that flow does not pass through retail banks at all --- it travels along chains of family-run exchange offices that settle with each other through informal partner networks. The operational tools available to those offices have remained, in practice, two: a paper journal and a Microsoft Excel spreadsheet. Off-the-shelf accounting software either presumes a trained bookkeeper at the keyboard or hides the multi-currency reality of the business behind a single \emph{base-currency} ledger, which is precisely what the operator does not want to see. The result is a sector that is conspicuously under-served by software, despite handling sums measured in millions of US dollars per branch per year, and despite operating under a risk profile (cash, foreign-exchange, counterparty) that makes the absence of audit-grade records genuinely dangerous. This is the gap that the present thesis sets out to address.
+
+\paragraph{Aim of the study.}
+The aim of the work is to design, implement and evaluate a production-grade, cross-platform treasury and money-transfer platform --- \emph{Ethnocount} --- tailored to small multi-branch currency-exchange networks, built on Flutter (client) and Supabase (backend), and demonstrably capable of replacing the spreadsheet-and-paper workflow for the daily operations of a representative operator.
+
+\paragraph{Object of the study.}
+The object of the study is the daily operational workflow of a small multi-branch currency-exchange network: the recording of own-branch cash and card movements, the issuing and receiving of cross-border money transfers through intermediary partner offices, the maintenance of per-currency running debt with each such partner, and the bookkeeping of recurring-client multi-currency wallets.
+
+\paragraph{Subject of the study.}
+The subject of the study is the design and implementation of a cross-platform information system that supports this workflow, expressed as a Flutter client (with the BLoC state-management pattern, GoRouter, get\_it dependency injection and Hive local cache) on top of a Supabase backend (PostgreSQL~16, Row-Level Security, PL/pgSQL stored procedures and Realtime), under a Clean Architecture discipline and a role-based authorisation model with Creator, Director and Accountant roles.
+
+\paragraph{Research problem.}
+The research problem can be stated as follows: there is no off-the-shelf or published open-source system that simultaneously (i)~preserves the three balance domains characteristic of the trade --- own-branch funds, partner saldo, client wallet --- without collapsing them into a single base-currency ledger; (ii)~guarantees the atomic, idempotent creation of multi-table transfers under concurrent and intermittent network conditions; and (iii)~implements a role-based authorisation model that lets branch accountants do their job while preventing them from modifying records outside their assigned branches except through an explicit Director-mediated approval workflow.
+
+\paragraph{Tasks of the study.}
+The aim is decomposed into the following tasks:
+\begin{enumerate}
+  \item to review the relevant literature on double-entry bookkeeping in software, multi-user financial applications, cross-platform mobile frameworks and Backend-as-a-Service platforms, and to articulate the research gap in operational terms (Chapter~1);
+  \item to formalise the methodological framing of the work within Design Science Research and to describe the data sources used to elicit requirements (Chapter~1);
+  \item to derive the functional and non-functional requirements from interviews and observation of an operating exchange network, and to design the eight-entity domain model around the three-balance-domain principle (Chapter~2);
+  \item to specify the PostgreSQL schema and the Row-Level Security policy set, together with the Director-mediated approval workflow that protects multi-branch integrity (Chapter~2);
+  \item to implement the platform on Flutter and Supabase, including the idempotent atomic transfer engine, the per-currency partner-saldo subsystem and the dark-fintech design language (Chapter~3);
+  \item to evaluate the platform through unit, widget and integration tests, controlled performance measurements and a parallel-use trial with a real operator, and to honestly state the remaining limitations (Chapter~3).
+\end{enumerate}
+
+\paragraph{Hypothesis.}
+Combining Flutter (with the BLoC pattern) as the cross-platform user-interface layer and Supabase (PostgreSQL with Row-Level Security and stored procedures) as the backend permits the implementation of a three-balance-domain treasury platform that, on the workload of a small multi-branch exchange operator, is (i)~free of the reconciliation errors observed in the prior spreadsheet workflow, (ii)~responsive at sub-300-millisecond median interaction latency on commodity hardware, and (iii)~maintainable by a single developer across a multi-month evolution cycle.
+
+\paragraph{Research methods.}
+The work uses systematic literature analysis, semi-structured stakeholder interviews and structured observation of the existing workflow, comparative analysis of candidate frameworks, system design under Clean Architecture and Domain-Driven Design vocabulary, software engineering on Flutter and PL/pgSQL, integration testing of stored procedures against a dedicated Supabase staging environment, instrumented performance measurement on Windows desktop and mid-range Android hardware, and a two-week parallel-use acceptance trial with the target operator.
+
+\paragraph{Scientific novelty.}
+Three contributions follow from the work. The first is an explicit, relationally expressed three-balance-domain accounting model with per-currency partner saldo --- a model that, to the best of the author's knowledge, has not been published in this shape and that resolves a real reconciliation pathology of the spreadsheet workflow. The second is a Director-mediated approval primitive that captures a before--after snapshot of every Accountant-initiated edit at request time, allowing the Director to compare states explicitly rather than rely on after-the-fact audit logs. The third is the demonstration that a single developer, using Flutter + BLoC + Supabase, can carry a treasury platform of non-trivial scope (15 tables, 66 migrations, approximately 70\,000 lines of Dart) from concept to a working, operator-accepted system within the time-frame of a Bachelor's thesis.
+
+\paragraph{Approbation of the study.}
+The complete source code of the platform is publicly released under a permissive open-source licence at \url{https://github.com/farruhsho/ethnocount} for academic review and independent inspection of the architectural and engineering claims made in this thesis.
+
+\paragraph{Task--chapter mapping.}
+The six tasks listed above map onto the three substantive chapters of the thesis as shown in Table~\ref{tab:taskmap}.
+
+{\singlespacing
+\begin{table}[h]
+  \caption{Mapping of research tasks to thesis chapters}
+  \label{tab:taskmap}
+  \centering
+  \begin{tabular}{ll}
+    \toprule
+    \textbf{Task}                                                  & \textbf{Chapter}\\
+    \midrule
+    1. Review literature and articulate the research gap          & Chapter~1\\
+    2. Frame the work within Design Science Research              & Chapter~1\\
+    3. Elicit requirements and design the three-domain model      & Chapter~2\\
+    4. Specify the PostgreSQL schema and the RLS policy set       & Chapter~2\\
+    5. Implement the platform on Flutter and Supabase             & Chapter~3\\
+    6. Evaluate the platform and state the remaining limitations  & Chapter~3\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+}
