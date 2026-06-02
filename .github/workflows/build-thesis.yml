@@ -28,20 +28,37 @@ jobs:
             texlive-pictures texlive-plain-generic biber latexmk \
             ttf-mscorefonts-installer fontconfig
           sudo fc-cache -f
-          echo "--- fonts check ---"
-          fc-list | grep -i "times new roman" || echo "WARNING: Times New Roman not found"
+          echo "=== versions ==="
+          xelatex --version | head -1 || true
+          biber --version || true
 
-      - name: Compile thesis (XeLaTeX + biber)
+      - name: Compile thesis (explicit XeLaTeX + biber)
         working-directory: docs/thesis/latex
         continue-on-error: true
         run: |
-          latexmk -xelatex -interaction=nonstopmode -file-line-error main.tex
+          set +e
+          xelatex -interaction=nonstopmode -file-line-error main.tex > build1.txt 2>&1; echo "xelatex#1 exit=$?"
+          biber main > biber.txt 2>&1; echo "biber exit=$?"
+          xelatex -interaction=nonstopmode -file-line-error main.tex > build2.txt 2>&1; echo "xelatex#2 exit=$?"
+          xelatex -interaction=nonstopmode -file-line-error main.tex > build3.txt 2>&1; echo "xelatex#3 exit=$?"
+          echo "=== dir listing ==="
+          ls -la
 
-      - name: Stage build log and PDF
+      - name: Assemble build log
         if: always()
+        working-directory: docs/thesis/latex
         run: |
-          cp docs/thesis/latex/main.log docs/thesis/latex/thesis-build.log 2>/dev/null || echo "no main.log produced" > docs/thesis/latex/thesis-build.log
-          if [ -f docs/thesis/latex/main.pdf ]; then echo "PDF OK ($(stat -c%s docs/thesis/latex/main.pdf) bytes)"; else echo "PDF MISSING"; fi
+          {
+            echo "############ BIBER OUTPUT ############"
+            cat biber.txt 2>/dev/null || echo "(no biber.txt)"
+            echo
+            echo "############ LAST XELATEX (tail of build3) ############"
+            tail -n 80 build3.txt 2>/dev/null || echo "(no build3.txt)"
+            echo
+            echo "############ DIR ############"
+            ls -la
+          } > thesis-build.log
+          if [ -f main.pdf ]; then echo "PDF OK: $(stat -c%s main.pdf) bytes"; else echo "PDF MISSING"; fi
 
       - name: Commit results back to branch
         if: always()
