@@ -1,0 +1,58 @@
+name: Build thesis PDF
+
+on:
+  push:
+    branches: [thesis-pdf-ci]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install TeX Live, Times New Roman and biber
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo add-apt-repository -y multiverse
+          echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            texlive-xetex texlive-latex-recommended texlive-latex-extra \
+            texlive-fonts-recommended texlive-bibtex-extra texlive-science \
+            texlive-pictures texlive-plain-generic biber latexmk \
+            ttf-mscorefonts-installer fontconfig
+          sudo fc-cache -f
+          echo "--- fonts check ---"
+          fc-list | grep -i "times new roman" || echo "WARNING: Times New Roman not found"
+
+      - name: Compile thesis (XeLaTeX + biber)
+        working-directory: docs/thesis/latex
+        continue-on-error: true
+        run: |
+          latexmk -xelatex -interaction=nonstopmode -file-line-error main.tex
+
+      - name: Stage build log and PDF
+        if: always()
+        run: |
+          cp docs/thesis/latex/main.log docs/thesis/latex/thesis-build.log 2>/dev/null || echo "no main.log produced" > docs/thesis/latex/thesis-build.log
+          if [ -f docs/thesis/latex/main.pdf ]; then echo "PDF OK ($(stat -c%s docs/thesis/latex/main.pdf) bytes)"; else echo "PDF MISSING"; fi
+
+      - name: Commit results back to branch
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f docs/thesis/latex/thesis-build.log
+          if [ -f docs/thesis/latex/main.pdf ]; then git add -f docs/thesis/latex/main.pdf; fi
+          git commit -m "ci: thesis build output [skip ci]" || echo "nothing to commit"
+          git push origin HEAD:thesis-pdf-ci
+
+      - name: Mark job failed if PDF missing
+        if: always()
+        run: test -f docs/thesis/latex/main.pdf
