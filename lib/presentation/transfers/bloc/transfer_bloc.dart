@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
@@ -321,7 +322,10 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
         _dispatchToCourier = dispatchToCourier,
         _watchTransfers = watchTransfers,
         super(const TransferBlocState()) {
-    on<TransfersLoadRequested>(_onLoad);
+    // restartable: повторный load (смена фильтра/филиала/повторный вход)
+    // отменяет предыдущий emit.forEach по realtime-стриму, иначе подписки
+    // на канал transfers копятся и конкурируют (утечка + гонка last-wins).
+    on<TransfersLoadRequested>(_onLoad, transformer: restartable());
     on<TransferCreateRequested>(_onCreate);
     on<TransferUpdateRequested>(_onUpdate);
     on<TransferReplacePendingRequested>(_onReplacePending);

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ethnocount/core/utils/realtime_channel.dart';
 import 'package:ethnocount/domain/entities/transfer.dart';
 import 'package:ethnocount/domain/entities/transfer_issuance.dart';
 import 'package:ethnocount/domain/entities/transfer_part.dart';
@@ -40,7 +41,7 @@ class TransferRemoteDataSource {
     });
 
     final channel = _client
-        .channel('transfers_changes')
+        .channel(uniqueChannelName('transfers_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -380,7 +381,7 @@ class TransferRemoteDataSource {
     });
 
     final channel = _client
-        .channel('transfer_issuances_$transferId')
+        .channel(uniqueChannelName('transfer_issuances_$transferId'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

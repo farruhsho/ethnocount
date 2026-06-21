@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ethnocount/core/utils/realtime_channel.dart';
 import 'package:ethnocount/domain/entities/bank_transaction.dart';
 import 'package:ethnocount/domain/entities/commission.dart';
 import 'package:ethnocount/domain/entities/ledger_entry.dart';
@@ -60,7 +61,7 @@ class LedgerRemoteDataSource {
     });
 
     final channel = _client
-        .channel('ledger_$branchId')
+        .channel(uniqueChannelName('ledger_$branchId'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -223,7 +224,7 @@ class LedgerRemoteDataSource {
     });
 
     final channel = _client
-        .channel('account_balances_all')
+        .channel(uniqueChannelName('account_balances_all'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -297,7 +298,7 @@ class LedgerRemoteDataSource {
     });
 
     final channel = _client
-        .channel('balances_$branchId')
+        .channel(uniqueChannelName('balances_$branchId'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

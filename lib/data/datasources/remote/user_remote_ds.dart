@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ethnocount/core/utils/realtime_channel.dart';
 import 'package:ethnocount/domain/entities/enums.dart';
 import 'package:ethnocount/domain/entities/user.dart';
 
@@ -39,7 +40,7 @@ class UserRemoteDataSource {
 
     // Realtime — подписываемся один раз.
     _channel ??= _client
-        .channel('users_changes')
+        .channel(uniqueChannelName('users_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

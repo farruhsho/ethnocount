@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
 import 'package:ethnocount/domain/entities/notification.dart';
 import 'package:ethnocount/domain/repositories/notification_repository.dart';
@@ -89,7 +90,7 @@ class NotificationBloc extends Bloc<NotificationEvent, NotificationState> {
   })  : _repository = repository,
         _fx = fx,
         super(const NotificationState()) {
-    on<NotificationsLoadRequested>(_onLoad);
+    on<NotificationsLoadRequested>(_onLoad, transformer: restartable());
     on<NotificationMarkAsRead>(_onMarkRead);
     on<NotificationMarkAllAsRead>(_onMarkAllRead);
     on<NotificationDeleteRequested>(_onDelete);

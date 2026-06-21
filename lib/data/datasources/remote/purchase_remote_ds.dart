@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ethnocount/core/utils/realtime_channel.dart';
 import 'package:ethnocount/domain/entities/purchase.dart';
 
 /// Supabase data source for purchases.
@@ -32,7 +33,7 @@ class PurchaseRemoteDataSource {
     });
 
     final channel = _client
-        .channel('purchases_changes')
+        .channel(uniqueChannelName('purchases_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

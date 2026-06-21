@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ethnocount/core/utils/realtime_channel.dart';
 import 'package:ethnocount/domain/entities/approval_request.dart';
 
 /// Supabase data source for the pending_approvals workflow.
@@ -25,7 +26,7 @@ class ApprovalRemoteDataSource {
     push();
 
     final channel = _client
-        .channel('pending_approvals_changes')
+        .channel(uniqueChannelName('pending_approvals_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

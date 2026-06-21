@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
 import 'package:ethnocount/domain/entities/purchase.dart';
 import 'package:ethnocount/domain/repositories/purchase_repository.dart';
@@ -128,7 +129,7 @@ class PurchaseBloc extends Bloc<PurchaseEvent, PurchaseBlocState> {
   PurchaseBloc({required PurchaseRepository repository})
       : _repository = repository,
         super(const PurchaseBlocState()) {
-    on<PurchasesLoadRequested>(_onLoad);
+    on<PurchasesLoadRequested>(_onLoad, transformer: restartable());
     on<PurchaseCreateRequested>(_onCreate);
     on<PurchaseUpdateRequested>(_onUpdate);
     on<PurchaseDeleteRequested>(_onDelete);

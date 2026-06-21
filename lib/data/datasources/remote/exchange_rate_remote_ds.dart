@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ethnocount/core/utils/realtime_channel.dart';
 import 'package:ethnocount/domain/entities/exchange_rate.dart';
 
 class ExchangeRateRemoteDataSource {
@@ -21,7 +22,7 @@ class ExchangeRateRemoteDataSource {
     });
 
     final channel = _client
-        .channel('exchange_rates_changes')
+        .channel(uniqueChannelName('exchange_rates_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

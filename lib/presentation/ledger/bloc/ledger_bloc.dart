@@ -1,4 +1,5 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
 import 'package:ethnocount/domain/entities/ledger_entry.dart';
 import 'package:ethnocount/domain/usecases/ledger/watch_ledger.dart';
@@ -74,7 +75,7 @@ class LedgerBloc extends Bloc<LedgerEvent, LedgerBlocState> {
   })  : _watchLedger = watchLedger,
         _ledgerRepository = ledgerRepository,
         super(const LedgerBlocState()) {
-    on<LedgerLoadRequested>(_onLoad);
+    on<LedgerLoadRequested>(_onLoad, transformer: restartable());
   }
 
   Future<void> _onLoad(

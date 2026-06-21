@@ -158,6 +158,19 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
   StreamSubscription<List<Branch>>? _branchesSub;
   StreamSubscription<List<BranchAccount>>? _accountsSub;
 
+  /// Идемпотентный ключ создания перевода — СТАБИЛЕН на весь жизненный цикл
+  /// формы. Раньше генерировался заново в каждом `_submit` (`Uuid().v4()`),
+  /// из-за чего двойной тап давал два РАЗНЫХ ключа, серверный uniq-индекс
+  /// `uniq_transfers_idempotency` не срабатывал → двойной дебет. Новый ключ
+  /// минтуется только после успешного создания.
+  String _idempotencyKey = const Uuid().v4();
+
+  /// Синхронный барьер против повторного входа в `_submit`, пока идут
+  /// await'ы (pre-flight баланса/курса/AML) ДО того, как BLoC перейдёт в
+  /// состояние `creating`. Без него кнопка оставалась активной во время
+  /// сетевого AML-скрина — окно для двойного нажатия и двойного дебета.
+  bool _isSubmitting = false;
+
   @override
   void initState() {
     super.initState();
@@ -249,6 +262,10 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     return BlocConsumer<TransferBloc, TransferBlocState>(
       listener: (context, state) {
         if (state.status == TransferBlocStatus.success) {
+          // Минтуем новый идемпотентный ключ: текущий уже «израсходован»
+          // успешным созданием, повторно использовать его нельзя (иначе
+          // следующий перевод отобьётся сервером как дубль).
+          _idempotencyKey = const Uuid().v4();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(state.successMessage ?? 'Перевод создан'),
@@ -279,7 +296,8 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
         }
       },
       builder: (context, state) {
-        final isCreating = state.status == TransferBlocStatus.creating;
+        final isCreating =
+            state.status == TransferBlocStatus.creating || _isSubmitting;
         final isMobile = !context.isDesktop;
         // Desktop hero is temporarily disabled on Flutter web: the
         // Row(Expanded+SCSV) layout combined with multiple BlocBuilders
@@ -2381,8 +2399,30 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
     );
   }
 
+  /// Публичная точка входа: ставит синхронный барьер `_isSubmitting` ДО
+  /// первого await, затем делегирует в [_doSubmit]. Барьер снимается в
+  /// `finally` — кнопка остаётся заблокированной всё время асинхронных
+  /// проверок, а после диспатча события блокировку держит `isCreating` из
+  /// состояния BLoC. В паре со стабильным `_idempotencyKey` это полностью
+  /// исключает двойной дебет при двойном тапе/медленной сети.
   Future<void> _submit(BuildContext context) async {
+    if (_isSubmitting) return;
+    setState(() => _isSubmitting = true);
+    try {
+      await _doSubmit(context);
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  Future<void> _doSubmit(BuildContext context) async {
     if (!_formKey.currentState!.validate()) return;
+
+    // Снимок layout/темы ДО async-гэпов: эти свойства не меняются за время
+    // сабмита, а чтение context.isDesktop/isDark после await справедливо
+    // ругается линтером (use_build_context_synchronously).
+    final isDesktopLayout = context.isDesktop;
+    final isDarkTheme = context.isDark;
 
     final amount = double.parse(_amountController.text);
     if (_fromAccountId == null) return;
@@ -2511,6 +2551,59 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
       return;
     }
 
+    // Финтех: явное подтверждение перед необратимым списанием со счёта.
+    // Пропускаем на мобильном тёмном степпере — там шаг «Проверка» уже
+    // играет роль review; на десктопе/legacy подтверждения раньше не было.
+    final skipConfirm = !isDesktopLayout && isDarkTheme;
+    if (!skipConfirm) {
+      if (!context.mounted) return;
+      final receiverGets = switch (_commissionMode) {
+        CommissionMode.fromTransfer => amount - commission,
+        CommissionMode.toReceiver => amount + commission,
+        _ => amount,
+      };
+      final converted =
+          toCur != currency ? receiverGets * exchangeRate : receiverGets;
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Создать перевод?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Сумма перевода: '
+                  '${amount.formatCurrencyNoDecimals()} $currency'),
+              if (toCur != currency)
+                Text('Получатель получит: '
+                    '${converted.formatCurrencyNoDecimals()} $toCur'),
+              if (commission > 0)
+                Text('Комиссия: '
+                    '${commission.formatCurrencyNoDecimals()} $_commissionCurrency'),
+              const SizedBox(height: 8),
+              Text(
+                'Со счёта будет списано '
+                '${totalDebit.formatCurrencyNoDecimals()} $currency. '
+                'Действие необратимо.',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Отмена'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Создать'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+
     // F4 (AML/KYC) — НЕблокирующий предполётный скрин субъекта. Любая
     // ошибка скрина не мешает создать перевод; при срабатывании порога
     // оператор подтверждает вручную и флаг пишется в журнал.
@@ -2536,7 +2629,7 @@ class _CreateTransferPageState extends State<CreateTransferPage> {
           commissionAccountId: _commissionMode == CommissionMode.fromAccount
               ? _commissionAccountId
               : null,
-          idempotencyKey: const Uuid().v4(),
+          idempotencyKey: _idempotencyKey,
           description: _descriptionCtrl.text.trim().isNotEmpty ? _descriptionCtrl.text.trim() : null,
           senderName: _senderNameCtrl.text.trim().isNotEmpty ? _senderNameCtrl.text.trim() : null,
           senderPhone: _senderPhoneCtrl.text.trim().isNotEmpty ? _senderPhoneCtrl.text.trim() : null,

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
 import 'package:ethnocount/domain/entities/branch.dart';
 import 'package:ethnocount/domain/entities/branch_account.dart';
@@ -148,8 +149,13 @@ class DashboardBloc extends Bloc<DashboardEvent, DashboardState> {
         _ledgerRepository = ledgerRepository,
         _transferRepository = transferRepository,
         super(const DashboardState()) {
-    on<DashboardStarted>(_onStarted);
-    on<DashboardBranchSelected>(_onBranchSelected);
+    // restartable: каждый DashboardStarted (в т.ч. при resume через
+    // auth-листенер) отменяет предыдущий emit.forEach(watchBranches), иначе
+    // подписки на branches копятся при каждом возврате в приложение.
+    on<DashboardStarted>(_onStarted, transformer: restartable());
+    // restartable: выбор другого филиала отменяет watchBranchAccounts
+    // предыдущего, чтобы стримы счетов не накапливались.
+    on<DashboardBranchSelected>(_onBranchSelected, transformer: restartable());
     on<DashboardRefreshRequested>(_onRefreshRequested);
     on<_BalancesUpdated>(_onBalancesUpdated);
     on<_BalancesListenFailed>(_onBalancesListenFailed);

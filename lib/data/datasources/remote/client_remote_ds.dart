@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:ethnocount/core/utils/realtime_channel.dart';
 import 'package:ethnocount/domain/entities/client.dart';
 
 /// Supabase data source for client accounts.
@@ -8,16 +9,6 @@ class ClientRemoteDataSource {
   final SupabaseClient _client;
 
   ClientRemoteDataSource(this._client);
-
-  /// Монотонный суффикс для имён realtime-каналов. supabase-flutter кэширует
-  /// каналы по topic, поэтому два одновременных подписчика на канал с
-  /// одинаковым именем делят один объект — и `removeChannel` одного (при
-  /// пересоздании BLoC на навигации) срывает подписку другого, из-за чего
-  /// live-обновления молча перестают приходить. Уникальное имя на каждую
-  /// подписку исключает эту гонку.
-  static int _channelSeq = 0;
-  static String _uniqueChannel(String base) =>
-      '${base}_${DateTime.now().microsecondsSinceEpoch}_${_channelSeq++}';
 
   /// Stream of all active clients ordered by name.
   Stream<List<Client>> watchClients({String? search}) {
@@ -30,7 +21,7 @@ class ClientRemoteDataSource {
     });
 
     final channel = _client
-        .channel(_uniqueChannel('clients_changes'))
+        .channel(uniqueChannelName('clients_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -82,7 +73,7 @@ class ClientRemoteDataSource {
     });
 
     final channel = _client
-        .channel(_uniqueChannel('client_balances_changes'))
+        .channel(uniqueChannelName('client_balances_changes'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
@@ -163,7 +154,7 @@ class ClientRemoteDataSource {
     });
 
     final channel = _client
-        .channel(_uniqueChannel('client_tx_$clientId'))
+        .channel(uniqueChannelName('client_tx_$clientId'))
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',

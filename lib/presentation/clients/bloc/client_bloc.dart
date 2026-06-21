@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
 import 'package:ethnocount/domain/entities/client.dart';
 import 'package:ethnocount/domain/repositories/client_repository.dart';
@@ -198,12 +199,16 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
   ClientBloc({required ClientRepository repository})
       : _repository = repository,
         super(const ClientBlocState()) {
-    on<ClientsLoadRequested>(_onLoad);
+    on<ClientsLoadRequested>(_onLoad, transformer: restartable());
     on<ClientCreateRequested>(_onCreate);
     on<ClientDepositRequested>(_onDeposit);
     on<ClientDebitRequested>(_onDebit);
     on<ClientConvertRequested>(_onConvert);
-    on<ClientDetailRequested>(_onDetail);
+    // restartable: открытие карточки другого клиента отменяет предыдущий
+    // emit.forEach(watchClientTransactions) — раньше старая подписка жила
+    // дальше (поля _txSub/_clientsSub никогда не присваивались, cancel был
+    // no-op) и транзакции прошлого клиента подмешивались к новому.
+    on<ClientDetailRequested>(_onDetail, transformer: restartable());
     on<ClientTelegramChatIdUpdated>(_onTelegramChatIdUpdated);
     on<ClientTelegramTestRequested>(_onTelegramTestRequested);
     on<_ClientBalancesUpdated>(_onBalancesUpdated);

@@ -1,5 +1,6 @@
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:bloc_concurrency/bloc_concurrency.dart';
 
 import 'package:ethnocount/domain/entities/approval_request.dart';
 import 'package:ethnocount/domain/repositories/approval_repository.dart';
@@ -98,7 +99,7 @@ class ApprovalBloc extends Bloc<ApprovalEvent, ApprovalState> {
   ApprovalBloc({required ApprovalRepository repository})
       : _repo = repository,
         super(const ApprovalState()) {
-    on<ApprovalsWatchRequested>(_onWatch);
+    on<ApprovalsWatchRequested>(_onWatch, transformer: restartable());
     on<ApprovalApproveRequested>(_onApprove);
     on<ApprovalRejectRequested>(_onReject);
     on<ApprovalRequestCreateRequested>(_onCreate);

@@ -1004,7 +1004,47 @@ class _TransfersPageState extends State<TransfersPage> {
     );
   }
 
-  void _handleConfirmTransfer(BuildContext context, Transfer t) {
+  Future<void> _handleConfirmTransfer(BuildContext context, Transfer t) async {
+    // Финтех: «Принять» (confirm_transfer) фиксирует комиссию и необратимо
+    // двигает статус created → toDelivery. На десктопе раньше это был один
+    // клик без подтверждения — добавляем явный confirm со сводкой.
+    final code = t.transactionCode?.isNotEmpty == true
+        ? t.transactionCode!
+        : t.id.substring(0, t.id.length.clamp(0, 8));
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Принять перевод?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Перевод $code'),
+            const SizedBox(height: 8),
+            Text('Сумма: ${t.amount.formatCurrencyNoDecimals()} ${t.currency}'),
+            Text('Получатель получит: '
+                '${t.receiverGetsAmount.formatCurrencyNoDecimals()} ${t.currency}'),
+            const SizedBox(height: 8),
+            const Text(
+              'Будет зафиксирована комиссия, статус сменится на «В доставку». '
+              'Действие необратимо.',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Отмена'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Принять'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
     if (t.toAccountId.isNotEmpty) {
       context.read<TransferBloc>().add(TransferConfirmRequested(t.id));
       return;
