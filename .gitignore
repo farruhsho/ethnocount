@@ -70,3 +70,9 @@ read_pptx.py
 
 # Supabase temp
 supabase/.temp/
+
+# graphify / audit scratch artifacts (генерируются инструментами, не исходники)
+.graphify_*
+.graphify_python/
+graphify-out/
+.audit_digest.md

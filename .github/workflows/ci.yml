@@ -1,0 +1,39 @@
+name: CI
+
+# Защитная сетка: на каждый PR и push в main прогоняем статанализ и тесты.
+# Раньше единственный workflow (release.yml) собирал бинарники только по тегу
+# и НЕ запускал ни analyze, ни test — в main мог попасть код, не проходящий
+# анализ или с упавшими тестами по денежной математике. Этот workflow
+# закрывает дыру; сделайте его required-check в branch protection для main.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Flutter (pinned)
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          # Пин версии — CI не должен «плыть» на новых релизах канала stable.
+          flutter-version: '3.38.7'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Tests
+        run: flutter test
