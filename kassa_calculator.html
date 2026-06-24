@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Касса — калькулятор обменника</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.31.0/tabler-icons.min.css" />
+<style>
+:root{
+  --color-background-primary:#ffffff; --color-background-secondary:#f5f3ee; --color-background-tertiary:#efece4;
+  --color-background-info:#e6f1fb; --color-background-success:#e1f5ee; --color-background-warning:#faeeda; --color-background-danger:#fcebeb;
+  --color-text-primary:#1f1e1b; --color-text-secondary:#6c6a63; --color-text-tertiary:#9a978e;
+  --color-text-info:#0c447c; --color-text-success:#0f6e56; --color-text-warning:#854f0b; --color-text-danger:#a32d2d;
+  --color-border-tertiary:rgba(31,30,27,0.14); --color-border-secondary:rgba(31,30,27,0.28);
+  --border-radius-md:8px; --border-radius-lg:12px;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --color-background-primary:#211f1d; --color-background-secondary:#2a2825; --color-background-tertiary:#191816;
+    --color-background-info:#0c447c; --color-background-success:#085041; --color-background-warning:#633806; --color-background-danger:#791f1f;
+    --color-text-primary:#f2efe9; --color-text-secondary:#a8a59c; --color-text-tertiary:#82807a;
+    --color-text-info:#b5d4f4; --color-text-success:#9fe1cb; --color-text-warning:#fac775; --color-text-danger:#f7c1c1;
+    --color-border-tertiary:rgba(242,239,233,0.16); --color-border-secondary:rgba(242,239,233,0.3);
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--color-background-tertiary);color:var(--color-text-primary);font-family:var(--font-sans);font-size:14px;line-height:1.6;-webkit-text-size-adjust:100%}
+.kx-wrap{max-width:680px;margin:0 auto;padding:16px}
+input,select,button{font-family:inherit;font-size:14px;color:var(--color-text-primary);background:var(--color-background-primary);border:0.5px solid var(--color-border-secondary);border-radius:var(--border-radius-md);height:36px;padding:0 10px}
+input:focus,select:focus{outline:none;box-shadow:0 0 0 2px var(--color-text-info)}
+button{cursor:pointer;background:transparent}
+button:hover{background:var(--color-background-secondary)}
+button:active{transform:scale(0.98)}
+.kx-mut{color:var(--color-text-secondary);font-size:13px}
+.kx-hint{color:var(--color-text-tertiary);font-size:12px;margin:4px 2px 0}
+.kx-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:1rem 1.25rem}
+.kx-leg{display:grid;grid-template-columns:minmax(0,1fr) 116px;gap:8px;align-items:center}
+.kx-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kx-metric{background:var(--color-background-secondary);border-radius:var(--border-radius-md);padding:0.85rem 1rem}
+.kx-metric .l{font-size:13px;color:var(--color-text-secondary);margin:0}
+.kx-metric .v{font-size:22px;font-weight:500;margin:4px 0 0;line-height:1.2}
+.kx-tblwrap{overflow-x:auto}
+table.kx-rates{width:100%;min-width:340px;border-collapse:collapse;font-size:14px}
+table.kx-rates th{font-size:12px;color:var(--color-text-tertiary);font-weight:400;padding:4px;text-align:right}
+table.kx-rates th:first-child{text-align:left}
+table.kx-rates td{padding:4px;text-align:right;border-top:0.5px solid var(--color-border-tertiary)}
+table.kx-rates td:first-child{text-align:left;font-weight:500}
+.kx-rates input{width:84px;text-align:right;height:32px}
+.kx-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
+.kx-pill{font-size:12px;padding:3px 10px;border-radius:var(--border-radius-md);display:inline-flex;align-items:center;gap:5px}
+.kx-icbtn{height:34px;width:34px;display:inline-flex;align-items:center;justify-content:center;padding:0}
+.kx-receipt-card{border-style:dashed;border-width:1px;border-color:var(--color-border-secondary)}
+body.kx-client .kx-op{display:none !important}
+</style>
+</head>
+<body>
+<div class="kx-wrap">
+<h2 class="sr-only">Калькулятор обменника</h2>
+
+  <div class="kx-row" style="justify-content:space-between;margin-bottom:14px">
+    <div class="kx-row" style="gap:10px">
+      <div style="width:38px;height:38px;border-radius:var(--border-radius-md);background:var(--color-background-info);display:flex;align-items:center;justify-content:center;color:var(--color-text-info)"><i class="ti ti-cash" style="font-size:20px" aria-hidden="true"></i></div>
+      <div>
+        <p style="margin:0;font-size:16px;font-weight:500">Касса</p>
+        <p style="margin:0" class="kx-mut">калькулятор обменника</p>
+      </div>
+    </div>
+    <div class="kx-row" style="gap:8px">
+      <button id="kx-client" style="height:32px"><i class="ti ti-eye" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Показать клиенту</button>
+      <span id="kx-net" class="kx-pill"></span>
+      <span class="kx-pill" style="background:var(--color-background-secondary);color:var(--color-text-secondary)"><i class="ti ti-clock" aria-hidden="true"></i><span id="kx-upd">—</span></span>
+    </div>
+  </div>
+
+  <div class="kx-card" style="margin-bottom:12px">
+    <div class="kx-row" style="justify-content:space-between;margin-bottom:8px">
+      <span style="font-weight:500">Сделка</span>
+      <button id="kx-reset" style="height:30px;font-size:13px"><i class="ti ti-refresh" style="font-size:15px;vertical-align:-2px;margin-right:4px" aria-hidden="true"></i>Новая сделка</button>
+    </div>
+    <div class="kx-row" style="margin:0 0 12px;gap:6px">
+      <button class="kx-preset" data-f="USDT" data-t="UZS" style="height:28px;font-size:12px">USDT → сум</button>
+      <button class="kx-preset" data-f="UZS" data-t="USDT" style="height:28px;font-size:12px">сум → USDT</button>
+      <button class="kx-preset" data-f="USD" data-t="UZS" style="height:28px;font-size:12px">USD → сум</button>
+      <button class="kx-preset" data-f="RUB" data-t="UZS" style="height:28px;font-size:12px">RUB → сум</button>
+    </div>
+    <p class="kx-mut" style="margin:0 0 6px">Клиент отдаёт</p>
+    <div class="kx-leg">
+      <input id="kx-give" type="text" inputmode="decimal" autocomplete="off" placeholder="0" />
+      <select id="kx-from"></select>
+    </div>
+    <p class="kx-hint kx-op" id="kx-from-hint"></p>
+    <div style="display:flex;justify-content:center;margin:6px 0">
+      <button id="kx-swap" class="kx-icbtn" aria-label="Поменять валюты местами"><i class="ti ti-arrows-up-down" aria-hidden="true"></i></button>
+    </div>
+    <p class="kx-mut" style="margin:0 0 6px">Клиент получает</p>
+    <div class="kx-leg">
+      <input id="kx-get" type="text" inputmode="decimal" autocomplete="off" placeholder="0" />
+      <select id="kx-to"></select>
+    </div>
+    <p class="kx-hint kx-op" id="kx-to-hint"></p>
+
+    <div class="kx-row" style="margin-top:12px;gap:8px">
+      <span class="kx-mut">Комиссия</span>
+      <input id="kx-comm" type="text" inputmode="decimal" autocomplete="off" value="0" style="width:84px;height:32px" />
+      <select id="kx-commtype" style="width:128px;height:32px">
+        <option value="pct">% от суммы</option>
+        <option value="fix">фикс</option>
+      </select>
+      <span id="kx-commhint" class="kx-mut"></span>
+    </div>
+
+    <div id="kx-warn" style="display:none;margin-top:12px;padding:10px 12px;border-radius:var(--border-radius-md);background:var(--color-background-warning);color:var(--color-text-warning);font-size:13px"></div>
+    <div id="kx-cross" class="kx-mut kx-op" style="margin-top:10px"></div>
+  </div>
+
+  <div class="kx-metrics" style="margin-bottom:12px">
+    <div class="kx-metric">
+      <p class="l">Клиент получает</p>
+      <p class="v" id="kx-out-get">—</p>
+    </div>
+    <div class="kx-metric">
+      <p class="l">Курс сделки</p>
+      <p class="v" id="kx-out-rate" style="font-size:16px">—</p>
+    </div>
+    <div class="kx-metric kx-op" style="background:var(--color-background-success)">
+      <p class="l" style="color:var(--color-text-success)"><i class="ti ti-eye-off" style="font-size:13px;vertical-align:-1px;margin-right:3px" aria-hidden="true"></i>Ваша маржа · только для вас</p>
+      <p class="v" id="kx-out-margin" style="color:var(--color-text-success)">—</p>
+    </div>
+  </div>
+
+  <div id="kx-receipt" class="kx-card kx-receipt-card" style="margin-bottom:12px">
+    <div class="kx-row" style="justify-content:space-between;margin-bottom:10px">
+      <span style="font-weight:500"><i class="ti ti-receipt" style="font-size:18px;vertical-align:-3px;margin-right:6px" aria-hidden="true"></i>Расчёт для клиента</span>
+      <span class="kx-row" style="gap:6px">
+        <select id="kx-ttl" style="width:96px;height:32px" aria-label="Срок действия расчёта">
+          <option value="5">5 мин</option>
+          <option value="15" selected>15 мин</option>
+          <option value="30">30 мин</option>
+          <option value="60">60 мин</option>
+        </select>
+        <button id="kx-img" style="height:32px"><i class="ti ti-photo" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Картинкой</button>
+        <button id="kx-log" class="kx-op" style="height:32px"><i class="ti ti-pin" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Записать</button>
+        <button id="kx-copy" style="height:32px"><i class="ti ti-copy" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Скопировать</button>
+      </span>
+    </div>
+    <table style="width:100%;font-size:14px">
+      <tr><td class="kx-mut" style="padding:3px 0">Отдаёт</td><td id="kx-r-give" style="text-align:right;padding:3px 0;font-weight:500">—</td></tr>
+      <tr><td class="kx-mut" style="padding:3px 0">Получает</td><td id="kx-r-get" style="text-align:right;padding:3px 0;font-weight:500">—</td></tr>
+      <tr><td class="kx-mut" style="padding:3px 0">Курс</td><td id="kx-r-rate" style="text-align:right;padding:3px 0">—</td></tr>
+      <tr><td class="kx-mut" style="padding:3px 0">Комиссия</td><td id="kx-r-comm" style="text-align:right;padding:3px 0">—</td></tr>
+    </table>
+    <p id="kx-ttl-line" class="kx-mut" style="margin:10px 0 0;border-top:0.5px solid var(--color-border-tertiary);padding-top:8px"></p>
+  </div>
+
+  <div class="kx-card kx-op" id="kx-rates-card">
+    <div class="kx-row" style="justify-content:space-between;margin-bottom:8px">
+      <span style="font-weight:500"><i class="ti ti-table" style="font-size:18px;vertical-align:-3px;margin-right:6px" aria-hidden="true"></i>Курсы — табло</span>
+      <span class="kx-row" style="gap:6px"><span class="kx-mut">база</span>
+        <select id="kx-base" style="width:96px;height:32px"></select>
+      </span>
+    </div>
+    <p class="kx-mut" style="margin:0 0 8px">Курсы по 1 единице валюты в выбранной базе. Нажмите на число, чтобы изменить свой курс.</p>
+    <div class="kx-tblwrap">
+      <table class="kx-rates"><thead><tr><th>Валюта</th><th>Покупка</th><th>Продажа</th><th>Спред</th></tr></thead>
+        <tbody id="kx-rates-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="kx-card kx-op" id="kx-journal" style="margin-top:12px">
+    <div class="kx-row" style="justify-content:space-between;margin-bottom:8px">
+      <span style="font-weight:500"><i class="ti ti-history" style="font-size:18px;vertical-align:-3px;margin-right:6px" aria-hidden="true"></i>Журнал сегодня</span>
+      <span class="kx-pill" style="background:var(--color-background-success);color:var(--color-text-success)">маржа за день: <b id="kx-day-margin" style="margin-left:4px">—</b></span>
+    </div>
+    <div id="kx-hist" class="kx-mut">Пока нет записанных сделок. Нажмите «Записать» в карточке расчёта.</div>
+  </div>
+
+  <p class="kx-mut" style="text-align:center;margin:16px 0 0">Работает офлайн · курсы хранятся на устройстве · расчёт справочный, не фискальный документ</p>
+</div>
+
+<script>
+(function(){
+  var CUR=['USD','USDT','EUR','RUB','UZS','KZT','KGS','TJS','TRY','AED','CNY'];
+  var NAME={USD:'Доллар',USDT:'Tether',EUR:'Евро',RUB:'Рубль',UZS:'Сум',KZT:'Тенге',KGS:'Сом',TJS:'Сомони',TRY:'Лира',AED:'Дирхам',CNY:'Юань'};
+  var CANON='UZS';
+  var SEED={USD:[12600,12750],USDT:[12580,12730],EUR:[13550,13800],RUB:[138,146],KZT:[24.5,26.5],KGS:[140,148],TJS:[1130,1170],TRY:[360,385],AED:[3380,3470],CNY:[1720,1790]};
+  var ref={};
+  var state={base:CANON,from:'USD',to:CANON,comm:0,commType:'pct',last:'give',updated:null,ttl:15,client:false};
+
+  function loadStore(){ try{var s=JSON.parse(localStorage.getItem('kassa_v2')||'null'); if(s&&s.ref){ref=s.ref;state.base=s.base||CANON;state.updated=s.updated||null;return true;}}catch(e){} return false; }
+  function saveStore(){ try{localStorage.setItem('kassa_v2',JSON.stringify({ref:ref,base:state.base,updated:state.updated}));}catch(e){} }
+
+  if(!loadStore()){ for(var i=0;i<CUR.length;i++){var c=CUR[i]; if(c===CANON) continue; ref[c]={buy:SEED[c][0],sell:SEED[c][1]};} state.updated=Date.now(); }
+
+  function dec(c){return (c==='UZS'||c==='KZT'||c==='KGS')?0:2;}
+  function fmt(n,c){ if(n==null||!isFinite(n)) return '—'; return new Intl.NumberFormat('ru-RU',{minimumFractionDigits:dec(c),maximumFractionDigits:dec(c)}).format(n); }
+  function fmtRate(n){ if(n==null||!isFinite(n)) return '—'; return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:4}).format(n); }
+  function pn(s){ if(typeof s==='number')return isFinite(s)?s:NaN; s=String(s).trim(); if(s==='') return 0; var neg=s.indexOf('-')>=0; s=s.replace(/[\s ]/g,'').replace(',','.').replace(/[^0-9.]/g,''); s=s.replace(/(\..*?)\./g,'$1'); var v=parseFloat(s); if(!isFinite(v)) return NaN; return neg? NaN : v; }
+  function refBuy(c){ if(c===CANON) return 1; var r=ref[c]; return (r&&r.buy>0)? r.buy : NaN; }
+  function refSell(c){ if(c===CANON) return 1; var r=ref[c]; return (r&&r.sell>0)? r.sell : NaN; }
+  function refMid(c){ if(c===CANON) return 1; var r=ref[c]; return (r&&r.buy>0&&r.sell>0)? (r.buy+r.sell)/2 : NaN; }
+  function ready(c){ if(c===CANON) return true; var r=ref[c]; return !!(r&&r.buy>0&&r.sell>0); }
+  function baseScale(){ return state.base===CANON?1:refMid(state.base); }
+  function dispBuy(c){ if(c===state.base) return 1; var s=baseScale(); return refBuy(c)/s; }
+  function dispSell(c){ if(c===state.base) return 1; var s=baseScale(); return refSell(c)/s; }
+  function hhmm(t){var d=new Date(t);return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);}
+  function $(id){return document.getElementById(id);}
+  function showWarn(html){var w=$('kx-warn');w.style.display='block';w.innerHTML=html;}
+  function hideWarn(){$('kx-warn').style.display='none';}
+
+  function buildSelect(sel,val){ sel.innerHTML=''; for(var i=0;i<CUR.length;i++){var o=document.createElement('option');o.value=CUR[i];o.textContent=CUR[i]+' · '+NAME[CUR[i]];if(CUR[i]===val)o.selected=true;sel.appendChild(o);} }
+  function buildBase(){ var sel=$('kx-base'); sel.innerHTML=''; for(var i=0;i<CUR.length;i++){ if(CUR[i]!==CANON && !ready(CUR[i])) continue; var o=document.createElement('option');o.value=CUR[i];o.textContent=CUR[i];if(CUR[i]===state.base)o.selected=true;sel.appendChild(o);} }
+
+  function clearOut(hint){ $('kx-out-get').textContent=hint||'—'; $('kx-out-rate').textContent='—'; $('kx-out-margin').textContent='—'; $('kx-cross').innerHTML=''; $('kx-from-hint').textContent=''; $('kx-to-hint').textContent=''; $('kx-r-give').textContent='—'; $('kx-r-get').textContent='—'; $('kx-r-rate').textContent='—'; $('kx-r-comm').textContent='—'; $('kx-ttl-line').textContent=''; window.__kxReceipt=''; window.__kxDeal=null; }
+
+  function legHints(from,to){
+    $('kx-from-hint').textContent = from===state.base? '' : 'покупаем '+from+' по '+fmtRate(dispBuy(from))+' '+state.base;
+    $('kx-to-hint').textContent   = to===state.base?   '' : 'продаём '+to+' по '+fmtRate(dispSell(to))+' '+state.base;
+  }
+
+  function compute(){
+    var from=state.from, to=state.to;
+    if(from===to){ showWarn('<i class="ti ti-info-circle" aria-hidden="true"></i> Выберите две разные валюты.'); clearOut(); return; }
+    var miss=[]; if(!ready(from)) miss.push(from); if(!ready(to)) miss.push(to);
+    if(miss.length){ showWarn('<i class="ti ti-alert-triangle" aria-hidden="true"></i> Не задан полный курс (покупка и продажа) для '+miss.join(', ')+'. Заполните в табло ниже.'); clearOut(); return; }
+
+    var pct=state.commType==='pct'? state.comm : 0;
+    var fixv=state.commType==='fix'? Math.max(0,state.comm) : 0;
+    if(state.commType==='pct' && (pct>=100 || pct<0)){ showWarn('<i class="ti ti-alert-triangle" aria-hidden="true"></i> Комиссия в процентах должна быть от 0 до 100.'); clearOut(); return; }
+    hideWarn();
+
+    var gv=pn($('kx-give').value), gt=pn($('kx-get').value);
+    if(state.last==='give' && isNaN(gv)){ showWarn('<i class="ti ti-alert-triangle" aria-hidden="true"></i> Сумма должна быть положительным числом.'); clearOut(); return; }
+    if(state.last==='get' && isNaN(gt)){ showWarn('<i class="ti ti-alert-triangle" aria-hidden="true"></i> Сумма должна быть положительным числом.'); clearOut(); return; }
+
+    var fromAmt, toGross, toNet, commAmt;
+    if(state.last==='give'){
+      fromAmt=gv;
+      if(!(fromAmt>0)){ clearOut('Введите сумму'); $('kx-get').value=''; legHints(from,to); return; }
+      toGross=(fromAmt*refBuy(from))/refSell(to);
+      var raw=state.commType==='pct'? toGross*pct/100 : fixv;
+      commAmt=Math.min(raw,toGross);
+      toNet=toGross-commAmt;
+      $('kx-get').value=fmt(toNet,to);
+    } else {
+      toNet=gt;
+      if(!(toNet>0)){ clearOut('Введите сумму'); $('kx-give').value=''; legHints(from,to); return; }
+      if(state.commType==='pct'){ toGross=toNet/(1-pct/100); commAmt=toGross-toNet; }
+      else { toGross=toNet+fixv; commAmt=fixv; }
+      fromAmt=(toGross*refSell(to))/refBuy(from);
+      $('kx-give').value=fmt(fromAmt,from);
+    }
+
+    if(commAmt>=toGross-1e-9 && commAmt>0){ showWarn('<i class="ti ti-alert-triangle" aria-hidden="true"></i> Комиссия покрывает всю сумму — клиент получает 0.'); } else { hideWarn(); }
+
+    var dealRate= fromAmt>0? toGross/fromAmt : NaN;
+    var marginCanon= fromAmt*refMid(from) - toGross*refMid(to) + commAmt*refMid(to);
+    var marginBase= state.base===CANON? marginCanon : marginCanon/refMid(state.base);
+
+    $('kx-out-get').textContent=fmt(toNet,to)+' '+to;
+    $('kx-out-rate').textContent='1 '+from+' = '+fmtRate(dealRate)+' '+to;
+    $('kx-out-margin').textContent=fmt(marginBase,state.base)+' '+state.base;
+    legHints(from,to);
+
+    var crossTxt='';
+    if(from!==CANON && to!==CANON){
+      var via=fromAmt*refBuy(from);
+      crossTxt='<i class="ti ti-arrow-right" aria-hidden="true"></i> Синтетический курс через '+CANON+': '+fmt(fromAmt,from)+' '+from+' → '+fmt(via,CANON)+' '+CANON+' → '+fmt(toGross,to)+' '+to+' (учтены оба спреда)';
+    }
+    $('kx-cross').innerHTML=crossTxt;
+
+    $('kx-r-give').textContent=fmt(fromAmt,from)+' '+from;
+    $('kx-r-get').textContent=fmt(toNet,to)+' '+to;
+    $('kx-r-rate').textContent='1 '+from+' = '+fmtRate(dealRate)+' '+to;
+    $('kx-r-comm').textContent= commAmt>0? fmt(commAmt,to)+' '+to : 'нет';
+    var now=Date.now(), till=now+state.ttl*60000;
+    var crossMidnight = new Date(now).getDate()!==new Date(till).getDate();
+    var tillStr= crossMidnight? (new Date(till).toLocaleDateString('ru-RU')+' '+hhmm(till)) : hhmm(till);
+    $('kx-ttl-line').innerHTML='<i class="ti ti-clock" aria-hidden="true"></i> Зафиксировано '+hhmm(now)+' · действителен до '+tillStr+' ('+state.ttl+' мин)';
+
+    window.__kxReceipt='Расчёт обмена\nОтдаёте: '+fmt(fromAmt,from)+' '+from+'\nПолучаете: '+fmt(toNet,to)+' '+to+'\nКурс: 1 '+from+' = '+fmtRate(dealRate)+' '+to+(commAmt>0?'\nКомиссия: '+fmt(commAmt,to)+' '+to:'')+'\nДействителен до '+tillStr;
+    window.__kxDeal={from:from,to:to,fromAmt:fromAmt,toNet:toNet,dealRate:dealRate,commAmt:commAmt,marginBase:marginBase,base:state.base,now:now,tillStr:tillStr};
+  }
+
+  function renderRates(){
+    var tb=$('kx-rates-body'); tb.innerHTML='';
+    for(var i=0;i<CUR.length;i++){ (function(c){
+      var tr=document.createElement('tr');
+      var isBase=c===state.base, isCanon=c===CANON;
+      var locked=isBase||isCanon;
+      var db=dispBuy(c), ds=dispSell(c);
+      tr.innerHTML='<td>'+c+(isBase?' · база':'')+'</td>';
+      var tdB=document.createElement('td'), tdS=document.createElement('td'), tdSp=document.createElement('td');
+      tdSp.className='kx-mut'; tdSp.style.fontSize='12px';
+      function paintSpread(){ var b=dispBuy(c), s=dispSell(c); if(isFinite(b)&&isFinite(s)&&b>0&&s>0){ var sp=s-b, pct=(sp/((b+s)/2))*100; tdSp.textContent=fmtRate(sp)+' · '+pct.toFixed(1)+'%'; } else tdSp.textContent='—'; }
+      if(locked){ tdB.textContent=isFinite(db)?fmtRate(db):'1'; tdS.textContent=isFinite(ds)?fmtRate(ds):'1'; tdB.className='kx-mut'; tdS.className='kx-mut'; }
+      else{
+        var ib=document.createElement('input'); ib.type='text'; ib.inputMode='decimal'; ib.value=isFinite(db)&&db>0?fmtRate(db):''; ib.placeholder='курс'; ib.setAttribute('aria-label','Покупка '+c);
+        var is=document.createElement('input'); is.type='text'; is.inputMode='decimal'; is.value=isFinite(ds)&&ds>0?fmtRate(ds):''; is.placeholder='курс'; is.setAttribute('aria-label','Продажа '+c);
+        function mark(inp,ok){ inp.style.borderColor= ok?'':'var(--color-text-warning)'; }
+        var upd=function(){ var sc=baseScale(); var b=pn(ib.value), s=pn(is.value); var rb=(isFinite(b)&&b>0)? b*sc:0, rs=(isFinite(s)&&s>0)? s*sc:0; ref[c]={buy:rb,sell:rs}; mark(ib,rb>0); mark(is,rs>0); state.updated=Date.now(); saveStore(); $('kx-upd').textContent='обновлено '+hhmm(state.updated); paintSpread(); compute(); };
+        ib.addEventListener('input',upd); is.addEventListener('input',upd);
+        tdB.appendChild(ib); tdS.appendChild(is);
+      }
+      paintSpread();
+      tr.appendChild(tdB); tr.appendChild(tdS); tr.appendChild(tdSp);
+      tb.appendChild(tr);
+    })(CUR[i]); }
+  }
+
+  function netStatus(){ var el=$('kx-net'); var on=navigator.onLine; el.innerHTML= on? '<i class="ti ti-wifi" aria-hidden="true"></i> онлайн' : '<i class="ti ti-wifi-off" aria-hidden="true"></i> офлайн'; el.style.background= on?'var(--color-background-success)':'var(--color-background-secondary)'; el.style.color= on?'var(--color-text-success)':'var(--color-text-secondary)'; }
+  function commHint(){ $('kx-commhint').textContent= state.commType==='pct'? 'процент от выдаваемой суммы' : 'фикс в валюте выдачи ('+state.to+')'; }
+  function setClient(on){ state.client=on; document.body.classList.toggle('kx-client',on); var b=$('kx-client'); b.innerHTML= on? '<i class="ti ti-eye-off" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Скрыть от клиента' : '<i class="ti ti-eye" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Показать клиенту'; }
+
+  buildSelect($('kx-from'),state.from); buildSelect($('kx-to'),state.to); buildBase();
+  renderRates(); commHint(); netStatus();
+  $('kx-upd').textContent= state.updated? 'обновлено '+hhmm(state.updated):'—';
+  clearOut('Введите сумму');
+
+  $('kx-give').addEventListener('input',function(){state.last='give';compute();});
+  $('kx-get').addEventListener('input',function(){state.last='get';compute();});
+  $('kx-give').addEventListener('focus',function(){this.select();});
+  $('kx-get').addEventListener('focus',function(){this.select();});
+  $('kx-from').addEventListener('change',function(){state.from=this.value;compute();});
+  $('kx-to').addEventListener('change',function(){state.to=this.value;commHint();compute();});
+  $('kx-comm').addEventListener('input',function(){state.comm=pn(this.value)||0;compute();});
+  $('kx-commtype').addEventListener('change',function(){state.commType=this.value;commHint();compute();});
+  $('kx-ttl').addEventListener('change',function(){state.ttl=parseInt(this.value,10)||15;compute();});
+  $('kx-base').addEventListener('change',function(){state.base=this.value;buildBase();renderRates();compute();renderHist();});
+  $('kx-client').addEventListener('click',function(){setClient(!state.client);});
+  $('kx-reset').addEventListener('click',function(){$('kx-give').value='';$('kx-get').value='';state.last='give';clearOut('Введите сумму');hideWarn();legHints(state.from,state.to);$('kx-give').focus();});
+  $('kx-swap').addEventListener('click',function(){var a=state.from;state.from=state.to;state.to=a;buildSelect($('kx-from'),state.from);buildSelect($('kx-to'),state.to);state.last='give';commHint();compute();});
+  $('kx-copy').addEventListener('click',function(){ var t=window.__kxReceipt||''; if(!t){return;} var btn=$('kx-copy'); var done=function(){btn.innerHTML='<i class="ti ti-check" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Скопировано';setTimeout(function(){btn.innerHTML='<i class="ti ti-copy" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Скопировать';},1600);};
+    if(navigator.share){ navigator.share({text:t}).then(done).catch(function(){copyFb(t,done);}); } else { copyFb(t,done); } });
+  function copyFb(t,cb){ if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(t).then(cb).catch(cb);}else{cb();} }
+  // ── Быстрые пресеты ──
+  var pbtns=document.querySelectorAll('.kx-preset');
+  for(var pi=0;pi<pbtns.length;pi++){ pbtns[pi].addEventListener('click',function(){ var f=this.getAttribute('data-f'),t=this.getAttribute('data-t'); if((f!==CANON&&!ready(f))||(t!==CANON&&!ready(t))){ showWarn('<i class="ti ti-alert-triangle" aria-hidden="true"></i> Для пресета не задан курс — заполните табло.'); return; } state.from=f;state.to=t;buildSelect($('kx-from'),f);buildSelect($('kx-to'),t);state.last='give';commHint();compute(); }); }
+
+  // ── Журнал сделок и маржа за день ──
+  var HIST=[]; try{HIST=JSON.parse(localStorage.getItem('kassa_hist')||'[]');}catch(e){HIST=[];}
+  function sameDay(a,b){var x=new Date(a),y=new Date(b);return x.getFullYear()===y.getFullYear()&&x.getMonth()===y.getMonth()&&x.getDate()===y.getDate();}
+  function renderHist(){
+    var now=Date.now(); var today=HIST.filter(function(h){return sameDay(h.ts,now);});
+    var sum=0, mixed=false; for(var i=0;i<today.length;i++){ if(today[i].base===state.base) sum+=today[i].margin; else mixed=true; }
+    $('kx-day-margin').textContent= today.length? (fmt(sum,state.base)+' '+state.base+(mixed?' +др.':'')) : ('0 '+state.base);
+    var box=$('kx-hist');
+    if(!today.length){ box.innerHTML='Пока нет записанных сделок. Нажмите «Записать» в карточке расчёта.'; return; }
+    var html=''; for(var j=today.length-1;j>=0&&j>=today.length-12;j--){ var h=today[j]; html+='<div style="display:flex;justify-content:space-between;gap:8px;border-top:0.5px solid var(--color-border-tertiary);padding:6px 0"><span>'+hhmm(h.ts)+' · '+h.txt+'</span><span style="color:var(--color-text-success);white-space:nowrap">+'+fmt(h.margin,h.base)+' '+h.base+'</span></div>'; }
+    box.innerHTML=html;
+  }
+  $('kx-log').addEventListener('click',function(){ var d=window.__kxDeal; if(!d||!(d.fromAmt>0)){ return; } HIST.push({ts:d.now,base:d.base,margin:d.marginBase,txt:fmt(d.fromAmt,d.from)+' '+d.from+' → '+fmt(d.toNet,d.to)+' '+d.to}); try{localStorage.setItem('kassa_hist',JSON.stringify(HIST.slice(-300)));}catch(e){} renderHist(); var b=this; b.innerHTML='<i class="ti ti-check" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Записано'; setTimeout(function(){b.innerHTML='<i class="ti ti-pin" style="font-size:16px;vertical-align:-2px;margin-right:5px" aria-hidden="true"></i>Записать';},1400); });
+  renderHist();
+
+  // ── Шаринг расчёта картинкой (canvas → PNG) ──
+  $('kx-img').addEventListener('click',function(){
+    var d=window.__kxDeal; if(!d||!(d.fromAmt>0)){ showWarn('<i class="ti ti-info-circle" aria-hidden="true"></i> Сначала введите сумму.'); return; }
+    var W=640,H=440,s=2; var cv=document.createElement('canvas'); cv.width=W*s; cv.height=H*s; var x=cv.getContext('2d'); x.scale(s,s);
+    x.fillStyle='#fffdfb'; x.fillRect(0,0,W,H);
+    x.fillStyle='#e6f1fb'; x.fillRect(0,0,W,6);
+    x.fillStyle='#9a978e'; x.font='600 13px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText('КАССА · РАСЧЁТ ОБМЕНА',40,54);
+    x.fillStyle='#6c6a63'; x.font='15px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText('Клиент отдаёт',40,98);
+    x.fillStyle='#1f1e1b'; x.font='600 30px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText(fmt(d.fromAmt,d.from)+' '+d.from,40,134);
+    x.fillStyle='#6c6a63'; x.font='15px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText('Клиент получает',40,186);
+    x.fillStyle='#0f6e56'; x.font='600 34px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText(fmt(d.toNet,d.to)+' '+d.to,40,226);
+    x.strokeStyle='#efece4'; x.beginPath(); x.moveTo(40,260); x.lineTo(W-40,260); x.stroke();
+    x.fillStyle='#6c6a63'; x.font='15px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText('Курс',40,296); x.fillText('Комиссия',40,326);
+    x.fillStyle='#1f1e1b'; x.textAlign='right';
+    x.fillText('1 '+d.from+' = '+fmtRate(d.dealRate)+' '+d.to,W-40,296);
+    x.fillText(d.commAmt>0? fmt(d.commAmt,d.to)+' '+d.to : 'нет',W-40,326);
+    x.textAlign='left';
+    x.fillStyle='#854f0b'; x.font='14px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText('Курс действителен до '+d.tillStr,40,376);
+    x.fillStyle='#9a978e'; x.font='12px -apple-system,Segoe UI,Roboto,sans-serif'; x.fillText('Справочный расчёт, не фискальный документ',40,408);
+    cv.toBlob(function(blob){ if(!blob){return;} var file=null; try{file=new File([blob],'raschet.png',{type:'image/png'});}catch(e){}
+      if(file&&navigator.canShare&&navigator.canShare({files:[file]})){ navigator.share({files:[file],title:'Расчёт обмена'}).then(function(){}).catch(function(){dl(blob);}); } else { dl(blob); }
+      function dl(b){ var a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='raschet.png'; document.body.appendChild(a); a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);a.remove();},100); }
+    },'image/png');
+  });
+
+  window.addEventListener('online',netStatus); window.addEventListener('offline',netStatus);
+})();
+</script>
+</body>
+</html>

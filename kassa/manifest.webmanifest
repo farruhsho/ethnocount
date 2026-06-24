@@ -1,0 +1,17 @@
+{
+  "name": "Касса — калькулятор обменника",
+  "short_name": "Касса",
+  "description": "Калькулятор обменника: свой курс покупки/продажи, спред, комиссия, кросс через USDT и расчёт для клиента. Работает офлайн.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#efece4",
+  "theme_color": "#efece4",
+  "lang": "ru",
+  "dir": "ltr",
+  "categories": ["finance", "business", "utilities"],
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

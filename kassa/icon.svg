@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Касса">
+  <rect width="512" height="512" rx="112" fill="#1f1e1b"/>
+  <rect x="112" y="96" width="288" height="320" rx="28" fill="#fffdfb"/>
+  <rect x="148" y="132" width="216" height="72" rx="16" fill="#e6f1fb"/>
+  <text x="256" y="184" font-family="-apple-system,Segoe UI,Roboto,sans-serif" font-size="44" font-weight="700" fill="#0c447c" text-anchor="middle">$ ₮ ₸</text>
+  <g fill="#efece4">
+    <rect x="148" y="232" width="60" height="48" rx="12"/>
+    <rect x="226" y="232" width="60" height="48" rx="12"/>
+    <rect x="304" y="232" width="60" height="48" rx="12"/>
+    <rect x="148" y="296" width="60" height="48" rx="12"/>
+    <rect x="226" y="296" width="60" height="48" rx="12"/>
+  </g>
+  <rect x="304" y="296" width="60" height="112" rx="12" fill="#0f6e56"/>
+</svg>
