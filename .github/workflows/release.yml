@@ -19,6 +19,12 @@ env:
   # pubspec.yaml требует Dart SDK ^3.10.7 — это Flutter 3.41+ (stable
   # на дату создания workflow). Не понижайте без обновления pubspec.yaml.
   FLUTTER_CHANNEL: 'stable'
+  # Supabase-конфиг приходит через --dart-define из секретов, а не из исходника
+  # (см. lib/core/supabase/supabase_config.dart). ⚠️ Задайте секреты
+  # SUPABASE_URL и SUPABASE_ANON_KEY в репозитории, иначе release-сборка упадёт
+  # с понятной ошибкой (это осознанно — чтобы не публиковать бинарник без/со
+  # старым ключом). Передаём их в каждую flutter build ниже.
+  DART_DEFINES: --dart-define=SUPABASE_URL=${{ secrets.SUPABASE_URL }} --dart-define=SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
 
 jobs:
   # ─── Android APK ──────────────────────────────────────────────────────
@@ -34,7 +40,7 @@ jobs:
           channel: ${{ env.FLUTTER_CHANNEL }}
           cache: true
       - run: flutter pub get
-      - run: flutter build apk --release
+      - run: flutter build apk --release ${{ env.DART_DEFINES }}
       - name: Rename for release
         run: |
           mkdir -p out
@@ -56,7 +62,7 @@ jobs:
           cache: true
       - run: flutter config --enable-windows-desktop
       - run: flutter pub get
-      - run: flutter build windows --release
+      - run: flutter build windows --release ${{ env.DART_DEFINES }}
       - name: Pack portable zip
         shell: pwsh
         run: |
@@ -80,7 +86,7 @@ jobs:
           cache: true
       - run: flutter config --enable-macos-desktop
       - run: flutter pub get
-      - run: flutter build macos --release
+      - run: flutter build macos --release ${{ env.DART_DEFINES }}
       - name: Create .dmg (Apple Silicon)
         run: |
           set -e
@@ -123,7 +129,7 @@ jobs:
           cache: true
       - run: flutter config --enable-linux-desktop
       - run: flutter pub get
-      - run: flutter build linux --release
+      - run: flutter build linux --release ${{ env.DART_DEFINES }}
       - name: Pack tar.gz
         run: |
           mkdir -p out
