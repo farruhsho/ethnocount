@@ -125,6 +125,9 @@ class _DesktopShellState extends State<_DesktopShell> {
   (List<String> routes, List<_NavDest> dests) _buildNavItems(
       BuildContext context, dynamic user) {
     final isCreator = user?.role.isCreator ?? false;
+    final isDirector = user?.role.isDirector ?? false;
+    // Сверка (reconciliation) видна только creator/director.
+    final canReconcile = isCreator || isDirector;
     final canManageUsers = user?.role.canManageUsers ?? false;
     final perms = user?.permissions ?? AccountantPermissions.all;
 
@@ -138,6 +141,7 @@ class _DesktopShellState extends State<_DesktopShell> {
       ('/analytics', _NavDest(AppIcons.analytics, 'Аналитика')),
       ('/exchange-rates', _NavDest(AppIcons.currency_exchange, 'Курсы')),
       ('/reports', _NavDest(AppIcons.file_download, 'Отчёты')),
+      ('/reconciliation', _NavDest(AppIcons.fact_check, 'Сверка')),
       ('/branches', _NavDest(AppIcons.business, 'Филиалы')),
       ('/users', _NavDest(AppIcons.admin_panel_settings, 'Управление')),
       ('/approvals', _NavDest(AppIcons.fact_check, 'Согласования')),
@@ -160,6 +164,7 @@ class _DesktopShellState extends State<_DesktopShell> {
       if (route == '/analytics' && !perms.canAnalytics && !isCreator) continue;
       if (route == '/exchange-rates' && !perms.canExchangeRates && !isCreator) continue;
       if (route == '/reports' && !perms.canReports && !isCreator) continue;
+      if (route == '/reconciliation' && !canReconcile) continue;
       if (route == '/branches' && !perms.canBranchesView && !isCreator) continue;
       if (route == '/users' && !canManageUsers) continue;
       filtered.add(e);
@@ -370,6 +375,7 @@ class _MobileShellState extends State<_MobileShell> {
       builder: (context, authState) {
         final user = authState.user;
         final isCreator = user?.role.isCreator ?? false;
+        final isDirector = user?.role.isDirector ?? false;
         final canManageUsers = user?.role.canManageUsers ?? false;
         final perms = user?.permissions ?? AccountantPermissions.all;
 
@@ -394,6 +400,7 @@ class _MobileShellState extends State<_MobileShell> {
                 index,
                 perms,
                 isCreator,
+                isDirector: isDirector,
                 canManageUsers: canManageUsers,
                 userEmail: userEmail,
                 userName: userName,
@@ -592,22 +599,15 @@ class _CenterFab extends StatelessWidget {
     return Transform.translate(
       offset: const Offset(0, -14),
       child: Material(
-        elevation: 6,
-        shadowColor: scheme.primary.withValues(alpha: 0.4),
+        elevation: 2,
+        shadowColor: Colors.black.withValues(alpha: 0.18),
         shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
         color: Colors.transparent,
         child: Ink(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                scheme.primary,
-                scheme.primary.withValues(alpha: 0.75),
-              ],
-            ),
+            color: scheme.primary,
             border: Border.all(
               color: scheme.surface,
               width: 4,
@@ -649,12 +649,20 @@ Future<void> _showMoreSheet(
   BuildContext context, {
   required AccountantPermissions perms,
   required bool isCreator,
+  bool isDirector = false,
   bool canManageUsers = false,
   String userEmail = '',
   String userName = '',
   String roleLabel = '',
 }) async {
   final items = <_MoreDestination>[
+    // Сверка (reconciliation) — только creator/director.
+    if (isCreator || isDirector)
+      const _MoreDestination(
+        icon: AppIcons.fact_check,
+        label: 'Сверка',
+        route: '/reconciliation',
+      ),
     if (perms.canPurchases || isCreator)
       const _MoreDestination(
         icon: AppIcons.shopping_cart,
@@ -691,6 +699,13 @@ Future<void> _showMoreSheet(
         label: 'Управление',
         route: '/users',
       ),
+    // Согласования: creator/director одобряют, бухгалтер видит свои заявки —
+    // содержимое скоупится через RLS, поэтому пункт виден всем ролям.
+    const _MoreDestination(
+      icon: AppIcons.fact_check,
+      label: 'Согласования',
+      route: '/approvals',
+    ),
     const _MoreDestination(
       icon: AppIcons.notifications,
       label: 'Уведомления',
@@ -910,6 +925,7 @@ void _onMobileTap(
   int index,
   AccountantPermissions perms,
   bool isCreator, {
+  bool isDirector = false,
   bool canManageUsers = false,
   String userEmail = '',
   String userName = '',
@@ -934,6 +950,7 @@ void _onMobileTap(
         context,
         perms: perms,
         isCreator: isCreator,
+        isDirector: isDirector,
         canManageUsers: canManageUsers,
         userEmail: userEmail,
         userName: userName,

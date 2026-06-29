@@ -143,6 +143,29 @@ class _NotificationsViewState extends State<_NotificationsView> {
                   state.notifications.isEmpty) {
                 return const Center(child: CircularProgressIndicator());
               }
+              if (state.status == NotificationBlocStatus.error &&
+                  state.notifications.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(AppIcons.cloud_off,
+                          size: 40, color: AppColors.error),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Не удалось загрузить уведомления',
+                        style: Theme.of(context).textTheme.bodyLarge,
+                      ),
+                      const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _refresh,
+                        icon: const Icon(AppIcons.refresh, size: 18),
+                        label: const Text('Повторить'),
+                      ),
+                    ],
+                  ),
+                );
+              }
               final all = state.notifications;
               final filtered =
                   all.where(_matchesFilter).toList(growable: false);

@@ -32,6 +32,7 @@ import 'package:ethnocount/presentation/branches/pages/branches_page.dart';
 import 'package:ethnocount/presentation/admin/pages/admin_panel_page.dart';
 import 'package:ethnocount/presentation/approvals/pages/approvals_page.dart';
 import 'package:ethnocount/presentation/counterparties/pages/counterparties_page.dart';
+import 'package:ethnocount/presentation/reconciliation/pages/reconciliation_page.dart';
 import 'package:ethnocount/presentation/common/widgets/adaptive_scaffold.dart';
 
 /// Application router using go_router.
@@ -122,6 +123,17 @@ class AppRouter {
               return '/';
             }
             if (path.startsWith('/branches') && !p.canBranchesView) return '/';
+            // Импорт банковских выписок — creator/director всегда, бухгалтер
+            // только с явным правом canBankImport (user.canBankImport уже
+            // учитывает роль).
+            if (path.startsWith('/bank-import') && !user.canBankImport) {
+              return '/';
+            }
+            // Сверка (reconciliation) — только creator/director. Здесь мы
+            // уже внутри `!isCreator`, поэтому пускаем только директора.
+            if (path.startsWith('/reconciliation') && !user.role.isDirector) {
+              return '/';
+            }
             // Согласования видны только creator/director (одобряют), но и
             // accountant может зайти посмотреть свои отправленные. Здесь
             // блокировать не нужно — фильтр сделает RLS.
@@ -263,6 +275,11 @@ class AppRouter {
               path: '/approvals',
               name: RouteNames.approvals,
               builder: (context, state) => const ApprovalsPage(),
+            ),
+            GoRoute(
+              path: '/reconciliation',
+              name: RouteNames.reconciliation,
+              builder: (context, state) => const ReconciliationPage(),
             ),
             GoRoute(
               path: '/settings',

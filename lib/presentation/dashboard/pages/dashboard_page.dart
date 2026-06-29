@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -160,6 +161,13 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
           _Header(
             branchCount: state.branches.length,
             pendingCount: state.pendingCount,
+            totals: totals,
+            filter: _branchFilter,
+            filters: _branchFilters,
+            // Кнопка «Фильтры» в шапке дублирует чипы UZ/RU/KZ в карточке
+            // филиалов — нужна только когда филиалов больше одного.
+            showFilter: state.branches.length > 1,
+            onFilter: (v) => setState(() => _branchFilter = v),
           ),
           const SizedBox(height: AppSpacing.lg),
 
@@ -289,9 +297,22 @@ class _DesktopDashboardState extends State<_DesktopDashboard> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.branchCount, required this.pendingCount});
+  const _Header({
+    required this.branchCount,
+    required this.pendingCount,
+    required this.totals,
+    required this.filter,
+    required this.filters,
+    required this.showFilter,
+    required this.onFilter,
+  });
   final int branchCount;
   final int pendingCount;
+  final Map<String, double> totals;
+  final String filter;
+  final List<String> filters;
+  final bool showFilter;
+  final ValueChanged<String> onFilter;
 
   @override
   Widget build(BuildContext context) {
@@ -322,17 +343,55 @@ class _Header extends StatelessWidget {
           ),
         ),
         OutlinedButton.icon(
-          onPressed: () {},
+          onPressed: () {
+            final buf = StringBuffer('Сводка · $kAppDisplayName\n')
+              ..writeln(
+                  '$branchCount филиалов · $pendingCount ожидают подтверждения');
+            for (final e in totals.entries) {
+              buf.writeln('${e.key}: ${e.value.toStringAsFixed(2)}');
+            }
+            Clipboard.setData(ClipboardData(text: buf.toString()));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Сводка скопирована в буфер обмена'),
+              ),
+            );
+          },
           icon: const Icon(AppIcons.file_download, size: 18),
           label: const Text('Экспорт'),
         ),
         const SizedBox(width: 8),
-        OutlinedButton.icon(
-          onPressed: () {},
-          icon: const Icon(AppIcons.tune, size: 18),
-          label: const Text('Фильтры'),
-        ),
-        const SizedBox(width: 8),
+        if (showFilter) ...[
+          PopupMenuButton<String>(
+            tooltip: 'Фильтр по филиалу',
+            position: PopupMenuPosition.under,
+            onSelected: onFilter,
+            itemBuilder: (_) => filters
+                .map((f) => PopupMenuItem<String>(
+                      value: f,
+                      child: Text(f.isEmpty ? 'Все филиалы' : f),
+                    ))
+                .toList(),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                border:
+                    Border.all(color: Theme.of(context).colorScheme.outline),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(AppIcons.tune, size: 18),
+                  const SizedBox(width: 8),
+                  Text(filter.isEmpty ? 'Фильтры' : filter),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
         FilledButton.icon(
           onPressed: () => context.goNamed(RouteNames.createTransfer),
           icon: const Icon(AppIcons.add, size: 18),

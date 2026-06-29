@@ -3709,7 +3709,10 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
     super.initState();
     final a = widget.account;
     _nameCtrl = TextEditingController(text: a.name);
-    _cardNumberCtrl = TextEditingController(text: a.cardNumber ?? '');
+    // SEC: НЕ префиллим полный PAN. Сервер отдаёт только last4; поле оставляем
+    // пустым (маскированный плейсхолдер показывает текущую карту). Пустое поле
+    // при сохранении НЕ перезатирает уже сохранённый номер (см. _submit).
+    _cardNumberCtrl = TextEditingController();
     _cardholderCtrl = TextEditingController(text: a.cardholderName ?? '');
     _bankCtrl = TextEditingController(text: a.bankName ?? '');
     _expiryCtrl = TextEditingController(text: _formatExpiry(a.expiryMonth, a.expiryYear));
@@ -3800,7 +3803,11 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
                   enabled: !_clearCard,
                   decoration: InputDecoration(
                     labelText: 'Номер карты',
-                    helperText: a.cardLast4 != null ? 'Текущая: •••• ${a.cardLast4}' : null,
+                    // Маскированный плейсхолдер — реальный PAN не показываем.
+                    hintText: a.cardLast4 != null ? '•••• ${a.cardLast4}' : null,
+                    helperText: a.cardLast4 != null
+                        ? 'Текущая: •••• ${a.cardLast4}. Оставьте пустым, чтобы не менять.'
+                        : null,
                     border: const OutlineInputBorder(),
                     suffixIcon: IconButton(
                       icon: Icon(_revealCard ? AppIcons.visibility_off : AppIcons.visibility, size: 20),
@@ -3899,12 +3906,17 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
     final repo = sl<BranchRepository>();
     final isCard = _type == AccountType.card;
     final (mm, yy) = _parseExpiry(_expiryCtrl.text);
+    // SEC: поле префиллится пустым (полный PAN не показываем). Пустое поле =
+    // «не менять номер», поэтому отправляем cardNumber только если пользователь
+    // действительно ввёл новый номер (и не выбрал «удалить»).
+    final typedCard = _cardNumberCtrl.text.trim();
     final result = await repo.updateBranchAccount(
       accountId: widget.account.id,
       name: _nameCtrl.text.trim(),
       type: _type,
       currency: _currency,
-      cardNumber: isCard && !_clearCard ? _cardNumberCtrl.text.trim() : null,
+      cardNumber:
+          isCard && !_clearCard && typedCard.isNotEmpty ? typedCard : null,
       clearCardNumber: _clearCard,
       cardholderName: isCard ? _cardholderCtrl.text.trim() : null,
       bankName: isCard ? _bankCtrl.text.trim() : null,

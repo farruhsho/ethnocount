@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:bloc_concurrency/bloc_concurrency.dart';
 import 'package:equatable/equatable.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:ethnocount/domain/entities/client.dart';
 import 'package:ethnocount/domain/repositories/client_repository.dart';
 
@@ -200,10 +202,12 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
       : _repository = repository,
         super(const ClientBlocState()) {
     on<ClientsLoadRequested>(_onLoad, transformer: restartable());
-    on<ClientCreateRequested>(_onCreate);
-    on<ClientDepositRequested>(_onDeposit);
-    on<ClientDebitRequested>(_onDebit);
-    on<ClientConvertRequested>(_onConvert);
+    // Денежные/мутирующие команды: droppable — повторный тап во время
+    // выполнения отбрасывается, чтобы не было двойного депозита/списания.
+    on<ClientCreateRequested>(_onCreate, transformer: droppable());
+    on<ClientDepositRequested>(_onDeposit, transformer: droppable());
+    on<ClientDebitRequested>(_onDebit, transformer: droppable());
+    on<ClientConvertRequested>(_onConvert, transformer: droppable());
     // restartable: открытие карточки другого клиента отменяет предыдущий
     // emit.forEach(watchClientTransactions) — раньше старая подписка жила
     // дальше (поля _txSub/_clientsSub никогда не присваивались, cancel был
@@ -356,6 +360,12 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
     Emitter<ClientBlocState> emit,
   ) async {
     emit(state.copyWith(status: ClientBlocStatus.operating));
+    await _amlScreen(
+      clientId: event.clientId,
+      amount: event.amount,
+      currency: event.currency,
+      kind: 'deposit',
+    );
     final result = await _repository.depositClient(
       clientId: event.clientId,
       amount: event.amount,
@@ -378,6 +388,12 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
     Emitter<ClientBlocState> emit,
   ) async {
     emit(state.copyWith(status: ClientBlocStatus.operating));
+    await _amlScreen(
+      clientId: event.clientId,
+      amount: event.amount,
+      currency: event.currency,
+      kind: 'debit',
+    );
     final result = await _repository.debitClient(
       clientId: event.clientId,
       amount: event.amount,
@@ -400,6 +416,12 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
     Emitter<ClientBlocState> emit,
   ) async {
     emit(state.copyWith(status: ClientBlocStatus.operating));
+    await _amlScreen(
+      clientId: event.clientId,
+      amount: event.amount,
+      currency: event.fromCurrency,
+      kind: 'convert',
+    );
     final result = await _repository.convertClientCurrency(
       clientId: event.clientId,
       fromCurrency: event.fromCurrency,
@@ -419,6 +441,49 @@ class ClientBloc extends Bloc<ClientEvent, ClientBlocState> {
         'Конвертация ${r.fromCurrency} → ${r.toCurrency} выполнена',
       ),
     );
+  }
+
+  /// F4 (AML/KYC) — НЕблокирующий предполётный скрин движения по
+  /// custodial-кошельку клиента (пополнение / списание / конвертация).
+  /// Полностью совещательный: любая ошибка/таймаут/недоступность RPC
+  /// логируется и операция продолжается — AML не должен мешать рабочему
+  /// денежному потоку. При срабатывании порога только пишем в лог;
+  /// решение и фиксация флага остаются на UI-слое перевода.
+  ///
+  /// Контракт с миграцией 073: SECURITY DEFINER RPC `aml_screen_client_op`
+  /// с named-параметрами. Вызов изолирован здесь, чтобы при расхождении
+  /// сигнатуры правка была однострочной.
+  Future<void> _amlScreen({
+    required String clientId,
+    required double amount,
+    String? currency,
+    required String kind,
+  }) async {
+    try {
+      final raw = await Supabase.instance.client.rpc(
+        'aml_screen_client_op',
+        params: {
+          'p_client_id': clientId,
+          'p_amount': amount,
+          'p_currency': currency,
+          'p_op_type': kind,
+          'p_has_id': false,
+        },
+      ).timeout(const Duration(seconds: 8));
+      if (raw is Map && raw['flagged'] == true) {
+        developer.log(
+          'AML client-op flagged: kind=$kind client=$clientId '
+          'amount=$amount currency=$currency warnings=${raw['warnings']}',
+          name: 'aml',
+        );
+      }
+    } catch (e) {
+      // Совещательный скрин: ошибка не блокирует операцию.
+      developer.log(
+        'AML client-op screen failed (advisory, proceeding): $e',
+        name: 'aml',
+      );
+    }
   }
 
   /// Перечитывает баланс клиента и публикует его сразу в двух местах:

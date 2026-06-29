@@ -326,13 +326,16 @@ class TransferBloc extends Bloc<TransferEvent, TransferBlocState> {
     // отменяет предыдущий emit.forEach по realtime-стриму, иначе подписки
     // на канал transfers копятся и конкурируют (утечка + гонка last-wins).
     on<TransfersLoadRequested>(_onLoad, transformer: restartable());
-    on<TransferCreateRequested>(_onCreate);
-    on<TransferUpdateRequested>(_onUpdate);
-    on<TransferReplacePendingRequested>(_onReplacePending);
-    on<TransferConfirmRequested>(_onConfirm);
-    on<TransferIssueRequested>(_onIssue);
-    on<TransferIssuePartialRequested>(_onIssuePartial);
-    on<TransferDispatchRequested>(_onDispatch);
+    // droppable: денежно-мутирующие команды. Повторный тап по кнопке, пока
+    // первая операция в полёте, не должен запускать вторую мутацию (двойное
+    // списание/выдача). Второй идентичный command дропается до завершения.
+    on<TransferCreateRequested>(_onCreate, transformer: droppable());
+    on<TransferUpdateRequested>(_onUpdate, transformer: droppable());
+    on<TransferReplacePendingRequested>(_onReplacePending, transformer: droppable());
+    on<TransferConfirmRequested>(_onConfirm, transformer: droppable());
+    on<TransferIssueRequested>(_onIssue, transformer: droppable());
+    on<TransferIssuePartialRequested>(_onIssuePartial, transformer: droppable());
+    on<TransferDispatchRequested>(_onDispatch, transformer: droppable());
   }
 
   Future<void> _onLoad(

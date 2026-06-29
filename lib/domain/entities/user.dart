@@ -18,6 +18,7 @@ class AccountantPermissions {
     this.canManagePurchases = false,
     this.canBranchTopUp = false,
     this.canDeleteTransactions = false,
+    this.canBankImport = false,
     // ── справочники / навигация ──
     this.canClients = true,
     this.canManageClients = false,
@@ -52,6 +53,9 @@ class AccountantPermissions {
 
   /// Удаление транзакций (soft-delete).
   final bool canDeleteTransactions;
+
+  /// Импорт банковских выписок (раздел /bank-import).
+  final bool canBankImport;
 
   // directories
   final bool canClients;
@@ -95,6 +99,7 @@ class AccountantPermissions {
     canManagePurchases: true,
     canBranchTopUp: true,
     canDeleteTransactions: true,
+    canBankImport: true,
     canManageClients: true,
     canManageExchangeRates: true,
     canViewBalances: true,
@@ -124,6 +129,7 @@ class AccountantPermissions {
         'canManagePurchases': canManagePurchases,
         'canBranchTopUp': canBranchTopUp,
         'canDeleteTransactions': canDeleteTransactions,
+        'canBankImport': canBankImport,
         'canClients': canClients,
         'canManageClients': canManageClients,
         'canLedger': canLedger,
@@ -150,6 +156,7 @@ class AccountantPermissions {
       canManagePurchases: b('canManagePurchases', false),
       canBranchTopUp: b('canBranchTopUp', false),
       canDeleteTransactions: b('canDeleteTransactions', false),
+      canBankImport: b('canBankImport', false),
       canClients: b('canClients', true),
       canManageClients: b('canManageClients', false),
       canLedger: b('canLedger', true),
@@ -174,6 +181,7 @@ class AccountantPermissions {
     bool? canManagePurchases,
     bool? canBranchTopUp,
     bool? canDeleteTransactions,
+    bool? canBankImport,
     bool? canClients,
     bool? canManageClients,
     bool? canLedger,
@@ -197,6 +205,7 @@ class AccountantPermissions {
         canBranchTopUp: canBranchTopUp ?? this.canBranchTopUp,
         canDeleteTransactions:
             canDeleteTransactions ?? this.canDeleteTransactions,
+        canBankImport: canBankImport ?? this.canBankImport,
         canClients: canClients ?? this.canClients,
         canManageClients: canManageClients ?? this.canManageClients,
         canLedger: canLedger ?? this.canLedger,
@@ -284,6 +293,10 @@ class AppUser extends Equatable {
 
   /// Creator или бухгалтер с правом пополнения филиала.
   bool get canBranchTopUp => role.isCreator || permissions.canBranchTopUp;
+
+  /// Creator/Director или бухгалтер с правом импорта банковских выписок.
+  bool get canBankImport =>
+      role.isAdminOrCreator || permissions.canBankImport;
 
   /// Creator или бухгалтер с правом видеть полные карточные данные.
   bool get canViewCardDetails =>

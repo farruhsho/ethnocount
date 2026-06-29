@@ -15,6 +15,16 @@ class BranchRemoteDataSource {
 
   BranchRemoteDataSource(this._client);
 
+  /// Explicit column allowlist for branch_accounts reads.
+  ///
+  /// SEC-2: `card_number` (full PAN) is deliberately EXCLUDED so the raw PAN
+  /// never crosses the trust boundary to the client. Only `card_last4` is
+  /// fetched for display/masking. See migration 074_mask_pan.sql.
+  static const String _accountColumns =
+      'id, branch_id, name, type, currency, is_active, '
+      'card_last4, cardholder_name, bank_name, expiry_month, expiry_year, '
+      'notes, sort_order, archived_at, created_at';
+
   // ── Read streams ───────────────────────────────────────────────
 
   Stream<List<Branch>> watchBranches() {
@@ -104,7 +114,7 @@ class BranchRemoteDataSource {
   Future<List<BranchAccount>> _fetchBranchAccounts(String branchId) async {
     final data = await _client
         .from('branch_accounts')
-        .select()
+        .select(_accountColumns)
         .eq('branch_id', branchId)
         .eq('is_active', true)
         .order('sort_order')
@@ -115,7 +125,7 @@ class BranchRemoteDataSource {
   Future<BranchAccount> getBranchAccount(String accountId) async {
     final data = await _client
         .from('branch_accounts')
-        .select()
+        .select(_accountColumns)
         .eq('id', accountId)
         .single();
     return _mapBranchAccount(data);
@@ -305,7 +315,8 @@ class BranchRemoteDataSource {
       ),
       currency: data['currency'] ?? 'USD',
       isActive: data['is_active'] ?? true,
-      cardNumber: data['card_number'] as String?,
+      // SEC-2: full PAN is never fetched (see _accountColumns); only last4.
+      cardNumber: null,
       cardLast4: data['card_last4'] as String?,
       cardholderName: data['cardholder_name'] as String?,
       bankName: data['bank_name'] as String?,

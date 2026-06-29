@@ -46,4 +46,7 @@ class RouteNames {
 
   // ─── Approvals ───
   static const String approvals = 'approvals';
+
+  // ─── Reconciliation ───
+  static const String reconciliation = 'reconciliation';
 }

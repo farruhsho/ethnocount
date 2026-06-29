@@ -130,9 +130,10 @@ class PurchaseBloc extends Bloc<PurchaseEvent, PurchaseBlocState> {
       : _repository = repository,
         super(const PurchaseBlocState()) {
     on<PurchasesLoadRequested>(_onLoad, transformer: restartable());
-    on<PurchaseCreateRequested>(_onCreate);
-    on<PurchaseUpdateRequested>(_onUpdate);
-    on<PurchaseDeleteRequested>(_onDelete);
+    // Денежные мутации закупок: droppable — без двойного создания/списания.
+    on<PurchaseCreateRequested>(_onCreate, transformer: droppable());
+    on<PurchaseUpdateRequested>(_onUpdate, transformer: droppable());
+    on<PurchaseDeleteRequested>(_onDelete, transformer: droppable());
   }
 
   Future<void> _onLoad(

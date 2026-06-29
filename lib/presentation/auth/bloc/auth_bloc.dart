@@ -279,7 +279,6 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       (user) async {
         await _credentialStorage.saveCredentials(
           email: event.email,
-          password: event.password,
           rememberMe: event.rememberMe,
         );
         await _sessionService.recordLogin();

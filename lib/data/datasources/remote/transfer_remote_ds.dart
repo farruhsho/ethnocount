@@ -304,11 +304,17 @@ class TransferRemoteDataSource {
     String? toAccountId,
     List<MapEntry<String, double>>? toAccountSplits,
   }) async {
-    // For split confirmation, we handle one account at a time
-    // (simple path — full split support can be added to the SQL function)
+    // Несколько счетов-получателей → передаём аллокацию в SQL как jsonb-массив
+    // {"account_id":..., "amount":...}; один счёт → старый путь p_to_account_id.
+    final isSplit = toAccountSplits != null && toAccountSplits.length > 1;
     final result = await _client.rpc('confirm_transfer', params: {
       'p_transfer_id': transferId,
-      'p_to_account_id': toAccountId,
+      'p_to_account_id': isSplit ? null : toAccountId,
+      'p_to_account_splits': isSplit
+          ? toAccountSplits
+              .map((e) => {'account_id': e.key, 'amount': e.value})
+              .toList()
+          : null,
     });
     return Map<String, dynamic>.from(result as Map);
   }

@@ -100,9 +100,11 @@ class ApprovalBloc extends Bloc<ApprovalEvent, ApprovalState> {
       : _repo = repository,
         super(const ApprovalState()) {
     on<ApprovalsWatchRequested>(_onWatch, transformer: restartable());
-    on<ApprovalApproveRequested>(_onApprove);
-    on<ApprovalRejectRequested>(_onReject);
-    on<ApprovalRequestCreateRequested>(_onCreate);
+    // Approve/reject исполняют денежную RPC, create заводит pending-запрос —
+    // droppable защищает от двойного применения по повторному тапу.
+    on<ApprovalApproveRequested>(_onApprove, transformer: droppable());
+    on<ApprovalRejectRequested>(_onReject, transformer: droppable());
+    on<ApprovalRequestCreateRequested>(_onCreate, transformer: droppable());
   }
 
   Future<void> _onWatch(

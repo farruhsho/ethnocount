@@ -862,10 +862,10 @@ class _AccountCard extends StatelessWidget {
         ? Colors.green
         : (balance < 0 ? Colors.red : null);
 
-    final cardNumberLine = account.cardMasked ??
-        (account.cardNumber != null && account.cardNumber!.isNotEmpty
-            ? account.cardNumber
-            : null);
+    // SEC: показываем только маскированный last4 ('•••• 1234'). Полный PAN
+    // (account.cardNumber) сервер уже не отдаёт; даже если он попал в модель,
+    // не выводим его в UI.
+    final cardNumberLine = account.cardMasked;
 
     return Container(
       decoration: BoxDecoration(
@@ -1645,6 +1645,21 @@ class _EditAccountDialogState extends State<_EditAccountDialog> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
+    // Правка счёта: accountant отправляет заявку директору, creator/director
+    // правит напрямую (правило [[project-director-approval]]). Без этого гварда
+    // редактирование счёта обходило согласование (archive был защищён, update — нет).
+    final go = await context.guardUpdateBranchAccount(
+      widget.account,
+      name: _nameCtrl.text.trim(),
+      type: _type,
+      currency: _currency,
+    );
+    if (!mounted) return;
+    if (!go) {
+      setState(() => _loading = false);
+      Navigator.of(context).pop();
+      return;
+    }
     final repo = sl<BranchRepository>();
     final result = await repo.updateBranchAccount(
       accountId: widget.account.id,
