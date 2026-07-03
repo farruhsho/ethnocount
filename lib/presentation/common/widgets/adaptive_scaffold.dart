@@ -656,6 +656,23 @@ Future<void> _showMoreSheet(
   String roleLabel = '',
 }) async {
   final items = <_MoreDestination>[
+    // Клиенты и Партнёры — базовые сущности оператора. На мобиле их не было
+    // ни в нижнем баре, ни здесь → кошельки клиентов и сальдо посредников
+    // были недостижимы с телефона (навигационный тупик). Ставим первыми,
+    // с той же гейт-логикой, что и в desktop-rail (_buildNavItems).
+    if (perms.canClients || isCreator)
+      const _MoreDestination(
+        icon: AppIcons.people_outline,
+        label: 'Клиенты',
+        route: '/clients',
+      ),
+    // «Партнёры» (counterparties) видит и бухгалтер тоже — справочник общий,
+    // содержимое режет RLS. Гейта нет, как и в desktop-rail.
+    const _MoreDestination(
+      icon: AppIcons.account_tree,
+      label: 'Партнёры',
+      route: '/counterparties',
+    ),
     // Сверка (reconciliation) — только creator/director.
     if (isCreator || isDirector)
       const _MoreDestination(
