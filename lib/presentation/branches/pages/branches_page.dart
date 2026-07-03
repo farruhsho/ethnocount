@@ -1774,7 +1774,9 @@ class _AddAccountDialogState extends State<_AddAccountDialog> {
   String _currency = 'USD';
   bool _loading = false;
 
-  static const _currencies = ['USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'TJS'];
+  // KGS/TRY добавлены (F14): без них dropdown падал по assert, если базовая
+  // валюта филиала = KGS/TRY (initState ставит _currency = baseCurrency).
+  static const _currencies = ['USD', 'USDT', 'EUR', 'RUB', 'UZS', 'AED', 'CNY', 'KZT', 'KGS', 'TJS', 'TRY'];
 
   @override
   void initState() {

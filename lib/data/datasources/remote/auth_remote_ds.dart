@@ -19,7 +19,10 @@ class AuthRemoteDataSource {
 
   AppUser? get currentUser {
     final user = _auth.currentUser;
-    return user == null ? null : _mapUserFallback(user);
+    // Синхронный best-effort из JWT (в БД не ходит) — это НЕ ghost-детекция,
+    // а «профиль ещё не догружен». Сохраняем permissive-поведение; ghost
+    // определяется только в _loadUserProfile по реальному отсутствию строки.
+    return user == null ? null : _mapUserFallback(user, ghost: false);
   }
 
   /// Loads the authoritative profile (including role/permissions/branches)
@@ -55,9 +58,15 @@ class AuthRemoteDataSource {
           createdAt: DateTime.tryParse(data['created_at'] ?? '') ?? DateTime.now(),
         );
       }
-      return _mapUserFallback(supaUser);
+      // Строки профиля НЕТ (запрос вернул 0 строк) при живой auth-сессии =
+      // «призрак» (удалённый/полуудалённый пользователь) → безправный fallback.
+      return _mapUserFallback(supaUser, ghost: true);
     } catch (_) {
-      return _mapUserFallback(supaUser);
+      // Исключение (сеть/БД недоступны) — НЕ призрак: удалённый профиль дал бы
+      // null выше, а не throw. Легитимного пользователя на транзиентном сбое
+      // демотить нельзя → сохраняем прежнее permissive-поведение; настоящего
+      // призрака всё равно добьёт сервер (миграция 087).
+      return _mapUserFallback(supaUser, ghost: false);
     }
   }
 
@@ -133,7 +142,18 @@ class AuthRemoteDataSource {
     return SystemRole.accountant;
   }
 
-  AppUser _mapUserFallback(User user) {
+  /// Fallback-профиль, когда строку public.users не удалось смапить.
+  ///
+  /// [ghost] = true — строки профиля НЕТ (запрос вернул null) при живой
+  /// auth-сессии = удалённый/полуудалённый пользователь. Раньше fallback
+  /// всегда давал permissions.all + isActive=true → призрак входил с полными
+  /// клиентскими правами. Теперь для ghost — БЕЗПРАВНЫЙ и неактивный (UI
+  /// ничего не даёт; сервер добивает миграцией 087).
+  ///
+  /// [ghost] = false — транзиентный сбой (сеть/БД бросили исключение). Это НЕ
+  /// призрак (удалённый профиль даёт null, а не throw); демотить легитимного
+  /// пользователя нельзя, поэтому сохраняем прежнее permissive-поведение.
+  AppUser _mapUserFallback(User user, {required bool ghost}) {
     return AppUser(
       id: user.id,
       displayName: user.userMetadata?['display_name'] as String? ?? 'User',
@@ -142,8 +162,8 @@ class AuthRemoteDataSource {
       phone: user.phone,
       role: SystemRole.accountant,
       assignedBranchIds: const [],
-      permissions: AccountantPermissions.all,
-      isActive: true,
+      permissions: ghost ? AccountantPermissions.none : AccountantPermissions.all,
+      isActive: !ghost,
       createdAt: DateTime.tryParse(user.createdAt) ?? DateTime.now(),
     );
   }

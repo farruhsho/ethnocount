@@ -111,12 +111,19 @@ class NotificationRemoteDataSource {
   Future<void> markAllAsRead(List<String> branchIds) async {
     final ids = branchIds.where((id) => id.isNotEmpty).toSet().toList();
     if (ids.isEmpty) return;
+    final me = _client.auth.currentUser?.id;
+    if (me == null) return;
 
+    // Гасим только broadcast/филиальные (target_user_id IS NULL) и СВОИ личные
+    // (target_user_id = me). Раньше фильтра по пользователю не было → «прочитать
+    // всё» гасило личные уведомления коллег того же филиала (а creator — по всем
+    // филиалам разом). .or() комбинируется с остальными фильтрами как AND.
     await _client
         .from('notifications')
         .update({'is_read': true})
         .inFilter('target_branch_id', ids)
-        .eq('is_read', false);
+        .eq('is_read', false)
+        .or('target_user_id.is.null,target_user_id.eq.$me');
   }
 
   /// Stream of unread notification count.
