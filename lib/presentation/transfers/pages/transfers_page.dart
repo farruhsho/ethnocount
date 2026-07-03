@@ -1158,6 +1158,9 @@ class _TransfersPageState extends State<TransfersPage> {
     Map<String, List<BranchAccount>> branchAccounts,
     bool canManageTransfers,
   ) {
+    // canReverse: откат выданного перевода (078) — только creator/director.
+    final u = context.read<AuthBloc>().state.user;
+    final canReverse = u != null && (u.role.isCreator || u.role.isDirector);
     // Mobile flow doesn't have eager user names — try the cached user list
     // from UserRemoteDataSource.watchUsers() so signatures aren't blank.
     showResponsiveSheet<void>(
@@ -1247,6 +1250,15 @@ class _TransfersPageState extends State<TransfersPage> {
                   Navigator.of(innerCtx).pop();
                   await _handleDetachFromPartner(context, t);
                 },
+                canReverse: canReverse,
+                onCancel: () async {
+                  Navigator.of(innerCtx).pop();
+                  await _confirmAndCancelTransfer(context, t);
+                },
+                onReverse: () async {
+                  Navigator.of(innerCtx).pop();
+                  await _confirmAndReverseDelivered(context, t);
+                },
               );
             },
           ),
@@ -1264,6 +1276,9 @@ class _TransfersPageState extends State<TransfersPage> {
     bool canManageTransfers,
   ) {
     final transferBloc = context.read<TransferBloc>();
+    // canReverse: откат выданного перевода (078) — только creator/director.
+    final u = context.read<AuthBloc>().state.user;
+    final canReverse = u != null && (u.role.isCreator || u.role.isDirector);
 
     showResponsiveSheet<void>(
       context: context,
@@ -1338,6 +1353,15 @@ class _TransfersPageState extends State<TransfersPage> {
             Navigator.of(ctx).pop();
             await _handleDetachFromPartner(context, t);
           },
+          canReverse: canReverse,
+          onCancel: () async {
+            Navigator.of(ctx).pop();
+            await _confirmAndCancelTransfer(context, t);
+          },
+          onReverse: () async {
+            Navigator.of(ctx).pop();
+            await _confirmAndReverseDelivered(context, t);
+          },
         );
         return BlocProvider.value(
           value: transferBloc,
@@ -1345,6 +1369,152 @@ class _TransfersPageState extends State<TransfersPage> {
         );
       },
     );
+  }
+
+  /// F12: подтверждение и отмена (delete_transfer) ошибочно созданного
+  /// перевода. Права энфорсит RPC 070 (accountant — свой created своего
+  /// филиала; creator/director — любой). Партнёрские сюда не попадают —
+  /// кнопка скрыта для isPartnerTransfer.
+  Future<void> _confirmAndCancelTransfer(BuildContext context, Transfer t) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final reasonCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(AppIcons.warning_amber, color: AppColors.error, size: 22),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Отменить перевод ${t.transactionCode ?? ''}?'.trim())),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Что произойдёт:\n'
+              '• Деньги вернутся на счёт-источник\n'
+              '• Комиссия (если списана на отдельный счёт) откатится\n'
+              '• Перевод исчезнет из списка\n'
+              '• Снимок останется в deleted_transfers для аудита',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: reasonCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Причина (опционально)',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Назад')),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(AppIcons.delete_forever, size: 18),
+            label: const Text('Отменить перевод'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final params = <String, dynamic>{'p_transfer_id': t.id};
+      if (reasonCtrl.text.trim().isNotEmpty) params['p_reason'] = reasonCtrl.text.trim();
+      await Supabase.instance.client.rpc('delete_transfer', params: params);
+      if (!messenger.mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text('Перевод ${t.transactionCode ?? ''} отменён'.trim()),
+        backgroundColor: Colors.green.shade700,
+      ));
+    } catch (e) {
+      final s = e.toString();
+      final msg = s.contains('Бухгалтер может') || s.contains('42501')
+          ? 'Отменить может только автор своего филиала или Director/Creator.'
+          : (s.contains('PGRST') || s.contains('42883'))
+              ? 'RPC delete_transfer не найден. Примените миграцию 070.'
+              : 'Не удалось отменить: $s';
+      if (!messenger.mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.error));
+    }
+  }
+
+  /// F13: подтверждение и откат ВЫДАННОГО обычного перевода
+  /// (reverse_delivered_transfer, 078). Только creator/director; кнопка
+  /// скрыта для партнёрских и не-delivered.
+  Future<void> _confirmAndReverseDelivered(BuildContext context, Transfer t) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final reasonCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(AppIcons.warning_amber, color: AppColors.error, size: 22),
+            const SizedBox(width: 8),
+            Expanded(child: Text('Откатить выдачу ${t.transactionCode ?? ''}?'.trim())),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Перевод уже выдан. Откат сторнирует проводки выдачи и вернёт '
+              'перевод в работу.\n\n'
+              'Действие необратимо и фиксируется в аудите. Выполняйте только '
+              'при реальной ошибке выдачи.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            TextField(
+              controller: reasonCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Причина',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Назад')),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(AppIcons.history, size: 18),
+            label: const Text('Откатить выдачу'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final params = <String, dynamic>{'p_transfer_id': t.id};
+      if (reasonCtrl.text.trim().isNotEmpty) params['p_reason'] = reasonCtrl.text.trim();
+      await Supabase.instance.client.rpc('reverse_delivered_transfer', params: params);
+      if (!messenger.mounted) return;
+      messenger.showSnackBar(SnackBar(
+        content: Text('Выдача ${t.transactionCode ?? ''} откачена'.trim()),
+        backgroundColor: Colors.green.shade700,
+      ));
+    } catch (e) {
+      final s = e.toString();
+      final msg = (s.contains('PGRST') || s.contains('42883'))
+          ? 'RPC reverse_delivered_transfer не найден. Примените миграцию 078.'
+          : (s.contains('creator') || s.contains('director') || s.contains('42501'))
+              ? 'Откат доступен только Director/Creator.'
+              : 'Не удалось откатить: $s';
+      if (!messenger.mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text(msg), backgroundColor: AppColors.error));
+    }
   }
 
   Future<_PartialIssueResult?> _showPartialIssueDialog(
@@ -1810,6 +1980,9 @@ class _TransferDetailContent extends StatelessWidget {
     required this.onDownloadInvoice,
     required this.onAttachToPartner,
     required this.onDetachFromPartner,
+    this.canReverse = false,
+    this.onCancel,
+    this.onReverse,
   });
 
   final Transfer transfer;
@@ -1817,6 +1990,8 @@ class _TransferDetailContent extends StatelessWidget {
   final Map<String, List<BranchAccount>> branchAccounts;
   final Map<String, String> userNames;
   final bool canManageTransfers;
+  // canReverse = creator/director (только они откатывают выданный перевод, 078).
+  final bool canReverse;
   final VoidCallback onEdit;
   final VoidCallback onConfirm;
   final VoidCallback onDispatch;
@@ -1826,6 +2001,10 @@ class _TransferDetailContent extends StatelessWidget {
   final VoidCallback onDownloadInvoice;
   final VoidCallback onAttachToPartner;
   final VoidCallback onDetachFromPartner;
+  // F12: отмена created-перевода; F13: откат выданного. Nullable — кнопка
+  // показывается только если колбэк передан И статус/права подходят.
+  final VoidCallback? onCancel;
+  final VoidCallback? onReverse;
 
   String _branchName(String id) {
     final match = branches.where((b) => b.id == id);
@@ -2091,6 +2270,33 @@ class _TransferDetailContent extends StatelessWidget {
           ),
         ),
       ],
+      // F12: отмена ошибочно созданного перевода (created, не партнёрский).
+      // delete_transfer (070) сам энфорсит права: accountant — только свой
+      // created своего филиала; creator/director — любой.
+      if (canManageTransfers && t.isCreated && !t.isPartnerTransfer && onCancel != null)
+        OutlinedButton.icon(
+          onPressed: onCancel,
+          icon: const Icon(AppIcons.delete_forever, size: 18),
+          label: const Text('Отменить'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.error,
+            side: const BorderSide(color: AppColors.error),
+            minimumSize: const Size(0, 44),
+          ),
+        ),
+      // F13: откат ошибочно ВЫДАННОГО обычного перевода (delivered, не
+      // партнёрский) — только creator/director (RPC 078 деструктивен).
+      if (canReverse && t.isDelivered && !t.isPartnerTransfer && onReverse != null)
+        OutlinedButton.icon(
+          onPressed: onReverse,
+          icon: const Icon(AppIcons.history, size: 18),
+          label: const Text('Откатить выдачу'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.error,
+            side: const BorderSide(color: AppColors.error),
+            minimumSize: const Size(0, 44),
+          ),
+        ),
     ];
   }
 }
